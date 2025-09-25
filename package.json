@@ -42,5 +42,8 @@
   },
   "bin": {
     "db8": "./bin/db8.js"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "*"
   }
 }
