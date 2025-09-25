@@ -1,0 +1,33 @@
+{
+  "name": "db8",
+  "version": "0.0.0",
+  "private": false,
+  "type": "module",
+  "engines": { "node": ">=20.0.0" },
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
+    "lint": "eslint .",
+    "format": "prettier -w .",
+    "test": "vitest run --coverage",
+    "typecheck": "echo 'No TypeScript. ✅'"
+  },
+  "lint-staged": {
+    "*.{js,jsx,json,md}": ["prettier -w"],
+    "*.{js,jsx}": ["eslint --max-warnings=0"]
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "eslint": "^9.13.0",
+    "eslint-plugin-import": "^2.29.1",
+    "eslint-plugin-n": "^17.10.3",
+    "eslint-plugin-security": "^2.2.0",
+    "eslint-plugin-unicorn": "^54.0.0",
+    "lint-staged": "^15.2.10",
+    "prettier": "^3.3.3",
+    "supertest": "^7.0.0",
+    "vitest": "^2.1.3"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

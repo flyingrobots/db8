@@ -1,0 +1,59 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: db8
+        ports: ["54329:5432"]
+        options: >-
+          --health-cmd="pg_isready -U postgres" --health-interval=10s
+          --health-timeout=5s --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Block TypeScript files
+        run: |
+          if git ls-files | grep -E '\\.(ts|tsx)$'; then
+            echo "TypeScript files detected. Not allowed."; exit 1;
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install
+        run: npm install
+
+      - name: Lint
+        run: npm run lint
+
+      - name: DB setup
+        env:
+          PGURL: postgresql://postgres:test@localhost:54329/db8
+        run: |
+          if [ -f db/schema.sql ]; then psql "$PGURL" -f db/schema.sql; fi
+          if [ -f db/rpc.sql ]; then psql "$PGURL" -f db/rpc.sql || true; fi
+
+      - name: Tests
+        env:
+          DATABASE_URL: postgresql://postgres:test@localhost:54329/db8
+        run: npm test
+
+  conventional-commits:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
