@@ -9,7 +9,15 @@ export default [
   js.configs.recommended,
   {
     plugins: { import: pluginImport, n: pluginNode, security: pluginSecurity, unicorn: pluginUnicorn },
-    languageOptions: { ecmaVersion: 2023, sourceType: 'module' },
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        setInterval: 'readonly'
+      }
+    },
     rules: {
       'no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       'no-implicit-coercion': 'error',
@@ -23,7 +31,6 @@ export default [
       'import/first': 'error',
       'import/no-duplicates': 'error',
       'import/newline-after-import': 'error',
-      'import/no-unresolved': 'error',
       'security/detect-object-injection': 'off',
       'unicorn/prefer-optional-catch-binding': 'error',
       // No TypeScript imports allowed
@@ -33,6 +40,18 @@ export default [
         { selector: 'Program:has(ImportDeclaration[source.value=/.\\.ts$/])', message: 'TypeScript files are forbidden.' }
       ]
     }
+  },
+  {
+    files: ['**/*.test.js', '**/*.spec.js'],
+    languageOptions: {
+      globals: {
+        test: 'readonly',
+        expect: 'readonly',
+        describe: 'readonly',
+        it: 'readonly',
+        beforeEach: 'readonly',
+        vi: 'readonly'
+      }
+    }
   }
 ];
-
