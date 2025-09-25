@@ -2,7 +2,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
 import { rateLimitStub } from './mw/rate-limit.js';
-import { SubmissionIn } from './schemas.js';
+import { SubmissionIn, ContinueVote } from './schemas.js';
 import { canonicalize, sha256Hex } from './utils.js';
 
 const app = express();
@@ -119,8 +119,58 @@ app.post('/rpc/submission.create', (req, res) => {
   }
 });
 
-// Placeholder: vote.continue
-app.post('/rpc/vote.continue', (_req, res) => res.json({ ok: true }));
+// In-memory vote idempotency store
+const memVotes = new Map(); // key -> { id }
+
+// vote.continue
+app.post('/rpc/vote.continue', (req, res) => {
+  try {
+    const input = ContinueVote.parse(req.body);
+    const key = `${input.round_id}:${input.voter_id}:continue:${input.client_nonce}`;
+    if (db) {
+      return db
+        .query(
+          `with existing as (
+             select id from votes
+              where round_id = $1 and voter_id = $2 and kind = 'continue' and client_nonce = $3
+           ), ins as (
+             insert into votes (room_id, round_id, voter_id, kind, ballot, client_nonce)
+             select $4, $1, $2, 'continue', $5, $3
+             where not exists (select 1 from existing)
+             returning id
+           )
+           select id from ins
+           union all
+           select id from existing
+           limit 1`.replace(/\s+\n/g, ' '),
+          [
+            input.round_id,
+            input.voter_id,
+            input.client_nonce,
+            input.room_id,
+            JSON.stringify({ choice: input.choice })
+          ]
+        )
+        .then((r) => {
+          const vote_id = r.rows[0]?.id || crypto.randomUUID();
+          return res.json({ ok: true, vote_id });
+        })
+        .catch((_e) => {
+          if (memVotes.has(key))
+            return res.json({ ok: true, vote_id: memVotes.get(key).id, note: 'db_fallback' });
+          const vote_id = crypto.randomUUID();
+          memVotes.set(key, { id: vote_id });
+          return res.json({ ok: true, vote_id, note: 'db_fallback' });
+        });
+    }
+    if (memVotes.has(key)) return res.json({ ok: true, vote_id: memVotes.get(key).id });
+    const vote_id = crypto.randomUUID();
+    memVotes.set(key, { id: vote_id });
+    return res.json({ ok: true, vote_id });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
 
 // Authoritative state snapshot (stub)
 app.get('/state', (_req, res) => res.json({ ok: true, rounds: [], submissions: [] }));
