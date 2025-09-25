@@ -1,0 +1,8 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: db8
+    ports: ["54329:5432"]
+

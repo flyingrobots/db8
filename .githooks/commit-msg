@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+msg_file="$1"
+pattern='^(revert: )?(feat|fix|docs|style|refactor|perf|test|build|ci|chore|ops|sec)(\(.+\))?: .+'
+if ! grep -Eq "$pattern" "$msg_file"; then
+  echo "✖ Commit message must follow Conventional Commits (e.g., 'feat: add round publish RPC')"
+  exit 1
+fi
