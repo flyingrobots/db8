@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-import fs from 'node:fs';
-import path from 'node:path';
 
 const EXIT = {
   OK: 0,
@@ -125,17 +123,49 @@ async function main() {
     return EXIT.OK;
   }
 
-  // Router (skeleton only)
-  switch (`${cmd}${subcmd ? ':' + subcmd : ''}`) {
+  const key = `${cmd}${subcmd ? ':' + subcmd : ''}`;
+  // Minimal config/session helpers
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fsp = await import('node:fs/promises');
+  async function readJsonSafe(p) { try { return JSON.parse(await fsp.readFile(p, 'utf8')); } catch { return null; } }
+  const homedir = os.homedir();
+  const cfgPath = path.join(homedir, '.db8', 'config.json');
+  const sessPath = path.join(homedir, '.db8', 'session.json');
+  const config = (await readJsonSafe(cfgPath)) || {};
+  const session = (await readJsonSafe(sessPath)) || {};
+  const apiUrl = process.env.DB8_API_URL || config.api_url || 'http://localhost:3000';
+  const profile = config.default_profile || 'main';
+  const prof = (config.profiles && config.profiles[profile]) || {};
+  const room = args.room || process.env.DB8_ROOM_ID || prof.room_id || session.room_id || '';
+  const participant = args.participant || process.env.DB8_PARTICIPANT_ID || prof.participant_id || session.participant_id || '';
+  const jwt = process.env.DB8_JWT || session.jwt || '';
+
+  // Router (skeleton + basic whoami/status)
+  switch (key) {
     case 'login':
       print('TODO: login flow');
       return EXIT.OK;
-    case 'whoami':
-      print('TODO: whoami');
+    case 'whoami': {
+      const out = { ok: true, room_id: room || null, participant_id: participant || null, jwt_expires_at: session.expires_at || null };
+      if (args.json) print(JSON.stringify(out));
+      else print(`room: ${out.room_id || '-'}\nparticipant: ${out.participant_id || '-'}\njwt exp: ${out.jwt_expires_at || '-'}`);
       return EXIT.OK;
-    case 'room:status':
-      print('TODO: room status');
-      return EXIT.OK;
+    }
+    case 'room:status': {
+      if (!room) { printerr('No room configured. Set --room or DB8_ROOM_ID or config profile.'); return EXIT.AUTH; }
+      const url = `${apiUrl.replace(/\/$/, '')}/state?room_id=${encodeURIComponent(room)}`;
+      try {
+        const res = await fetch(url, { headers: jwt ? { authorization: `Bearer ${jwt}` } : {} });
+        const body = await res.json().catch(() => ({}));
+        if (args.json) print(JSON.stringify(body));
+        else print(`ok: ${body.ok === true ? 'yes' : 'no'}\nrounds: ${Array.isArray(body.rounds) ? body.rounds.length : 0}`);
+        return res.ok ? EXIT.OK : EXIT.NETWORK;
+      } catch (e) {
+        printerr(`Failed to fetch state: ${e?.message || e}`);
+        return EXIT.NETWORK;
+      }
+    }
     case 'room:watch':
       print('TODO: room watch');
       return EXIT.OK;
@@ -174,4 +204,3 @@ async function run() {
 }
 
 run();
-
