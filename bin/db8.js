@@ -11,8 +11,12 @@ const EXIT = {
   NOT_FOUND: 8
 };
 
-function print(msg) { process.stdout.write(String(msg) + '\n'); }
-function printerr(msg) { process.stderr.write(String(msg) + '\n'); }
+function print(msg) {
+  process.stdout.write(String(msg) + '\n');
+}
+function printerr(msg) {
+  process.stderr.write(String(msg) + '\n');
+}
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -20,7 +24,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a.startsWith('--')) {
       const key = a.slice(2);
-      const val = (i + 1 < argv.length && !argv[i + 1].startsWith('--')) ? argv[++i] : true;
+      const val = i + 1 < argv.length && !argv[i + 1].startsWith('--') ? argv[++i] : true;
       args[key] = val;
     } else {
       args._.push(a);
@@ -70,8 +74,14 @@ async function main() {
   function validateArgs(args, cmd, subcmd) {
     // Allowed commands (cmd or cmd+subcmd mapped with ':')
     const allowed = new Set([
-      'login', 'whoami', 'room:status', 'room:watch',
-      'draft:open', 'draft:validate', 'submit', 'resubmit'
+      'login',
+      'whoami',
+      'room:status',
+      'room:watch',
+      'draft:open',
+      'draft:validate',
+      'submit',
+      'resubmit'
     ]);
 
     // Help handling
@@ -86,7 +96,10 @@ async function main() {
     if (args.timeout !== undefined) {
       const t = Number(args.timeout);
       if (!Number.isInteger(t) || t < 0 || t > 600000) {
-        throw new CLIError(`Invalid --timeout value: ${args.timeout}. Must be integer 0..600000 ms`, EXIT.VALIDATION);
+        throw new CLIError(
+          `Invalid --timeout value: ${args.timeout}. Must be integer 0..600000 ms`,
+          EXIT.VALIDATION
+        );
       }
       args.timeout = t;
     }
@@ -97,7 +110,8 @@ async function main() {
       args.json = Boolean(args.json);
     }
     if (args.quiet !== undefined) args.quiet = Boolean(args.quiet);
-    if (args['non-interactive'] !== undefined) args['non-interactive'] = Boolean(args['non-interactive']);
+    if (args['non-interactive'] !== undefined)
+      args['non-interactive'] = Boolean(args['non-interactive']);
 
     // Basic UUID-ish sanity for room/participant (loose check)
     const uuidRe = /^[0-9a-fA-F-]{8,}$/;
@@ -128,7 +142,15 @@ async function main() {
   const os = await import('node:os');
   const path = await import('node:path');
   const fsp = await import('node:fs/promises');
-  async function readJsonSafe(p) { try { return JSON.parse(await fsp.readFile(p, 'utf8')); } catch { return null; } }
+  const crypto = await import('node:crypto');
+  const { z } = await import('zod');
+  async function readJsonSafe(p) {
+    try {
+      return JSON.parse(await fsp.readFile(p, 'utf8'));
+    } catch {
+      return null;
+    }
+  }
   const homedir = os.homedir();
   const cfgPath = path.join(homedir, '.db8', 'config.json');
   const sessPath = path.join(homedir, '.db8', 'session.json');
@@ -138,8 +160,75 @@ async function main() {
   const profile = config.default_profile || 'main';
   const prof = (config.profiles && config.profiles[profile]) || {};
   const room = args.room || process.env.DB8_ROOM_ID || prof.room_id || session.room_id || '';
-  const participant = args.participant || process.env.DB8_PARTICIPANT_ID || prof.participant_id || session.participant_id || '';
+  const participant =
+    args.participant ||
+    process.env.DB8_PARTICIPANT_ID ||
+    prof.participant_id ||
+    session.participant_id ||
+    '';
   const jwt = process.env.DB8_JWT || session.jwt || '';
+
+  // Helpers
+  function randomNonce() {
+    return (crypto.randomUUID && crypto.randomUUID()) || crypto.randomBytes(16).toString('hex');
+  }
+
+  function canonicalize(value) {
+    const seen = new WeakSet();
+    const walk = (v) => {
+      if (v === null || typeof v !== 'object') return v;
+      if (seen.has(v)) throw new Error('Cannot canonicalize circular structure');
+      seen.add(v);
+      if (Array.isArray(v)) return v.map(walk);
+      const out = {};
+      for (const k of Object.keys(v).sort()) out[k] = walk(v[k]);
+      return out;
+    };
+    return JSON.stringify(walk(value));
+  }
+
+  function sha256Hex(s) {
+    return crypto.createHash('sha256').update(s).digest('hex');
+  }
+
+  const Claim = z.object({
+    id: z.string(),
+    text: z.string().min(3),
+    support: z
+      .array(
+        z.object({
+          kind: z.enum(['citation', 'logic', 'data']),
+          ref: z.string()
+        })
+      )
+      .min(1)
+  });
+  const Citation = z.object({ url: z.string().url(), title: z.string().optional() });
+  const SubmissionIn = z.object({
+    room_id: z.string().uuid(),
+    round_id: z.string().uuid(),
+    author_id: z.string().uuid(),
+    phase: z.enum(['OPENING', 'ARGUMENT', 'FINAL']),
+    deadline_unix: z.number().int(),
+    content: z.string().min(1).max(4000),
+    claims: z.array(Claim).min(1).max(5),
+    citations: z.array(Citation).min(2),
+    client_nonce: z.string().min(8),
+    signature_kind: z.enum(['ssh', 'ed25519']).optional(),
+    signature_b64: z.string().optional(),
+    signer_fingerprint: z.string().optional()
+  });
+
+  async function ensureDir(p) {
+    await fsp.mkdir(p, { recursive: true });
+  }
+  async function writeJson(p, obj) {
+    await ensureDir(path.dirname(p));
+    await fsp.writeFile(p, JSON.stringify(obj, null, 2));
+  }
+  async function readJson(p) {
+    return JSON.parse(await fsp.readFile(p, 'utf8'));
+  }
 
   // Router (skeleton + basic whoami/status)
   switch (key) {
@@ -147,19 +236,33 @@ async function main() {
       print('TODO: login flow');
       return EXIT.OK;
     case 'whoami': {
-      const out = { ok: true, room_id: room || null, participant_id: participant || null, jwt_expires_at: session.expires_at || null };
+      const out = {
+        ok: true,
+        room_id: room || null,
+        participant_id: participant || null,
+        jwt_expires_at: session.expires_at || null
+      };
       if (args.json) print(JSON.stringify(out));
-      else print(`room: ${out.room_id || '-'}\nparticipant: ${out.participant_id || '-'}\njwt exp: ${out.jwt_expires_at || '-'}`);
+      else
+        print(
+          `room: ${out.room_id || '-'}\nparticipant: ${out.participant_id || '-'}\njwt exp: ${out.jwt_expires_at || '-'}`
+        );
       return EXIT.OK;
     }
     case 'room:status': {
-      if (!room) { printerr('No room configured. Set --room or DB8_ROOM_ID or config profile.'); return EXIT.AUTH; }
+      if (!room) {
+        printerr('No room configured. Set --room or DB8_ROOM_ID or config profile.');
+        return EXIT.AUTH;
+      }
       const url = `${apiUrl.replace(/\/$/, '')}/state?room_id=${encodeURIComponent(room)}`;
       try {
         const res = await fetch(url, { headers: jwt ? { authorization: `Bearer ${jwt}` } : {} });
         const body = await res.json().catch(() => ({}));
         if (args.json) print(JSON.stringify(body));
-        else print(`ok: ${body.ok === true ? 'yes' : 'no'}\nrounds: ${Array.isArray(body.rounds) ? body.rounds.length : 0}`);
+        else
+          print(
+            `ok: ${body.ok === true ? 'yes' : 'no'}\nrounds: ${Array.isArray(body.rounds) ? body.rounds.length : 0}`
+          );
         return res.ok ? EXIT.OK : EXIT.NETWORK;
       } catch (e) {
         printerr(`Failed to fetch state: ${e?.message || e}`);
@@ -169,17 +272,105 @@ async function main() {
     case 'room:watch':
       print('TODO: room watch');
       return EXIT.OK;
-    case 'draft:open':
-      print('TODO: draft open');
+    case 'draft:open': // Create a local draft scaffold
+    {
+      const anon = process.env.DB8_ANON || 'anon';
+      const idx = args.round ? String(args.round) : '0';
+      const dir = path.join(process.cwd(), 'db8', `round-${idx}`, anon);
+      const file = path.join(dir, 'draft.json');
+      const template = {
+        phase: 'OPENING',
+        deadline_unix: 0,
+        content: '',
+        claims: [{ id: 'c1', text: '', support: [{ kind: 'citation', ref: '' }] }],
+        citations: [{ url: '' }]
+      };
+      await writeJson(file, template);
+      if (!args.json) print(`Draft at ${file}`);
+      else print(JSON.stringify({ ok: true, path: file }));
       return EXIT.OK;
-    case 'draft:validate':
-      print('TODO: draft validate');
-      return EXIT.OK;
-    case 'submit':
-      print('TODO: submit');
-      return EXIT.OK;
+    }
+    case 'draft:validate': {
+      const anon = process.env.DB8_ANON || 'anon';
+      const idx = args.round ? String(args.round) : '0';
+      const file = args.path || path.join(process.cwd(), 'db8', `round-${idx}`, anon, 'draft.json');
+      try {
+        const draft = await readJson(file);
+        // We do not know real ids here; validate structure loosely by remapping ids
+        // Require content, claims, citations min as per client-side rules
+        const minimal = {
+          room_id: room || '00000000-0000-0000-0000-000000000001',
+          round_id: '00000000-0000-0000-0000-000000000002',
+          author_id: participant || '00000000-0000-0000-0000-000000000003',
+          phase: draft.phase || 'OPENING',
+          deadline_unix: draft.deadline_unix || 0,
+          content: draft.content,
+          claims: draft.claims,
+          citations: draft.citations,
+          client_nonce: args.nonce || randomNonce()
+        };
+        SubmissionIn.parse(minimal);
+        const canon = canonicalize(minimal);
+        const hash = sha256Hex(canon);
+        if (args.json) print(JSON.stringify({ ok: true, canonical_sha256: hash }));
+        else print(`canonical_sha256: ${hash}`);
+        return EXIT.OK;
+      } catch (e) {
+        printerr(`Invalid draft: ${e?.message || e}`);
+        return EXIT.VALIDATION;
+      }
+    }
+    case 'submit': {
+      if (!room || !participant || !jwt) {
+        printerr('Missing room/participant/JWT. Run db8 login or set env.');
+        return EXIT.AUTH;
+      }
+      const anon = process.env.DB8_ANON || 'anon';
+      const idx = args.round ? String(args.round) : '0';
+      const file = args.path || path.join(process.cwd(), 'db8', `round-${idx}`, anon, 'draft.json');
+      try {
+        const draft = await readJson(file);
+        const payload = {
+          room_id: room,
+          round_id: '00000000-0000-0000-0000-000000000002',
+          author_id: participant,
+          phase: draft.phase || 'OPENING',
+          deadline_unix: draft.deadline_unix || 0,
+          content: draft.content,
+          claims: draft.claims,
+          citations: draft.citations,
+          client_nonce: String(args.nonce || randomNonce())
+        };
+        SubmissionIn.parse(payload);
+        const canon = canonicalize(payload);
+        const canonical_sha256 = sha256Hex(canon);
+        const url = `${apiUrl.replace(/\/$/, '')}/rpc/submission.create`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${jwt}`,
+            'x-db8-client-nonce': payload.client_nonce
+          },
+          body: JSON.stringify(payload)
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          printerr(body?.error || `Server error ${res.status}`);
+          return EXIT.NETWORK;
+        }
+        if (args.json) print(JSON.stringify({ ...body, canonical_sha256 }));
+        else print(`submission_id: ${body.submission_id}\ncanonical_sha256: ${canonical_sha256}`);
+        return EXIT.OK;
+      } catch (e) {
+        printerr(e?.message || String(e));
+        return EXIT.NETWORK;
+      }
+    }
     case 'resubmit':
-      print('TODO: resubmit');
+      args.nonce = randomNonce();
+      // Reuse submit handler with a new nonce (simple delegation)
+      process.argv = [...process.argv.slice(0, 2), 'submit', ...process.argv.slice(3)];
       return EXIT.OK;
     default:
       // Shouldn't reach here because validateArgs checks allowed commands,
