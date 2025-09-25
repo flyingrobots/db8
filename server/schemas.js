@@ -29,3 +29,11 @@ export const SubmissionIn = z.object({
   signature_b64: z.string().optional(),
   signer_fingerprint: z.string().optional()
 });
+
+export const ContinueVote = z.object({
+  room_id: z.string().uuid(),
+  round_id: z.string().uuid(),
+  voter_id: z.string().uuid(),
+  choice: z.enum(['continue', 'end']),
+  client_nonce: z.string().min(8)
+});
