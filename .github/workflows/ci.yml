@@ -50,12 +50,16 @@ jobs:
         run: npm test
 
       - name: pgTAP (optional)
-        if: ${{ env.RUN_PGTAP == '1' }}
+        if: ${{ vars.RUN_PGTAP == '1' || github.event.inputs.run_pgtap == '1' }}
         env:
           PGURL: postgresql://postgres:test@localhost:54329/db8
         run: |
-          chmod +x db/test/run.sh || true
-          ./db/test/run.sh
+          if [ -f "db/test/run.sh" ]; then
+            chmod +x db/test/run.sh
+            ./db/test/run.sh
+          else
+            echo "pgTAP test script not found, skipping"
+          fi
 
   conventional-commits:
     runs-on: ubuntu-latest

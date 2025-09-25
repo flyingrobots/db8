@@ -3,7 +3,9 @@
   "version": "0.0.0",
   "private": false,
   "type": "module",
-  "engines": { "node": ">=20.0.0" },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "prepare": "git config core.hooksPath .githooks",
     "lint": "eslint .",
@@ -15,8 +17,12 @@
     "stop:db": "docker compose down"
   },
   "lint-staged": {
-    "*.{js,jsx,json,md}": ["prettier -w"],
-    "*.{js,jsx}": ["eslint --max-warnings=0"]
+    "*.{js,jsx,json,md}": [
+      "prettier -w"
+    ],
+    "*.{js,jsx}": [
+      "eslint --max-warnings=0"
+    ]
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
@@ -31,7 +37,8 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "zod": "^3.25.76"
   },
   "bin": {
     "db8": "./bin/db8.js"
