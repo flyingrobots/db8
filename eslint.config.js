@@ -8,7 +8,12 @@ export default [
   { ignores: ['node_modules/**', 'dist/**', '.next/**', 'coverage/**'] },
   js.configs.recommended,
   {
-    plugins: { import: pluginImport, n: pluginNode, security: pluginSecurity, unicorn: pluginUnicorn },
+    plugins: {
+      import: pluginImport,
+      n: pluginNode,
+      security: pluginSecurity,
+      unicorn: pluginUnicorn
+    },
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',
@@ -38,7 +43,10 @@ export default [
       'import/no-unresolved': ['error', { ignore: ['\\.ts$', '\\..*ts$'] }],
       'no-restricted-syntax': [
         'error',
-        { selector: 'Program:has(ImportDeclaration[source.value=/.\\.ts$/])', message: 'TypeScript files are forbidden.' }
+        {
+          selector: 'Program:has(ImportDeclaration[source.value=/.\\.ts$/])',
+          message: 'TypeScript files are forbidden.'
+        }
       ]
     }
   },
