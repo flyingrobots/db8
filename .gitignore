@@ -1,0 +1,45 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Node / Core
+node_modules/
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*
+.eslintcache
+.cache/
+
+# Env files (keep an example committed separately)
+.env
+.env.local
+.env.*.local
+
+# Next.js / Frontend
+.next/
+out/
+.vercel/
+.turbo/
+
+# Builds / Bundles
+dist/
+build/
+
+# Coverage
+coverage/
+
+# Editors / IDEs
+.vscode/
+.idea/
+
+# Supabase (CLI scratch + generated)
+supabase/.temp/
+supabase/generated/
+.supabase/
+
