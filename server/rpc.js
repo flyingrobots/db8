@@ -1,5 +1,6 @@
 import express from 'express';
 import crypto from 'node:crypto';
+import pg from 'pg';
 import { rateLimitStub } from './mw/rate-limit.js';
 import { SubmissionIn } from './schemas.js';
 import { canonicalize, sha256Hex } from './utils.js';
@@ -8,10 +9,20 @@ const app = express();
 app.use(express.json());
 app.use(rateLimitStub());
 
+// Optional DB client (if DATABASE_URL provided)
+let db = null;
+if (process.env.DATABASE_URL) {
+  try {
+    db = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
+  } catch {
+    db = null;
+  }
+}
+
 // Healthcheck
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-// In-memory idempotency and submission store (M1 stub)
+// In-memory idempotency and submission store (M1 stub / fallback)
 const memSubmissions = new Map(); // key -> { id, canonical_sha256 }
 
 // submission.create
@@ -32,13 +43,77 @@ app.post('/rpc/submission.create', (req, res) => {
     const canonical_sha256 = sha256Hex(canon);
 
     const key = `${input.room_id}:${input.round_id}:${input.author_id}:${input.client_nonce}`;
-    if (memSubmissions.has(key)) {
-      const found = memSubmissions.get(key);
-      return res.json({ ok: true, submission_id: found.id, canonical_sha256 });
+    if (db) {
+      // Try to persist and respect idempotency at DB level when possible
+      // Note: schema unique keys may not exist yet; use an upsert-by-select pattern
+      return db
+        .query(
+          `with existing as (
+             select id from submissions
+              where round_id = $1 and author_id = $2 and client_nonce = $3
+           ), ins as (
+             insert into submissions (round_id, author_id, content, claims, citations, status,
+                                      submitted_at, canonical_sha256, signature_kind, signature_b64, signer_fingerprint, jwt_sub, client_nonce)
+             select $1, $2, $4, $5, $6, 'submitted', now(), $7, $8, $9, $10, null, $3
+             where not exists (select 1 from existing)
+             returning id
+           )
+           select id from ins
+           union all
+           select id from existing
+           limit 1`.replace(/\s+\n/g, ' '),
+          [
+            input.round_id,
+            input.author_id,
+            input.client_nonce,
+            input.content,
+            JSON.stringify(input.claims),
+            JSON.stringify(input.citations),
+            canonical_sha256,
+            input.signature_kind || null,
+            input.signature_b64 || null,
+            input.signer_fingerprint || null
+          ]
+        )
+        .then(async (r) => {
+          let submission_id = r.rows[0]?.id;
+          // If insert/select path failed to return id (no table/unique), emulate idempotency via memory fallback
+          if (!submission_id) {
+            if (memSubmissions.has(key)) {
+              submission_id = memSubmissions.get(key).id;
+            } else {
+              submission_id = crypto.randomUUID();
+              memSubmissions.set(key, { id: submission_id, canonical_sha256 });
+            }
+          }
+          return res.json({ ok: true, submission_id, canonical_sha256 });
+        })
+        .catch((e) => {
+          // Fallback to memory on DB failure; preserve idempotency
+          let submission_id;
+          if (memSubmissions.has(key)) {
+            submission_id = memSubmissions.get(key).id;
+          } else {
+            submission_id = crypto.randomUUID();
+            memSubmissions.set(key, { id: submission_id, canonical_sha256 });
+          }
+          return res.json({
+            ok: true,
+            submission_id,
+            canonical_sha256,
+            note: 'db_fallback',
+            db_error: e.message
+          });
+        });
+    } else {
+      if (memSubmissions.has(key)) {
+        const found = memSubmissions.get(key);
+        return res.json({ ok: true, submission_id: found.id, canonical_sha256 });
+      }
+      const submission_id = crypto.randomUUID();
+      memSubmissions.set(key, { id: submission_id, canonical_sha256 });
+      return res.json({ ok: true, submission_id, canonical_sha256 });
     }
-    const submission_id = crypto.randomUUID();
-    memSubmissions.set(key, { id: submission_id, canonical_sha256 });
-    return res.json({ ok: true, submission_id, canonical_sha256 });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
   }
