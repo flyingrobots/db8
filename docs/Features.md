@@ -172,6 +172,25 @@ Slices
 
 ---
 
+### Epic: CLI (db8)
+- Global configuration and session handling (config.json, session.json).
+- Auth: device-code/magic-link login; whoami.
+- Room: status (snapshot) and watch (WS/SSE).
+- Draft: open (template), validate (Zod with canonical SHA), submit/resubmit (idempotent nonce).
+- Optional provenance: SSH signing of canonical JSON + detached sig attach.
+- Voting: continue; final (approval + optional ranking).
+- Journals: pull and verify.
+- Agent QoL: run script to watch and submit.
+
+Slices
+- CLI skeleton entry (bin/db8.js), command router, flags, error codes.
+- Config/session management with env var overrides.
+- Canonicalizer + Zod schemas (shared package later).
+- Submit flow with nonce and JSON output; resubmit convenience.
+- Watch with JSON line events.
+- SSH signing adapter (behind --sign).
+- Journal pull/verify commands.
+
 ## Non-Functional Requirements (NFRs)
 
 Security

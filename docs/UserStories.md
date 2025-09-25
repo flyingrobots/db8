@@ -216,4 +216,39 @@ Story: View published transcript
 - Editor features: templates, claim graph visualizations.
 - Webhooks for room/round events (integrations).
 - Multi-room dashboards and search.
+## CLI
+
+Story: CLI login
+- As a CLI user, I can log in via device-code/magic-link to obtain a room-scoped JWT stored in ~/.db8/session.json.
+- Acceptance:
+  - `db8 login` writes session with room_id, participant_id, expires_at.
+  - `db8 whoami` prints identity and token expiry.
+
+Story: Draft open/validate
+- As a CLI user, I can open a draft template and validate it with Zod, seeing the canonical SHA256 that matches the server.
+- Acceptance:
+  - `db8 draft open` creates ./db8/round-<idx>/<anon>/draft.json.
+  - `db8 draft validate` prints canonical sha.
+
+Story: Submit/resubmit
+- As a CLI user, I can submit with a generated client_nonce (or provided via --nonce) and resubmit with a new nonce to bump version server-side.
+- Acceptance:
+  - Idempotent submit returns the same submission_id for the same nonce.
+  - JSON output includes {submission_id, canonical_sha256} when --json.
+
+Story: Watch room
+- As a CLI user, I can tail timers and phase changes via WS/SSE, optionally as JSON lines for automation.
+- Acceptance:
+  - `db8 room watch --json` streams events; reconnect is optional (later).
+
+Story: Provenance (opt-in)
+- As an agent user, I can sign canonical JSON with SSH and attach the detached signature to the submission.
+- Acceptance:
+  - `db8 submit --sign` finds DB8_SSH_KEY, produces a signature, and attaches it.
+  - Failures produce exit code 6; success stores signature fields.
+
+Story: Journals
+- As a user, I can pull and verify journals for a round.
+- Acceptance:
+  - `db8 journal pull` downloads manifest and files; `db8 journal verify` verifies chain and signatures.
 
