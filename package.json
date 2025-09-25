@@ -9,7 +9,10 @@
     "lint": "eslint .",
     "format": "prettier -w .",
     "test": "vitest run --coverage",
-    "typecheck": "echo 'No TypeScript. ✅'"
+    "typecheck": "echo 'No TypeScript. ✅'",
+    "bootstrap": "bash ./scripts/bootstrap.sh",
+    "dev:db": "docker compose up -d db && sleep 2 && echo 'DB on :54329'",
+    "stop:db": "docker compose down"
   },
   "lint-staged": {
     "*.{js,jsx,json,md}": ["prettier -w"],

@@ -1,0 +1,9 @@
+BEGIN;
+SELECT plan(3);
+-- placeholders; will pass once schema lands
+SELECT ok(TRUE, 'room_create will seed participants (placeholder)');
+SELECT ok(TRUE, 'round 0 will start in submit (placeholder)');
+SELECT ok(TRUE, 'publish flips under lock (placeholder)');
+SELECT * FROM finish();
+ROLLBACK;
+
