@@ -8,7 +8,7 @@
     "prepare": "git config core.hooksPath .githooks",
     "lint": "eslint .",
     "format": "prettier -w .",
-    "test": "vitest run --coverage",
+    "test": "vitest run",
     "typecheck": "echo 'No TypeScript. ✅'",
     "bootstrap": "bash ./scripts/bootstrap.sh",
     "dev:db": "docker compose up -d db && sleep 2 && echo 'DB on :54329'",
