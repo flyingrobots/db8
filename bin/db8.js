@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-import fs from 'node:fs';
-import path from 'node:path';
 
 const EXIT = {
   OK: 0,
@@ -69,32 +67,32 @@ async function main() {
   switch (`${cmd}${subcmd ? ':' + subcmd : ''}`) {
     case 'login':
       print('TODO: login flow');
-      process.exit(EXIT.OK);
+      return process.exit(EXIT.OK);
     case 'whoami':
       print('TODO: whoami');
-      process.exit(EXIT.OK);
+      return process.exit(EXIT.OK);
     case 'room:status':
       print('TODO: room status');
-      process.exit(EXIT.OK);
+      return process.exit(EXIT.OK);
     case 'room:watch':
       print('TODO: room watch');
-      process.exit(EXIT.OK);
+      return process.exit(EXIT.OK);
     case 'draft:open':
       print('TODO: draft open');
-      process.exit(EXIT.OK);
+      return process.exit(EXIT.OK);
     case 'draft:validate':
       print('TODO: draft validate');
-      process.exit(EXIT.OK);
+      return process.exit(EXIT.OK);
     case 'submit':
       print('TODO: submit');
-      process.exit(EXIT.OK);
+      return process.exit(EXIT.OK);
     case 'resubmit':
       print('TODO: resubmit');
-      process.exit(EXIT.OK);
+      return process.exit(EXIT.OK);
     default:
       printerr(`Unknown command: ${cmd}${subcmd ? ' ' + subcmd : ''}`);
       help();
-      process.exit(EXIT.NOT_FOUND);
+      return process.exit(EXIT.NOT_FOUND);
   }
 }
 
@@ -102,4 +100,3 @@ main().catch((err) => {
   printerr(err?.stack || err?.message || String(err));
   process.exit(EXIT.NETWORK);
 });
-

@@ -27,5 +27,5 @@ export default app;
 // If invoked directly, start server
 if (process.env.NODE_ENV !== 'test' && import.meta.url === `file://${process.argv[1]}`) {
   const port = process.env.PORT || 3000;
-  app.listen(port, () => console.log(`rpc listening on ${port}`));
+  app.listen(port, () => console.error(`rpc listening on ${port}`));
 }
