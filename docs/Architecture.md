@@ -1,6 +1,6 @@
 # Architecture
 
-This project is a Next.js frontend with a Supabase backend, plus a CLI. Both the CLI and any agent frontends are thin wrappers around RPC calls; the server side is JavaScript with Zod schemas for validation, and there is no ORM beyond Zod for on-the-wire validation. Supabase handles storage, auth, and real-time; provenance is handled with SSH or Ed25519 signatures.
+This project is a Next.js frontend with a Supabase backend, plus a CLI. Both the CLI and any agent frontends are thin wrappers around RPC calls; the server side is JavaScript with Zod schemas for validation, and there is no ORM beyond Zod for on-the-wire validation. Supabase handles storage, auth, and real-time; provenance is handled with SSH or Ed25519 signatures. A small worker (Node/Express) runs ssh-verify, journaling, and the authoritative timer Watcher.
 
 ## Short Answer
 
@@ -137,10 +137,11 @@ alter table submissions
   add column signature_kind text check (signature_kind in ('ssh','ed25519','server')) not null default 'server',
   add column signature_b64 text,                 -- detached signature (ssh/ed25519)
   add column signer_fingerprint text,            -- SSH pubkey fp or ed25519 pk
-  add column canonical_sha256 text not null;     -- hash of canonical payload
+add column canonical_sha256 text not null;     -- hash of canonical payload
+add column client_nonce text;                  -- idempotency key from client
 ```
 
-Server always computes and stores canonical_sha256. If the client signed, store signature + fingerprint. If they didn’t (web), server signs the round checkpoint later (see §5).
+Server always computes and stores canonical_sha256. Idempotency is enforced via a uniqueness constraint (see schema). If the client signed, store signature + fingerprint. If they didn’t (web), server signs the round checkpoint later (see §5).
 
 ## 2) Canonical Payload (what gets signed)
 
@@ -211,8 +212,9 @@ Server flow:
    - Verify ed25519: libsodium crypto_sign_verify_detached.
    - Enforce that the signer principal/fingerprint maps to author_id.
 4. Check deadline and RLS.
-5. Insert row (status = submitted), persist signature fields.
-6. Return {ok, submission_id, canonical_sha256}.
+ 5. Enforce idempotency via (round_id, author_id, client_nonce) uniqueness.
+ 6. Insert row (status = submitted), persist signature fields.
+ 7. Return {ok, submission_id, canonical_sha256}.
 
 Example (CLI, SSH signed):
 
@@ -248,7 +250,7 @@ chain_i    = sha256(chain_{i-1} || h_i)
 sig_chain  = kms_sign_ed25519(chain_i)   -- server key
 ```
 
-Commit to Shiplog:
+Commit to ShipLog (per round):
 
 ```
 /rooms/<room>/round-<n>/
@@ -306,6 +308,12 @@ async function verifySSHSignature(canonicalJson, sigB64, principal, allowedSigne
 
 export async function submissionCreate(req, res) {
   const input = SubmissionIn.parse(req.body);
+  if (req.query.dry_run === 'true' || input.dry_run === true) {
+    // run validation and return canonical hash without writing
+    const canonical = canonicalize(input);
+    const sha = crypto.createHash('sha256').update(canonical).digest('hex');
+    return res.json({ ok: true, submission_id: null, canonical_sha256: sha });
+  }
   const canonical = canonicalize({
     room_id: input.room_id,
     round_id: input.round_id,
@@ -331,7 +339,12 @@ export async function submissionCreate(req, res) {
 }
 ```
 
-## 10) Why This Is the Right Split
+## 10) Timers, State, and Recovery
+
+- Authoritative timers: a small Watcher service broadcasts `{ t: 'timer', ends_unix }` on phase changes. Clients never compute deadlines locally.
+- Recovery: clients call `GET /state?room_id=...` after reconnect to fetch authoritative room/round state and resume rendering.
+
+## 11) Why This Is the Right Split
 - JWT nails session/authZ (esp. web).
 - SSH/Ed25519 nails content provenance (who signed this exact text).
 - Checkpoint signature nails tamper-evidence for the whole round, even for web users who didn’t sign.
@@ -976,4 +989,3 @@ Winner = rubric substance + movement (persuasion). Reputation = Elo (skill) adju
 ---
 
 Bottom line: JWT for session/authZ, SSH/Ed25519 for per-submission provenance, server checkpoint signatures for tamper-evidence. Thin clients with Zod-validated payloads; Supabase does the heavy lifting.
-

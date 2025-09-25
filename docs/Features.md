@@ -7,20 +7,30 @@ This document outlines the feature set for db8, grouped by epics and slices you 
 M0 — Repo + Docs
 - Public repo, license, .gitignore, architecture and feature docs.
 
-M1 — Room Skeleton (MVP debate loop, no scoring)
+M1 — Room Skeleton (deterministic loop)
 - Create room, seed participants (anon_1..anon_5), open Round 0.
 - Submit window with barrier; private drafts; atomic publish reveal.
+- Verify stub (accept-all) to make barrier flip deterministic.
 - Web auth (Supabase) for humans; JWT on requests.
 - CLI auth (room-scoped JWT) and basic submit flow.
-- Zod-validated RPCs; Postgres schema; RLS to isolate private submissions pre-publish.
+- Idempotency: `client_nonce` on submissions; unique (round_id, author_id, client_nonce).
+- Backpressure: simple rate limits per (room_id, participant).
+- Authoritative timers via a small Watcher that broadcasts `ends_unix`.
+- GET `/state?room_id` for reconnect replay of authoritative state.
+- Zod-validated RPCs; Postgres schema; reads via RLS views; writes via service-role RPC with checks.
 - Realtime updates (round phase, submissions, timers) via Supabase Realtime.
-- Minimal admin: create room, open next round, force publish.
+- Pre-publish stubs: FORFEIT/REJECTED render as stub cards with reasons.
+- Minimal admin: create room, open next round, force publish (logged to journal).
+- Journals: write a per-round journal manifest on publish.
 
 M2 — Provenance & Journaling
-- Canonical JSON hashing (sha256) for every submission.
+- Canonical JSON hashing (sha256) for every submission (already in M1).
 - Optional client signatures (SSH or Ed25519) for CLI/agents; server verifies and stores detached sigs.
-- Server round checkpoint hash, signed with server key (KMS/minisign), journaled to Shiplog refs.
-- Downloadable journal to verify locally (public verifiability).
+- Server round checkpoint hash, signed with server key (minisign/KMS), journaled to ShipLog refs per round.
+- Allowed signers from SSH CA; challenge/verify endpoints for agents.
+- Presence (cosmetic) via Supabase Realtime.
+- Research cache with quotas (per round): `max_unique_domains`, `max_fetches`.
+- Downloadable journal and CLI verify.
 
 M3 — Fact-Checking & Verify Phase
 - Fact-check worker stubs; mark submissions verified/rejected with reasons.
@@ -56,7 +66,7 @@ M7 — Hardening & Ops
 - JWT middleware on server; pass `jwt_sub` to RPC or rely on auth.jwt() in Supabase.
 - Participants mapping: (room_id, anon_name) with optional `jwt_sub` and `ssh_fingerprint`.
 - CLI/Agents: SSH Ed25519 key support; optional short-lived SSH certs via CA.
-- Challenge/response endpoint for agents using `ssh-keygen -Y sign/verify` (optional in MVP; needed by M2).
+- Challenge/response endpoint for agents using `ssh-keygen -Y sign/verify` (land in M2).
 
 Slices
 - Web login + session handling.
@@ -73,7 +83,7 @@ Slices
 Slices
 - RPC `room_create(topic, cfg)` seeds participants and opens Round 0.
 - Round state machine: `round_publish_due()`; `round_open_next()`.
-- Timer broadcaster (WS) on state changes.
+- Timer broadcaster (WS) on state changes (authoritative Watcher).
 
 ### Epic: Submissions & Provenance
 - Draft edit UI (private); submit within deadline; resubmit bumps version.
@@ -82,8 +92,8 @@ Slices
 - Server verify (SSH/Ed25519) and store results.
 
 Slices
-- Zod schemas for payloads; canonicalization util.
-- RPC `submission_upsert(...)` with versioning and RLS guards.
+- Zod schemas for payloads; canonicalization util; `dry_run=true` path.
+- RPC `submission_upsert(...)` with versioning, idempotency (`client_nonce`), and RLS-guarded reads.
 - SSH verify helper (exec `ssh-keygen -Y verify`) or libsodium verify for Ed25519.
 - Store canonical_sha256 and signature fields on row.
 
@@ -91,7 +101,7 @@ Slices
 - One Supabase Realtime channel per room.
 - DB-backed changefeeds via secure views (rounds_view, submissions_view, votes_view).
 - Broadcast-only timers from server for countdowns.
-- Presence for “who’s here”.
+- Presence for “who’s here” (from M2).
 
 Slices
 - Views + RLS to expose exactly what each role can see over time.
@@ -102,6 +112,8 @@ Slices
 - Verify phase dashboard for fact-checkers/moderators.
 - Mark supported/unsupported claims; rejected reasons on submission.
 - Minimal workflow to move all to verified/forfeit before publish.
+- Accept-all verify stub in M1; automated checks later.
+- Publish stubs for FORFEIT/REJECTED with reasons.
 
 Slices
 - Fact-checker UI components and RPC.
@@ -116,6 +128,7 @@ Slices
 - Votes table + RLS.
 - RPC `vote_submit(room, round, voter, kind, ballot)`.
 - Aggregates for continue pass/fail and final placements.
+ - Simple majority of cast ballots; soft quorum (≥3 votes) to avoid zombie rounds.
 
 ### Epic: Scoring & Reputation
 - Rubric scoring inputs (human/auto) → composite.
@@ -134,7 +147,7 @@ Slices
 - CLI command to verify journals locally.
 
 Slices
-- Journal writer after publish.
+- Journal writer after each publish (per-round).
 - Verification CLI command.
 
 ### Epic: Research Tools
@@ -144,6 +157,7 @@ Slices
 Slices
 - `research_cache` table and basic fetcher.
 - UI to insert citations and validate 2+ citations rule.
+ - Quotas/counters to prevent abuse (per room/round caps).
 
 ### Epic: DX, Ops, and Security
 - Rate limiting per (room_id, participant).
@@ -164,6 +178,7 @@ Security
 - JWT verification on all RPC; RLS as primary isolation.
 - SSH/Ed25519 signature verification for agents; short-lived certs to avoid revocation.
 - Anti-replay fields in signed payloads, small clock skew allowed.
+ - Basic abuse controls (profanity filter) at submission entry.
 
 Performance
 - Room N≈5–10 participants; events < 100/s typical.
@@ -174,9 +189,10 @@ Reliability
 - Advisory locks for atomic phase flips.
 - Idempotent RPCs with `client_nonce` to avoid duplicates.
 - Journals are append-only; verify locally from public refs.
+ - `/state?room_id` endpoint for reconnect replay.
 
 Compliance/Privacy
 - Store only necessary identity in participants mapping.
 - Do not store raw private keys; fingerprints only.
 - Respect Supabase region and data residency settings.
-
+ - Audit log of moderator overrides in the journal.
