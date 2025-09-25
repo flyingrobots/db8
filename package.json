@@ -32,5 +32,8 @@
   },
   "dependencies": {
     "express": "^4.19.2"
+  },
+  "bin": {
+    "db8": "./bin/db8.js"
   }
 }
