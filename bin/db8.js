@@ -272,7 +272,8 @@ async function main() {
     case 'room:watch':
       print('TODO: room watch');
       return EXIT.OK;
-    case 'draft:open': { // Create a local draft scaffold
+    case 'draft:open': {
+      // Create a local draft scaffold
       const anon = process.env.DB8_ANON || 'anon';
       const idx = args.round ? String(args.round) : '0';
       const dir = path.join(process.cwd(), 'db8', `round-${idx}`, anon);
