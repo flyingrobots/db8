@@ -49,6 +49,14 @@ jobs:
           DATABASE_URL: postgresql://postgres:test@localhost:54329/db8
         run: npm test
 
+      - name: pgTAP (optional)
+        if: ${{ env.RUN_PGTAP == '1' }}
+        env:
+          PGURL: postgresql://postgres:test@localhost:54329/db8
+        run: |
+          chmod +x db/test/run.sh || true
+          ./db/test/run.sh
+
   conventional-commits:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -56,4 +64,3 @@ jobs:
       - uses: amannn/action-semantic-pull-request@v5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
