@@ -41,10 +41,12 @@
     "express": "^5.1.0",
     "zod": "^3.25.76"
   },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "^4.52.2",
+    "pg": "^8.13.1"
+  },
   "bin": {
     "db8": "./bin/db8.js"
   },
-  "optionalDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "^4.52.2"
-  }
+  "postinstall": "node -e \"try{require('@rollup/rollup-linux-x64-gnu');process.exit(0)}catch(e){process.exit(1)}\" || npm i @rollup/rollup-linux-x64-gnu@latest || true"
 }
