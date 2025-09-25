@@ -33,7 +33,7 @@ jobs:
 
       - name: Install
         run: |
-          npm ci || (echo "npm ci failed; retrying with clean cache" && rm -rf node_modules package-lock.json && npm ci)
+          npm ci || (echo "npm ci failed; retrying clean install" && rm -rf node_modules package-lock.json && npm install)
 
       - name: Lint
         run: npm run lint
