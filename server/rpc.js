@@ -7,7 +7,7 @@ import { canonicalize, sha256Hex } from './utils.js';
 
 const app = express();
 app.use(express.json());
-app.use(rateLimitStub());
+app.use(rateLimitStub({ enforce: process.env.ENFORCE_RATELIMIT === '1' }));
 
 // Optional DB client (if DATABASE_URL provided)
 let db = null;
@@ -41,6 +41,11 @@ app.post('/rpc/submission.create', (req, res) => {
       client_nonce: input.client_nonce
     });
     const canonical_sha256 = sha256Hex(canon);
+    // Enforce deadline if provided (> 0)
+    const now = Math.floor(Date.now() / 1000);
+    if (input.deadline_unix && input.deadline_unix > 0 && now > input.deadline_unix) {
+      return res.status(400).json({ ok: false, error: 'deadline_passed' });
+    }
 
     const key = `${input.room_id}:${input.round_id}:${input.author_id}:${input.client_nonce}`;
     if (db) {
