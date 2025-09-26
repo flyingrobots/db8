@@ -30,6 +30,11 @@ export default function Home() {
               Spectator View
             </Link>
           </li>
+          <li>
+            <Link className="underline" href="/room/00000000-0000-0000-0000-0000000000ab">
+              Room (demo UUID)
+            </Link>
+          </li>
         </ul>
       </section>
     </main>
