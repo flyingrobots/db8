@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { z } from 'zod';
 
 function apiBase() {
   const u = process.env.NEXT_PUBLIC_DB8_API_URL || 'http://localhost:3000';
@@ -28,6 +29,9 @@ export default function RoomPage({ params }) {
   const [content, setContent] = useState('');
   const [participant, setParticipant] = useState('');
   const [jwt, setJwt] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const timerRef = useRef(null);
   const esRef = useRef(null);
 
@@ -99,8 +103,66 @@ export default function RoomPage({ params }) {
   const canSubmit =
     state?.ok && state?.round?.phase === 'submit' && isUUID(roomId) && isUUID(participant);
 
+  // Persist small fields locally for convenience
+  useEffect(() => {
+    try {
+      const p = window.localStorage.getItem('db8.participant') || '';
+      const t = window.localStorage.getItem('db8.jwt') || '';
+      setParticipant(p);
+      setJwt(t);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('db8.participant', participant || '');
+    } catch {
+      /* ignore */
+    }
+  }, [participant]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('db8.jwt', jwt || '');
+    } catch {
+      /* ignore */
+    }
+  }, [jwt]);
+
+  const SubmissionIn = useMemo(
+    () =>
+      z.object({
+        room_id: z.string().uuid(),
+        round_id: z.string().uuid(),
+        author_id: z.string().uuid(),
+        phase: z.enum(['OPENING', 'ARGUMENT', 'FINAL']),
+        deadline_unix: z.number().int(),
+        content: z.string().min(1).max(4000),
+        claims: z
+          .array(
+            z.object({
+              id: z.string(),
+              text: z.string().min(0),
+              support: z
+                .array(z.object({ kind: z.enum(['citation', 'logic', 'data']), ref: z.string() }))
+                .min(1)
+            })
+          )
+          .min(1)
+          .max(5),
+        citations: z
+          .array(z.object({ url: z.string().url(), title: z.string().optional() }))
+          .min(2),
+        client_nonce: z.string().min(8)
+      }),
+    []
+  );
+
   async function onSubmit() {
     if (!canSubmit) return;
+    setBusy(true);
+    setError('');
+    setSuccess('');
     const payload = {
       room_id: roomId,
       round_id: '00000000-0000-0000-0000-000000000002',
@@ -122,6 +184,7 @@ export default function RoomPage({ params }) {
           : String(Date.now())
     };
     try {
+      SubmissionIn.parse(payload);
       const r = await fetch(`${apiBase()}/rpc/submission.create`, {
         method: 'POST',
         headers: {
@@ -131,9 +194,12 @@ export default function RoomPage({ params }) {
         body: JSON.stringify(payload)
       });
       const j = await r.json().catch(() => ({}));
-      window.alert(j.ok ? `Submitted: ${j.submission_id}` : `Error: ${j.error || r.status}`);
+      if (j?.ok) setSuccess(`Submitted: ${j.submission_id}`);
+      else setError(j?.error || `Server error ${r.status}`);
     } catch (e) {
-      window.alert(String(e?.message || e));
+      setError(String(e?.message || e));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -206,9 +272,11 @@ export default function RoomPage({ params }) {
                 onChange={(e) => setContent(e.target.value)}
               />
             </div>
+            {error && <div className="text-sm text-red-600">{error}</div>}
+            {success && <div className="text-sm text-green-600">{success}</div>}
             <div className="flex justify-end">
-              <Button disabled={!canSubmit || !content} onClick={onSubmit}>
-                Submit
+              <Button disabled={busy || !canSubmit || !content} onClick={onSubmit}>
+                {busy ? 'Submitting…' : 'Submit'}
               </Button>
             </div>
           </CardContent>
