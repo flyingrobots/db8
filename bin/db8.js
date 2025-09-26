@@ -232,9 +232,57 @@ async function main() {
 
   // Router (skeleton + basic whoami/status)
   switch (key) {
-    case 'login':
-      print('TODO: login flow');
+    case 'login': {
+      // Minimal login: persist room/participant/jwt to ~/.db8/session.json
+      // Usage: db8 login --room <uuid> --participant <uuid> --jwt <token> [--expires <unix>]
+      const uuidRe = /^[0-9a-fA-F-]{8,}$/;
+      const roomId = args.room || process.env.DB8_ROOM_ID || '';
+      const participantId = args.participant || process.env.DB8_PARTICIPANT_ID || '';
+      const token = args.jwt || process.env.DB8_JWT || '';
+      const expiresAt = (() => {
+        const v = args.expires || '';
+        const n = Number(v);
+        if (v && Number.isFinite(n) && n > 0) return n;
+        // default to 1 hour from now
+        return Math.floor(Date.now() / 1000) + 3600;
+      })();
+
+      if (!roomId) {
+        printerr('login requires --room or DB8_ROOM_ID');
+        return EXIT.VALIDATION;
+      }
+      if (!participantId) {
+        printerr('login requires --participant or DB8_PARTICIPANT_ID');
+        return EXIT.VALIDATION;
+      }
+      if (!token) {
+        printerr('login requires --jwt or DB8_JWT');
+        return EXIT.AUTH;
+      }
+      if (!uuidRe.test(roomId)) printerr('--room looks non-standard (expecting uuid-like string)');
+      if (!uuidRe.test(participantId))
+        printerr('--participant looks non-standard (expecting uuid-like string)');
+
+      const sess = {
+        room_id: roomId,
+        participant_id: participantId,
+        jwt: token,
+        expires_at: expiresAt
+      };
+      await writeJson(sessPath, sess);
+      if (args.json)
+        print(
+          JSON.stringify({
+            ok: true,
+            room_id: roomId,
+            participant_id: participantId,
+            expires_at: expiresAt,
+            saved: sessPath
+          })
+        );
+      else print('ok');
       return EXIT.OK;
+    }
     case 'whoami': {
       const out = {
         ok: true,
