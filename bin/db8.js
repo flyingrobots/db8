@@ -269,9 +269,54 @@ async function main() {
         return EXIT.NETWORK;
       }
     }
-    case 'room:watch':
-      print('TODO: room watch');
-      return EXIT.OK;
+    case 'room:watch': {
+      if (!room) {
+        printerr('No room configured. Set --room or DB8_ROOM_ID or config profile.');
+        return EXIT.AUTH;
+      }
+      try {
+        const url = new URL(apiUrl.replace(/\/$/, '') + '/events');
+        url.searchParams.set('room_id', room);
+        const mod =
+          url.protocol === 'https:' ? await import('node:https') : await import('node:http');
+        const req = mod.request(
+          url,
+          { method: 'GET', headers: { accept: 'text/event-stream' } },
+          (res) => {
+            res.setEncoding('utf8');
+            let buf = '';
+            res.on('data', (chunk) => {
+              buf += chunk;
+              let idx;
+              while ((idx = buf.indexOf('\n\n')) !== -1) {
+                const frame = buf.slice(0, idx);
+                buf = buf.slice(idx + 2);
+                const dataLine = frame.split('\n').find((l) => l.startsWith('data: '));
+                if (dataLine) {
+                  const json = dataLine.slice(6);
+                  try {
+                    const evt = JSON.parse(json);
+                    process.stdout.write((args.json ? JSON.stringify(evt) : json) + '\n');
+                  } catch {
+                    /* ignore */
+                  }
+                }
+              }
+            });
+            res.on('end', () => process.exit(EXIT.OK));
+          }
+        );
+        req.on('error', (e) => {
+          printerr(e.message);
+          process.exit(EXIT.NETWORK);
+        });
+        req.end();
+        return EXIT.OK;
+      } catch (e) {
+        printerr(e?.message || String(e));
+        return EXIT.NETWORK;
+      }
+    }
     case 'draft:open': {
       // Create a local draft scaffold
       const anon = process.env.DB8_ANON || 'anon';

@@ -19,7 +19,8 @@ export function rateLimitStub(opts = {}) {
     res.setHeader('X-RateLimit-Limit', String(limit));
     res.setHeader('X-RateLimit-Remaining', String(remaining));
     res.setHeader('X-RateLimit-Reset', String(Math.ceil(b.resetAt / 1000)));
-    if (enforce && b.count > limit) {
+    const doEnforce = enforce || process.env.ENFORCE_RATELIMIT === '1';
+    if (doEnforce && b.count > limit) {
       return res.status(429).json({ ok: false, error: 'rate_limited' });
     }
     return next();
