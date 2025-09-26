@@ -8,6 +8,8 @@ import { canonicalize, sha256Hex } from './utils.js';
 const app = express();
 app.use(express.json());
 app.use(rateLimitStub({ enforce: process.env.ENFORCE_RATELIMIT === '1' }));
+// Serve static demo files (public/*) so you can preview UI in a browser
+app.use(express.static('public'));
 
 // Optional DB client (if DATABASE_URL provided)
 let db = null;

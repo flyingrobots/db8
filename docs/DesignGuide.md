@@ -4,11 +4,13 @@ A clean, production‑ready visual guide for DB8 that plays well with shadcn/ui 
 
 ---
 
-## Brand Palette
+## Brand Palette (updated)
 
-- Teal `#56C2C6` — primary actions, links, focus
-- Magenta `#C6568A` — callouts, warnings, continue‑vote accents
-- Ochre `#C69256` — verification, winners, provenance gold
+- Primary `#82DBAD` — actions, links, focus (mint)
+- Success `#83DB82` — verified/winners
+- Accent `#B0DB82` — highlights/warnings
+- Info `#82DBD9` — informational accents
+- Secondary `#82B0DB` — secondary CTAs/badges
 - Dark bg `#0F1115` · Light bg `#F7F8FB`
 - Text dark `#E6EAF3` · Text light `#0E1219`
 - Neutrals (dark): surface `#161A21`, muted `#A9B1C6`, border `#232838`
@@ -64,7 +66,13 @@ export default {
       colors: {
         bg: { DEFAULT: '#0F1115', surface: '#161A21', border: '#232838', light: '#F7F8FB' },
         text: { DEFAULT: '#E6EAF3', muted: '#A9B1C6', dark: '#0E1219', lightMuted: '#47506B' },
-        brand: { teal: '#56C2C6', magenta: '#C6568A', ochre: '#C69256' }
+        brand: {
+          primary: '#82DBAD',
+          success: '#83DB82',
+          accent: '#B0DB82',
+          info: '#82DBD9',
+          secondary: '#82B0DB'
+        }
       },
       boxShadow: {
         focus: '0 0 0 3px rgba(86,194,198,.35)'
@@ -93,9 +101,9 @@ export default {
   --border: #e6e9f0;
   --text: #0e1219;
   --muted: #47506b;
-  --teal: #56c2c6;
-  --magenta: #c6568a;
-  --ochre: #c69256;
+  --teal: #82dbad;
+  --magenta: #82b0db;
+  --ochre: #83db82;
 }
 
 .dark {
@@ -105,9 +113,9 @@ export default {
   --border: #232838;
   --text: #e6eaf3;
   --muted: #a9b1c6;
-  --teal: #56c2c6;
-  --magenta: #c6568a;
-  --ochre: #c69256;
+  --teal: #82dbad;
+  --magenta: #82b0db;
+  --ochre: #83db82;
 }
 
 body {
@@ -120,25 +128,25 @@ body {
   @apply border-t border-[var(--border)];
 }
 .link {
-  @apply text-brand-teal hover:opacity-90 underline-offset-2 underline;
+  @apply text-brand-primary hover:opacity-90 underline-offset-2 underline;
 }
 .btn {
   @apply inline-flex items-center justify-center gap-2 font-medium rounded-xl px-4 py-2;
 }
 .btn-primary {
-  @apply bg-brand-teal text-[#0F1115] hover:brightness-95 shadow;
+  @apply bg-brand-primary text-[#0F1115] hover:brightness-95 shadow;
 }
 .btn-ghost {
-  @apply text-brand-teal hover:bg-[color-mix(in_oklab,var(--teal)20%,transparent)];
+  @apply text-brand-primary hover:bg-[color-mix(in_oklab,var(--teal)20%,transparent)];
 }
 .badge {
   @apply px-2 py-0.5 rounded-md text-xs font-semibold;
 }
 .badge-verified {
-  @apply bg-brand-ochre text-[#0F1115];
+  @apply bg-brand-success text-[#0F1115];
 }
 .badge-unsupported {
-  @apply bg-brand-magenta text-[#0F1115];
+  @apply bg-brand-secondary text-[#0F1115];
 }
 .badge-pending {
   @apply bg-[var(--surface)] text-[var(--muted)] border border-dashed border-[var(--border)];
