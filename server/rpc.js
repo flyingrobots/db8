@@ -8,6 +8,8 @@ import { canonicalize, sha256Hex } from './utils.js';
 const app = express();
 app.use(express.json());
 app.use(rateLimitStub({ enforce: process.env.ENFORCE_RATELIMIT === '1' }));
+// Serve static demo files (public/*) so you can preview UI in a browser
+app.use(express.static('public'));
 
 // Optional DB client (if DATABASE_URL provided)
 let db = null;
@@ -124,8 +126,17 @@ app.post('/rpc/submission.create', (req, res) => {
   }
 });
 
-// In-memory vote idempotency store
-const memVotes = new Map(); // key -> { id }
+// In-memory vote idempotency store and tallies
+const memVotes = new Map(); // key -> { id, choice }
+const memVoteTotals = new Map(); // room_id -> { yes, no }
+
+function addVoteToTotals(roomId, choice) {
+  const key = String(roomId);
+  const t = memVoteTotals.get(key) || { yes: 0, no: 0 };
+  if (choice === 'continue') t.yes += 1;
+  else t.no += 1;
+  memVoteTotals.set(key, t);
+}
 
 // vote.continue
 app.post('/rpc/vote.continue', (req, res) => {
@@ -158,27 +169,97 @@ app.post('/rpc/vote.continue', (req, res) => {
         )
         .then((r) => {
           const vote_id = r.rows[0]?.id || crypto.randomUUID();
+          addVoteToTotals(input.room_id, input.choice);
           return res.json({ ok: true, vote_id });
         })
         .catch((_e) => {
           if (memVotes.has(key))
             return res.json({ ok: true, vote_id: memVotes.get(key).id, note: 'db_fallback' });
           const vote_id = crypto.randomUUID();
-          memVotes.set(key, { id: vote_id });
+          memVotes.set(key, { id: vote_id, choice: input.choice });
+          addVoteToTotals(input.room_id, input.choice);
           return res.json({ ok: true, vote_id, note: 'db_fallback' });
         });
     }
     if (memVotes.has(key)) return res.json({ ok: true, vote_id: memVotes.get(key).id });
     const vote_id = crypto.randomUUID();
-    memVotes.set(key, { id: vote_id });
+    memVotes.set(key, { id: vote_id, choice: input.choice });
+    addVoteToTotals(input.room_id, input.choice);
     return res.json({ ok: true, vote_id });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
   }
 });
 
-// Authoritative state snapshot (stub)
-app.get('/state', (_req, res) => res.json({ ok: true, rounds: [], submissions: [] }));
+// In-memory room/round state and simple time-based transitions
+const memRooms = new Map(); // room_id -> { round: { idx, phase, submit_deadline_unix, published_at_unix?, continue_vote_close_unix? } }
+const SUBMIT_WINDOW_SEC = Number(process.env.SUBMIT_WINDOW_SEC || 300);
+const CONTINUE_WINDOW_SEC = Number(process.env.CONTINUE_WINDOW_SEC || 30);
+
+function ensureRoom(roomId) {
+  let r = memRooms.get(roomId);
+  const now = Math.floor(Date.now() / 1000);
+  if (!r) {
+    r = { round: { idx: 0, phase: 'submit', submit_deadline_unix: now + SUBMIT_WINDOW_SEC } };
+    memRooms.set(roomId, r);
+  }
+  const round = r.round;
+  // Simple phase transitions based on time windows (demo only)
+  if (round.phase === 'submit' && now > round.submit_deadline_unix) {
+    round.phase = 'published';
+    round.published_at_unix = now;
+    round.continue_vote_close_unix = now + CONTINUE_WINDOW_SEC;
+  } else if (
+    round.phase === 'published' &&
+    round.continue_vote_close_unix &&
+    now > round.continue_vote_close_unix
+  ) {
+    const tally = memVoteTotals.get(String(round.idx)) || { yes: 0, no: 0 };
+    if (tally.yes > tally.no) {
+      r.round = {
+        idx: round.idx + 1,
+        phase: 'submit',
+        submit_deadline_unix: now + SUBMIT_WINDOW_SEC
+      };
+    } else {
+      round.phase = 'final';
+    }
+  }
+  return r;
+}
+
+// Authoritative state snapshot (enriched)
+app.get('/state', (req, res) => {
+  const roomId = String(req.query.room_id || 'local');
+  const state = ensureRoom(roomId);
+  const round = state.round;
+  const tally = memVoteTotals.get(roomId) || { yes: 0, no: 0 };
+  return res.json({ ok: true, room_id: roomId, round: { ...round, continue_tally: tally } });
+});
+
+// SSE: timer events (stub). Streams { t:'timer', room_id, ends_unix } every 1s.
+app.get('/events', (req, res) => {
+  const roomId = String(req.query.room_id || 'local');
+  const now = Math.floor(Date.now() / 1000);
+  const ends = now + 10; // 10-second demo timer; replace with real deadline when available
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const send = () => {
+    const payload = JSON.stringify({ t: 'timer', room_id: roomId, ends_unix: ends });
+    res.write(`event: timer\n`);
+    res.write(`data: ${payload}\n\n`);
+  };
+  send();
+  const iv = setInterval(send, 1000);
+  req.on('close', () => {
+    clearInterval(iv);
+    res.end();
+  });
+});
 
 export default app;
 

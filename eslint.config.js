@@ -5,9 +5,11 @@ import pluginSecurity from 'eslint-plugin-security';
 import pluginUnicorn from 'eslint-plugin-unicorn';
 
 export default [
-  { ignores: ['node_modules/**', 'dist/**', '.next/**', 'coverage/**'] },
+  // Root lint excludes web/; it is linted with its own config via package.json script
+  { ignores: ['node_modules/**', 'dist/**', '.next/**', 'web/**', 'coverage/**'] },
   js.configs.recommended,
   {
+    files: ['**/*.{js,jsx}'],
     plugins: {
       import: pluginImport,
       n: pluginNode,
@@ -17,11 +19,14 @@ export default [
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',
+      parserOptions: { ecmaFeatures: { jsx: true } },
       globals: {
         process: 'readonly',
         console: 'readonly',
+        URL: 'readonly',
         fetch: 'readonly',
-        setInterval: 'readonly'
+        setInterval: 'readonly',
+        clearInterval: 'readonly'
       }
     },
     rules: {
@@ -51,7 +56,7 @@ export default [
     }
   },
   {
-    files: ['**/*.test.js', '**/*.spec.js'],
+    files: ['**/*.test.js', '**/*.spec.js', '**/*.test.jsx', '**/*.spec.jsx'],
     languageOptions: {
       globals: {
         test: 'readonly',

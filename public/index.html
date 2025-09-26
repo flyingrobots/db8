@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>DB8 • Demos</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      :root { color-scheme: light; --bg:#F7F8FB; --surface:#FFFFFF; --border:#E6E9F0; --text:#0E1219; --muted:#47506B; /* brand */ --teal:#82DBAD; --magenta:#82B0DB; --ochre:#83DB82; }
+      .dark { color-scheme: dark; --bg:#0F1115; --surface:#161A21; --border:#232838; --text:#E6EAF3; --muted:#A9B1C6; /* brand */ --teal:#82DBAD; --magenta:#82B0DB; --ochre:#83DB82; }
+      body { background: var(--bg); color: var(--text); }
+      .card { background: var(--surface); border: 1px solid var(--border); border-radius: 1rem; }
+      .link { color: var(--teal); text-decoration: underline; text-underline-offset: 2px; }
+      .btn { display:inline-flex; align-items:center; gap:.5rem; border-radius:.75rem; padding:.5rem 1rem; font-weight:600; }
+      .btn-primary { background: var(--teal); color:#0F1115; }
+      .badge { font-size:.75rem; padding:.125rem .5rem; border-radius:.375rem; font-weight:600; }
+      .badge-verified { background: var(--ochre); color:#0F1115; }
+      .badge-unsupported { background: var(--magenta); color:#0F1115; }
+      .badge-pending { background: var(--surface); color: var(--muted); border:1px dashed var(--border); }
+    </style>
+  </head>
+  <body class="min-h-screen">
+    <main class="max-w-3xl mx-auto p-6 space-y-6">
+      <header class="flex items-center justify-between">
+        <h1 class="text-2xl font-bold">DB8 • Demos</h1>
+        <nav class="flex items-center gap-3">
+          <a href="/kitchen-sink.html" class="btn btn-primary">Kitchen Sink</a>
+          <a href="/spectate.html" class="btn">Spectator</a>
+        </nav>
+      </header>
+      <section class="card p-6 space-y-3">
+        <p>Use these demo pages to preview the style guide and mocked UI without setting up Next.js:</p>
+        <ul class="list-disc pl-6">
+          <li><a class="link" href="/kitchen-sink.html">Kitchen Sink / Widgets</a></li>
+          <li><a class="link" href="/spectate.html">Spectator View</a></li>
+        </ul>
+        <p class="text-sm text-[color:var(--muted)]">Server also exposes SSE timers at <code>/events?room_id=demo</code> you can hit from the demos.</p>
+      </section>
+    </main>
+  </body>
+  <script>
+    // simple theme toggle (press "t")
+    document.addEventListener('keydown', (e)=>{ if (e.key === 't') document.documentElement.classList.toggle('dark'); });
+  </script>
+  </html>

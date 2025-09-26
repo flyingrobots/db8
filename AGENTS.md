@@ -28,6 +28,31 @@ Board hygiene
   - Merged/Done: set Status = “Done” and close the issue.
 - Add missing issues/PRs to the project when discovered.
 
+Workflow loop (daily driver)
+
+0. Issue hygiene
+   - If there is a GitHub issue for the task: update its Status/Workflow.
+   - If there is no issue: create one (title, acceptance criteria, milestone), add it to the Project, set Status/Workflow.
+
+1. Tests first
+   - If a test exists: run it. If it fails → there is work to do → go to 2.
+   - If no test exists: write a focused test capturing the invariant, then go to 1 (run it).
+   - If the test passes: the task is done.
+
+2. Code → test → iterate
+   - Implement minimal code to satisfy the test; keep the change small.
+   - Re‑run tests and iterate until green.
+
+3. Documentation
+   - If docs exist: update them.
+   - If docs don’t exist: write them and link them from the nearest MoC (e.g., README or docs/GettingStarted.md).
+
+4. PR and issue updates
+   - Update the issue (notes, links), set Workflow=In Review.
+   - Open a PR with a Markdown body (Summary / Changes / Tests / Next) and include “Fixes #<n>”.
+   - Enable auto‑merge (Merge method) when checks/approvals are green.
+   - On merge: close the issue (auto via Fixes), set Status/Workflow=Done, and delete the branch.
+
 Working style
 
 - JavaScript-only across web, server, and CLI. No TypeScript.
