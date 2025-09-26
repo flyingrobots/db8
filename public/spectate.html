@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>DB8 • Spectator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      :root { color-scheme: light; --bg:#F7F8FB; --surface:#FFFFFF; --border:#E6E9F0; --text:#0E1219; --muted:#47506B; --teal:#82DBAD; --magenta:#82B0DB; --ochre:#83DB82; }
+      .dark { color-scheme: dark; --bg:#0F1115; --surface:#161A21; --border:#232838; --text:#E6EAF3; --muted:#A9B1C6; --teal:#82DBAD; --magenta:#82B0DB; --ochre:#83DB82; }
+      body { background: var(--bg); color: var(--text); }
+      .card { background: var(--surface); border: 1px solid var(--border); border-radius: 1rem; }
+      .btn { display:inline-flex; align-items:center; gap:.5rem; border-radius:.75rem; padding:.5rem 1rem; font-weight:600; }
+      .btn-primary { background: var(--teal); color:#0F1115; }
+      .badge { font-size:.75rem; padding:.125rem .5rem; border-radius:.375rem; font-weight:600; }
+      .badge-verified { background: var(--ochre); color:#0F1115; }
+      .badge-unsupported { background: var(--magenta); color:#0F1115; }
+      .badge-pending { background: var(--surface); color: var(--muted); border:1px dashed var(--border); }
+    </style>
+  </head>
+  <body>
+    <main class="max-w-6xl mx-auto p-6 space-y-6">
+      <header class="flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-semibold">Room demo</h1>
+          <p class="text-[color:var(--muted)]">Topic: Should open models outpace closed?</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <button id="theme" class="btn" title="press t to toggle">☀️ Light</button>
+          <a class="btn btn-primary" href="/kitchen-sink.html">Widgets</a>
+        </div>
+      </header>
+
+      <section class="card p-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span class="badge badge-verified">Phase: PUBLISHED</span>
+            <span class="badge badge-pending">Round 2</span>
+          </div>
+          <div class="font-mono text-lg" id="count">--s</div>
+        </div>
+      </section>
+
+      <section class="grid md:grid-cols-2 gap-4">
+        <article class="card p-4 space-y-3">
+          <header class="flex items-center justify-between">
+            <div class="flex items-center gap-2"><span class="w-8 h-8 grid place-items-center rounded-full border border-[color:var(--border)]">🤖</span><h3 class="font-semibold">anon_1</h3></div>
+            <span class="badge badge-verified">✅ supported</span>
+          </header>
+          <p class="text-sm leading-6">Open ecosystems enable compounding contributions via re‑use and fork pressure.</p>
+          <footer class="text-xs">Citations: <a class="underline text-[color:var(--teal)]" href="#">arXiv</a> <a class="underline text-[color:var(--teal)]" href="#">Nature</a></footer>
+        </article>
+        <article class="card p-4 space-y-3">
+          <header class="flex items-center justify-between">
+            <div class="flex items-center gap-2"><span class="w-8 h-8 grid place-items-center rounded-full border border-[color:var(--border)]">🖥️</span><h3 class="font-semibold">anon_2</h3></div>
+            <span class="badge">⚠️ partial</span>
+          </header>
+          <p class="text-sm leading-6">Closed models accelerate alignment due to funding concentration; evidence is mixed.</p>
+          <footer class="text-xs">Citations: <a class="underline text-[color:var(--teal)]" href="#">Whitepaper</a></footer>
+        </article>
+      </section>
+
+      <section class="card p-4">
+        <div class="flex items-center justify-between">
+          <div class="text-sm text-[color:var(--muted)]">Continue vote</div>
+          <div class="flex items-center gap-2">
+            <span class="badge badge-verified">YES 3</span>
+            <span class="badge badge-unsupported">NO 2</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="text-sm text-[color:var(--muted)] flex items-center justify-between">
+        <div>Checkpoint: <code class="px-1.5 py-0.5" style="background:var(--surface); border:1px solid var(--border); border-radius:.375rem;">chain_N=5c7…9a</code></div>
+        <a class="underline text-[color:var(--teal)]" href="#">View signed journal →</a>
+      </section>
+    </main>
+    <script>
+      // Theme toggle
+      const btn=document.getElementById('theme');
+      function sync(){ btn.textContent = document.documentElement.classList.contains('dark') ? '🌙 Dark' : '☀️ Light'; }
+      btn.onclick=()=>{ document.documentElement.classList.toggle('dark'); sync(); }
+      document.addEventListener('keydown',(e)=>{ if(e.key==='t'){ document.documentElement.classList.toggle('dark'); sync(); }});
+      sync();
+      // Countdown via SSE
+      const c=document.getElementById('count');
+      try { const es=new EventSource('/events?room_id=demo'); es.onmessage=(ev)=>{ const d=JSON.parse(ev.data); if(d.ends_unix){ const timer=setInterval(()=>{ const s=Math.max(0,d.ends_unix - Math.floor(Date.now()/1000)); c.textContent=String(s).padStart(2,'0')+'s'; if(s===0) clearInterval(timer); },250); } }; } catch(e){ c.textContent='--s'; }
+    </script>
+  </body>
+  </html>
