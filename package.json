@@ -9,7 +9,7 @@
   "scripts": {
     "prepare": "git config core.hooksPath .githooks",
     "postinstall": "node -e \"try{require('@rollup/rollup-linux-x64-gnu');process.exit(0)}catch(e){process.exit(1)}\" || npm i @rollup/rollup-linux-x64-gnu@latest || true",
-    "lint": "eslint .",
+    "lint": "eslint . && eslint -c web/eslint.config.js web",
     "format": "prettier -w .",
     "test": "vitest run",
     "typecheck": "echo 'No TypeScript. ✅'",
@@ -18,16 +18,20 @@
     "stop:db": "docker compose down"
   },
   "lint-staged": {
-    "*.{js,jsx,json,md}": [
+    "**/*.{js,jsx,json,md}": [
       "prettier -w"
     ],
-    "*.{js,jsx}": [
-      "eslint --max-warnings=0"
+    "web/**/*.{js,jsx}": [
+      "eslint -c web/eslint.config.js --max-warnings=0 --no-warn-ignored"
+    ],
+    "**/*.{js,jsx}": [
+      "eslint --max-warnings=0 --no-warn-ignored"
     ]
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
     "eslint": "^9.13.0",
+    "eslint-plugin-react": "^7.35.0",
     "eslint-plugin-import": "^2.29.1",
     "eslint-plugin-n": "^17.10.3",
     "eslint-plugin-security": "^3.0.1",

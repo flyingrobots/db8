@@ -6,6 +6,7 @@
 
 # Node / Core
 node_modules/
+.npm-cache/
 logs/
 *.log
 npm-debug.log*
@@ -42,4 +43,3 @@ coverage/
 supabase/.temp/
 supabase/generated/
 .supabase/
-

@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #F7F8FB;
+    --foreground: #0E1219;
+    --card: #FFFFFF;
+    --border: #E6E9F0;
+    --muted: #47506B;
+    --primary: #82DBAD;
+    --primary-foreground: #0F1115;
+    --success: #83DB82;
+    --secondary: #82B0DB;
+  }
+  .dark {
+    --background: #0F1115;
+    --foreground: #E6EAF3;
+    --card: #161A21;
+    --border: #232838;
+    --muted: #A9B1C6;
+    --primary: #82DBAD;
+    --primary-foreground: #0F1115;
+    --success: #83DB82;
+    --secondary: #82B0DB;
+  }
+  body { @apply bg-background text-foreground antialiased; }
+}
+
