@@ -214,7 +214,7 @@ function ensureRoom(roomId) {
     round.continue_vote_close_unix &&
     now > round.continue_vote_close_unix
   ) {
-    const tally = memVoteTotals.get(String(round.idx)) || { yes: 0, no: 0 };
+    const tally = memVoteTotals.get(String(roomId)) || { yes: 0, no: 0 };
     if (tally.yes > tally.no) {
       r.round = {
         idx: round.idx + 1,
@@ -237,11 +237,9 @@ app.get('/state', (req, res) => {
   return res.json({ ok: true, room_id: roomId, round: { ...round, continue_tally: tally } });
 });
 
-// SSE: timer events (stub). Streams { t:'timer', room_id, ends_unix } every 1s.
+// SSE: timer events. Streams { t:'timer', room_id, ends_unix, round_idx, phase } every 1s.
 app.get('/events', (req, res) => {
   const roomId = String(req.query.room_id || 'local');
-  const now = Math.floor(Date.now() / 1000);
-  const ends = now + 10; // 10-second demo timer; replace with real deadline when available
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -249,7 +247,19 @@ app.get('/events', (req, res) => {
   res.flushHeaders?.();
 
   const send = () => {
-    const payload = JSON.stringify({ t: 'timer', room_id: roomId, ends_unix: ends });
+    const now = Math.floor(Date.now() / 1000);
+    const { round } = ensureRoom(roomId);
+    let ends = now;
+    if (round.phase === 'submit' && round.submit_deadline_unix) ends = round.submit_deadline_unix;
+    else if (round.phase === 'published' && round.continue_vote_close_unix)
+      ends = round.continue_vote_close_unix;
+    const payload = JSON.stringify({
+      t: 'timer',
+      room_id: roomId,
+      ends_unix: ends,
+      round_idx: round.idx,
+      phase: round.phase
+    });
     res.write(`event: timer\n`);
     res.write(`data: ${payload}\n\n`);
   };
