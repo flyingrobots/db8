@@ -1,9 +1,47 @@
 BEGIN;
-SELECT plan(3);
--- placeholders; will pass once schema lands
-SELECT ok(TRUE, 'room_create will seed participants (placeholder)');
-SELECT ok(TRUE, 'round 0 will start in submit (placeholder)');
-SELECT ok(TRUE, 'publish flips under lock (placeholder)');
+SELECT plan(6);
+
+-- rooms table exists
+SELECT ok(
+  EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'rooms'
+  ),
+  'rooms table exists'
+);
+
+-- rounds table exists
+SELECT ok(
+  EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'rounds'
+  ),
+  'rounds table exists'
+);
+
+-- rounds has unique (room_id, idx)
+SELECT ok(
+  EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename = 'rounds' AND indexdef ILIKE '%UNIQUE%' AND indexdef ILIKE '%(room_id, idx%'
+  ),
+  'rounds unique (room_id, idx) exists'
+);
+
+-- view_current_round exists
+SELECT ok(to_regclass('public.view_current_round') IS NOT NULL, 'view_current_round exists');
+
+-- view_continue_tally exists
+SELECT ok(to_regclass('public.view_continue_tally') IS NOT NULL, 'view_continue_tally exists');
+
+-- insert seed room + round
+DO $$
+DECLARE rid uuid; rnd_id uuid;
+BEGIN
+  INSERT INTO rooms (title) VALUES ('demo') RETURNING id INTO rid;
+  INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix) VALUES (rid, 0, 'submit', 0) RETURNING id INTO rnd_id;
+  PERFORM ok(rnd_id IS NOT NULL, 'seeded round 0');
+END$$;
+
 SELECT * FROM finish();
 ROLLBACK;
-

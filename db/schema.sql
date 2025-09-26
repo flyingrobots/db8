@@ -4,6 +4,26 @@
 -- UUID generation
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- Rooms and Rounds (minimal M1)
+CREATE TABLE IF NOT EXISTS rooms (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title       text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS rounds (
+  id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  room_id                   uuid        NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  idx                       integer     NOT NULL DEFAULT 0,
+  phase                     text        NOT NULL DEFAULT 'submit' CHECK (phase IN ('submit','published','final')),
+  submit_deadline_unix      integer     NOT NULL DEFAULT 0,
+  published_at_unix         integer,
+  continue_vote_close_unix  integer,
+  UNIQUE (room_id, idx)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rounds_room_idx ON rounds (room_id, idx DESC);
+
 -- Submissions: idempotent by (round_id, author_id, client_nonce)
 CREATE TABLE IF NOT EXISTS submissions (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -41,4 +61,3 @@ CREATE TABLE IF NOT EXISTS votes (
 CREATE INDEX IF NOT EXISTS idx_votes_room_round_kind ON votes (room_id, round_id, kind);
 
 -- Future M1/M2: rooms/rounds tables, RLS policies, and RPCs
-
