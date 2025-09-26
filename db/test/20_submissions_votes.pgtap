@@ -1,0 +1,66 @@
+BEGIN;
+SELECT plan(6);
+
+-- pgcrypto for gen_random_uuid
+SELECT ok(
+  EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto'),
+  'pgcrypto extension exists'
+);
+
+-- submissions table exists
+SELECT ok(
+  EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'submissions'
+  ),
+  'submissions table exists'
+);
+
+-- submissions idempotency unique on (round_id, author_id, client_nonce)
+SELECT ok(
+  EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename = 'submissions'
+      AND indexdef ILIKE '%UNIQUE%'
+      AND indexdef ILIKE '%(round_id, author_id, client_nonce)%'
+  ),
+  'submissions unique (round_id, author_id, client_nonce) exists'
+);
+
+-- votes table exists
+SELECT ok(
+  EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'votes'
+  ),
+  'votes table exists'
+);
+
+-- votes idempotency unique on (round_id, voter_id, kind, client_nonce)
+SELECT ok(
+  EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename = 'votes'
+      AND indexdef ILIKE '%UNIQUE%'
+      AND indexdef ILIKE '%(round_id, voter_id, kind, client_nonce)%'
+  ),
+  'votes unique (round_id, voter_id, kind, client_nonce) exists'
+);
+
+-- basic insert round-trip into submissions should succeed
+DO $$
+DECLARE
+  r uuid := '00000000-0000-0000-0000-0000000000aa';
+  a uuid := '00000000-0000-0000-0000-0000000000bb';
+  n text := 'nonce-rt-1';
+  id1 uuid;
+BEGIN
+  INSERT INTO submissions (round_id, author_id, content, claims, citations, canonical_sha256, client_nonce)
+  VALUES (r, a, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n)
+  RETURNING id INTO id1;
+  PERFORM ok(id1 IS NOT NULL, 'inserted submission has id');
+END$$;
+
+SELECT * FROM finish();
+ROLLBACK;
+
