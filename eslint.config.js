@@ -3,10 +3,12 @@ import pluginImport from 'eslint-plugin-import';
 import pluginNode from 'eslint-plugin-n';
 import pluginSecurity from 'eslint-plugin-security';
 import pluginUnicorn from 'eslint-plugin-unicorn';
+import pluginReact from 'eslint-plugin-react';
 
 export default [
-  // Root lint excludes web/; it is linted with its own config via package.json script
-  { ignores: ['node_modules/**', 'dist/**', '.next/**', 'web/**', 'coverage/**'] },
+  {
+    ignores: ['node_modules/**', 'dist/**', '.next/**', 'web/.next/**', 'web/out/**', 'coverage/**']
+  },
   js.configs.recommended,
   {
     files: ['**/*.{js,jsx}'],
@@ -14,7 +16,18 @@ export default [
       import: pluginImport,
       n: pluginNode,
       security: pluginSecurity,
-      unicorn: pluginUnicorn
+      unicorn: pluginUnicorn,
+      react: pluginReact
+    },
+    settings: {
+      'import/resolver': {
+        node: { extensions: ['.js', '.jsx', '.json'] },
+        alias: {
+          map: [['@', './web']],
+          extensions: ['.js', '.jsx', '.json']
+        }
+      },
+      react: { version: 'detect' }
     },
     languageOptions: {
       ecmaVersion: 2023,
@@ -42,19 +55,25 @@ export default [
       'import/first': 'error',
       'import/no-duplicates': 'error',
       'import/newline-after-import': 'error',
+      'import/no-unresolved': ['error', { ignore: ['\\.ts$', '\\..*ts$'] }],
       'security/detect-object-injection': 'off',
       'unicorn/prefer-optional-catch-binding': 'error',
-      // No TypeScript imports allowed
-      'import/no-unresolved': ['error', { ignore: ['\\.ts$', '\\..*ts$'] }],
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector: 'Program:has(ImportDeclaration[source.value=/.\\.ts$/])',
-          message: 'TypeScript files are forbidden.'
-        }
-      ]
+      'react/jsx-uses-vars': 'error',
+      'react/react-in-jsx-scope': 'off'
     }
   },
+  // Web app: browser globals
+  {
+    files: ['web/**/*.{js,jsx}'],
+    languageOptions: {
+      globals: {
+        window: 'readonly',
+        document: 'readonly',
+        navigator: 'readonly'
+      }
+    }
+  },
+  // Test files: Vitest globals
   {
     files: ['**/*.test.js', '**/*.spec.js', '**/*.test.jsx', '**/*.spec.jsx'],
     languageOptions: {
