@@ -306,11 +306,30 @@ async function main() {
       try {
         const res = await fetch(url, { headers: jwt ? { authorization: `Bearer ${jwt}` } : {} });
         const body = await res.json().catch(() => ({}));
-        if (args.json) print(JSON.stringify(body));
-        else
+        if (args.json) {
+          print(JSON.stringify(body));
+        } else {
+          const rnd = body.round || {};
+          const now = Math.floor(Date.now() / 1000);
+          function rem(sec) {
+            const s = Math.max(0, sec - now);
+            const mm = String(Math.floor(s / 60)).padStart(2, '0');
+            const ss = String(s % 60).padStart(2, '0');
+            return `${mm}:${ss}`;
+          }
+          let line2 = '';
+          if (rnd.phase === 'submit' && rnd.submit_deadline_unix) {
+            line2 = `submit closes in ${rem(rnd.submit_deadline_unix)}`;
+          } else if (rnd.phase === 'published' && rnd.continue_vote_close_unix) {
+            const t = rnd.continue_tally || { yes: 0, no: 0 };
+            line2 = `continue vote ${rem(rnd.continue_vote_close_unix)} (yes:${t.yes} no:${t.no})`;
+          } else if (rnd.phase === 'final') {
+            line2 = 'final';
+          }
           print(
-            `ok: ${body.ok === true ? 'yes' : 'no'}\nrounds: ${Array.isArray(body.rounds) ? body.rounds.length : 0}`
+            `ok: ${body.ok === true ? 'yes' : 'no'}\nround: ${rnd.idx ?? '-'} phase: ${rnd.phase ?? '-'}\n${line2}`
           );
+        }
         return res.ok ? EXIT.OK : EXIT.NETWORK;
       } catch (e) {
         printerr(`Failed to fetch state: ${e?.message || e}`);
@@ -327,39 +346,49 @@ async function main() {
         url.searchParams.set('room_id', room);
         const mod =
           url.protocol === 'https:' ? await import('node:https') : await import('node:http');
-        const req = mod.request(
-          url,
-          { method: 'GET', headers: { accept: 'text/event-stream' } },
-          (res) => {
-            res.setEncoding('utf8');
-            let buf = '';
-            res.on('data', (chunk) => {
-              buf += chunk;
-              let idx;
-              while ((idx = buf.indexOf('\n\n')) !== -1) {
-                const frame = buf.slice(0, idx);
-                buf = buf.slice(idx + 2);
-                const dataLine = frame.split('\n').find((l) => l.startsWith('data: '));
-                if (dataLine) {
-                  const json = dataLine.slice(6);
-                  try {
-                    const evt = JSON.parse(json);
-                    process.stdout.write((args.json ? JSON.stringify(evt) : json) + '\n');
-                  } catch {
-                    /* ignore */
+        return await new Promise((resolve) => {
+          const req = mod.request(
+            url,
+            { method: 'GET', headers: { accept: 'text/event-stream' } },
+            (res) => {
+              res.setEncoding('utf8');
+              let buf = '';
+              res.on('data', (chunk) => {
+                buf += chunk;
+                let idx;
+                while ((idx = buf.indexOf('\n\n')) !== -1) {
+                  const frame = buf.slice(0, idx);
+                  buf = buf.slice(idx + 2);
+                  const dataLine = frame.split('\n').find((l) => l.startsWith('data: '));
+                  if (dataLine) {
+                    const json = dataLine.slice(6);
+                    try {
+                      const evt = JSON.parse(json);
+                      process.stdout.write((args.json ? JSON.stringify(evt) : json) + '\n');
+                      if (process.env.DB8_CLI_TEST_ONCE === '1') {
+                        try {
+                          req.destroy();
+                        } catch {
+                          /* noop */
+                        }
+                        resolve(EXIT.OK);
+                        return;
+                      }
+                    } catch {
+                      /* ignore */
+                    }
                   }
                 }
-              }
-            });
-            res.on('end', () => process.exit(EXIT.OK));
-          }
-        );
-        req.on('error', (e) => {
-          printerr(e.message);
-          process.exit(EXIT.NETWORK);
+              });
+              res.on('end', () => resolve(EXIT.OK));
+            }
+          );
+          req.on('error', (e) => {
+            printerr(e.message);
+            resolve(EXIT.NETWORK);
+          });
+          req.end();
         });
-        req.end();
-        return EXIT.OK;
       } catch (e) {
         printerr(e?.message || String(e));
         return EXIT.NETWORK;

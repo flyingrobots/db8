@@ -83,6 +83,10 @@ export default [
         describe: 'readonly',
         it: 'readonly',
         beforeEach: 'readonly',
+        beforeAll: 'readonly',
+        afterAll: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
         vi: 'readonly'
       }
     }
