@@ -20,8 +20,10 @@ export default [
       globals: {
         process: 'readonly',
         console: 'readonly',
+        URL: 'readonly',
         fetch: 'readonly',
-        setInterval: 'readonly'
+        setInterval: 'readonly',
+        clearInterval: 'readonly'
       }
     },
     rules: {

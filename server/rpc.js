@@ -180,6 +180,30 @@ app.post('/rpc/vote.continue', (req, res) => {
 // Authoritative state snapshot (stub)
 app.get('/state', (_req, res) => res.json({ ok: true, rounds: [], submissions: [] }));
 
+// SSE: timer events (stub). Streams { t:'timer', room_id, ends_unix } every 1s.
+app.get('/events', (req, res) => {
+  const roomId = String(req.query.room_id || 'local');
+  const now = Math.floor(Date.now() / 1000);
+  const ends = now + 10; // 10-second demo timer; replace with real deadline when available
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const send = () => {
+    const payload = JSON.stringify({ t: 'timer', room_id: roomId, ends_unix: ends });
+    res.write(`event: timer\n`);
+    res.write(`data: ${payload}\n\n`);
+  };
+  send();
+  const iv = setInterval(send, 1000);
+  req.on('close', () => {
+    clearInterval(iv);
+    res.end();
+  });
+});
+
 export default app;
 
 // If invoked directly, start server
