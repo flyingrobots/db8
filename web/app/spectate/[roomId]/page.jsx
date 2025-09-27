@@ -1,10 +1,12 @@
 'use client';
+import { use } from 'react';
 import ThemeToggle from '@/components/theme-toggle';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 
 export default function SpectatorPage({ params }) {
-  const roomId = params.roomId || 'demo';
+  const resolvedParams = typeof params?.then === 'function' ? use(params) : params;
+  const roomId = resolvedParams?.roomId || 'demo';
   return (
     <main className="max-w-6xl mx-auto p-6 space-y-6">
       <header className="flex items-center justify-between">

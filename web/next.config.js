@@ -1,6 +1,9 @@
+import path from 'node:path';
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: { typedRoutes: false }
+  typedRoutes: false,
+  outputFileTracingRoot: path.resolve(process.cwd(), '..')
 };
 
 export default nextConfig;
