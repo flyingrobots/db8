@@ -34,9 +34,24 @@ node server/rpc.js   # listens on :3000
 
 Endpoints:
 
-- `GET /state` — returns `{ ok:true, rounds:[], submissions:[] }` (stub)
+- `GET /state` — returns the active round snapshot, continue tally, and transcript
 - `POST /rpc/submission.create` — accepts a validated submission and returns `{ ok, submission_id, canonical_sha256 }`
 - `POST /rpc/vote.continue` — idempotent continue vote; returns `{ ok, vote_id }`
+
+## Run tests
+
+```
+npm test
+```
+
+The default suite exercises the in-memory server. To run the live Postgres tests (the same ones CI executes on every build), start the docker Postgres service first and pass the Postgres environment variables:
+
+```
+npm run dev:db
+RUN_PGTAP=1 DB8_TEST_DATABASE_URL=postgresql://postgres:test@localhost:54329/db8 npm test
+```
+
+Setting `RUN_PGTAP=1` will also enable pgTAP if `db/test/run.sh` is present. Shut the database down with `npm run stop:db` when you're finished.
 
 ## CLI quickstart (local)
 
