@@ -23,6 +23,10 @@ if (config.databaseUrl) {
   }
 }
 
+export function __setDbPool(pool) {
+  db = pool;
+}
+
 // Healthcheck
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
@@ -53,52 +57,27 @@ app.post('/rpc/submission.create', (req, res) => {
 
     const key = `${input.room_id}:${input.round_id}:${input.author_id}:${input.client_nonce}`;
     if (db) {
-      // Try to persist and respect idempotency at DB level when possible
-      // Note: schema unique keys may not exist yet; use an upsert-by-select pattern
       return db
         .query(
-          `with existing as (
-             select id from submissions
-              where round_id = $1 and author_id = $2 and client_nonce = $3
-           ), ins as (
-             insert into submissions (round_id, author_id, content, claims, citations, status,
-                                      submitted_at, canonical_sha256, signature_kind, signature_b64, signer_fingerprint, jwt_sub, client_nonce)
-             select $1, $2, $4, $5, $6, 'submitted', now(), $7, $8, $9, $10, null, $3
-             where not exists (select 1 from existing)
-             returning id
-           )
-           select id from ins
-           union all
-           select id from existing
-           limit 1`.replace(/\s+\n/g, ' '),
+          'select submission_upsert($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id',
           [
             input.round_id,
             input.author_id,
-            input.client_nonce,
             input.content,
             JSON.stringify(input.claims),
             JSON.stringify(input.citations),
             canonical_sha256,
-            input.signature_kind || null,
-            input.signature_b64 || null,
-            input.signer_fingerprint || null
+            input.client_nonce
           ]
         )
-        .then(async (r) => {
-          let submission_id = r.rows[0]?.id;
-          // If insert/select path failed to return id (no table/unique), emulate idempotency via memory fallback
-          if (!submission_id) {
-            if (memSubmissions.has(key)) {
-              submission_id = memSubmissions.get(key).id;
-            } else {
-              submission_id = crypto.randomUUID();
-              memSubmissions.set(key, { id: submission_id, canonical_sha256 });
-            }
+        .then((r) => {
+          const submission_id = r.rows?.[0]?.id;
+          if (submission_id) {
+            return res.json({ ok: true, submission_id, canonical_sha256 });
           }
-          return res.json({ ok: true, submission_id, canonical_sha256 });
+          throw new Error('submission_upsert_missing_id');
         })
         .catch((e) => {
-          // Fallback to memory on DB failure; preserve idempotency
           let submission_id;
           if (memSubmissions.has(key)) {
             submission_id = memSubmissions.get(key).id;
@@ -114,15 +93,14 @@ app.post('/rpc/submission.create', (req, res) => {
             db_error: e.message
           });
         });
-    } else {
-      if (memSubmissions.has(key)) {
-        const found = memSubmissions.get(key);
-        return res.json({ ok: true, submission_id: found.id, canonical_sha256 });
-      }
-      const submission_id = crypto.randomUUID();
-      memSubmissions.set(key, { id: submission_id, canonical_sha256 });
-      return res.json({ ok: true, submission_id, canonical_sha256 });
     }
+    if (memSubmissions.has(key)) {
+      const found = memSubmissions.get(key);
+      return res.json({ ok: true, submission_id: found.id, canonical_sha256 });
+    }
+    const submission_id = crypto.randomUUID();
+    memSubmissions.set(key, { id: submission_id, canonical_sha256 });
+    return res.json({ ok: true, submission_id, canonical_sha256 });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
   }
@@ -147,40 +125,34 @@ app.post('/rpc/vote.continue', (req, res) => {
     const key = `${input.round_id}:${input.voter_id}:continue:${input.client_nonce}`;
     if (db) {
       return db
-        .query(
-          `with existing as (
-             select id from votes
-              where round_id = $1 and voter_id = $2 and kind = 'continue' and client_nonce = $3
-           ), ins as (
-             insert into votes (room_id, round_id, voter_id, kind, ballot, client_nonce)
-             select $4, $1, $2, 'continue', $5, $3
-             where not exists (select 1 from existing)
-             returning id
-           )
-           select id from ins
-           union all
-           select id from existing
-           limit 1`.replace(/\s+\n/g, ' '),
-          [
-            input.round_id,
-            input.voter_id,
-            input.client_nonce,
-            input.room_id,
-            JSON.stringify({ choice: input.choice })
-          ]
-        )
+        .query('select vote_submit($1::uuid,$2::uuid,$3::uuid,$4::text,$5::jsonb,$6::text) as id', [
+          input.room_id,
+          input.round_id,
+          input.voter_id,
+          'continue',
+          JSON.stringify({ choice: input.choice }),
+          input.client_nonce
+        ])
         .then((r) => {
-          const vote_id = r.rows[0]?.id || crypto.randomUUID();
-          addVoteToTotals(input.room_id, input.choice);
-          return res.json({ ok: true, vote_id });
+          const vote_id = r.rows?.[0]?.id;
+          if (vote_id) {
+            addVoteToTotals(input.room_id, input.choice);
+            return res.json({ ok: true, vote_id });
+          }
+          throw new Error('vote_submit_missing_id');
         })
-        .catch((_e) => {
+        .catch((e) => {
           if (memVotes.has(key))
-            return res.json({ ok: true, vote_id: memVotes.get(key).id, note: 'db_fallback' });
+            return res.json({
+              ok: true,
+              vote_id: memVotes.get(key).id,
+              note: 'db_fallback',
+              db_error: e.message
+            });
           const vote_id = crypto.randomUUID();
           memVotes.set(key, { id: vote_id, choice: input.choice });
           addVoteToTotals(input.room_id, input.choice);
-          return res.json({ ok: true, vote_id, note: 'db_fallback' });
+          return res.json({ ok: true, vote_id, note: 'db_fallback', db_error: e.message });
         });
     }
     if (memVotes.has(key)) return res.json({ ok: true, vote_id: memVotes.get(key).id });
