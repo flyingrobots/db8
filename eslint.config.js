@@ -7,7 +7,15 @@ import pluginReact from 'eslint-plugin-react';
 
 export default [
   {
-    ignores: ['node_modules/**', 'dist/**', '.next/**', 'web/.next/**', 'web/out/**', 'coverage/**']
+    ignores: [
+      'node_modules/**',
+      'dist/**',
+      '.next/**',
+      'web/.next/**',
+      'web/out/**',
+      'coverage/**',
+      '.obsidian/**'
+    ]
   },
   js.configs.recommended,
   {
