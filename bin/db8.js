@@ -404,12 +404,27 @@ async function main() {
         printerr('No room configured. Set --room or DB8_ROOM_ID or config profile.');
         return EXIT.AUTH;
       }
-      try {
-        const url = new URL(apiUrl.replace(/\/$/, '') + '/events');
-        url.searchParams.set('room_id', room);
-        const mod =
-          url.protocol === 'https:' ? await import('node:https') : await import('node:http');
-        return await new Promise((resolve) => {
+      const quiet = Boolean(args.quiet);
+      const maxEvents = Number(
+        process.env.DB8_CLI_TEST_MAX_EVENTS || (process.env.DB8_CLI_TEST_ONCE === '1' ? 1 : 0)
+      );
+      const url = new URL(apiUrl.replace(/\/$/, '') + '/events');
+      url.searchParams.set('room_id', room);
+      const mod =
+        url.protocol === 'https:' ? await import('node:https') : await import('node:http');
+      let stopRequested = false;
+      let eventsSeen = 0;
+      let attempt = 0;
+      let lastExit = EXIT.OK;
+
+      const sleep = (ms) => new Promise((resolve) => globalThis.setTimeout(resolve, ms));
+      const onSigint = () => {
+        stopRequested = true;
+      };
+      process.once('SIGINT', onSigint);
+
+      const connect = () =>
+        new Promise((resolve) => {
           const req = mod.request(
             url,
             { method: 'GET', headers: { accept: 'text/event-stream' } },
@@ -427,18 +442,21 @@ async function main() {
                     const json = dataLine.slice(6);
                     try {
                       const evt = JSON.parse(json);
-                      process.stdout.write((args.json ? JSON.stringify(evt) : json) + '\n');
-                      if (process.env.DB8_CLI_TEST_ONCE === '1') {
+                      process.stdout.write(JSON.stringify(evt) + '\n');
+                      eventsSeen += 1;
+                      attempt = 0; // reset backoff on successful event
+                      if (maxEvents && eventsSeen >= maxEvents) {
+                        stopRequested = true;
                         try {
                           req.destroy();
                         } catch {
-                          /* noop */
+                          /* ignore */
                         }
                         resolve(EXIT.OK);
                         return;
                       }
                     } catch {
-                      /* ignore */
+                      /* ignore malformed frames */
                     }
                   }
                 }
@@ -447,15 +465,23 @@ async function main() {
             }
           );
           req.on('error', (e) => {
-            printerr(e.message);
+            if (!quiet) printerr(e.message);
             resolve(EXIT.NETWORK);
           });
           req.end();
         });
-      } catch (e) {
-        printerr(e?.message || String(e));
-        return EXIT.NETWORK;
+
+      while (!stopRequested) {
+        attempt += 1;
+        lastExit = await connect();
+        if (stopRequested || (maxEvents && eventsSeen >= maxEvents)) break;
+        const delay = Math.min(500 * attempt, 5000);
+        if (!quiet) printerr(`reconnecting in ${delay}ms...`);
+        await sleep(delay);
       }
+
+      process.removeListener('SIGINT', onSigint);
+      return lastExit;
     }
     case 'draft:open': {
       // Create a local draft scaffold
