@@ -1,5 +1,33 @@
 -- db/rpc.sql — SQL RPCs for idempotent upserts and round operations
 
+CREATE OR REPLACE FUNCTION room_create(
+  p_topic text,
+  p_cfg jsonb DEFAULT '{}'::jsonb
+) RETURNS uuid
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_room_id uuid;
+  v_participants integer := COALESCE((p_cfg->>'participant_count')::int, 5);
+  v_submit_minutes integer := COALESCE((p_cfg->>'submit_minutes')::int, 5);
+  v_now integer := extract(epoch from now())::int;
+  v_submit_deadline integer := v_now + GREATEST(v_submit_minutes, 1) * 60;
+BEGIN
+  INSERT INTO rooms (title)
+  VALUES (p_topic)
+  RETURNING id INTO v_room_id;
+
+  INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix)
+  VALUES (v_room_id, 0, 'submit', v_submit_deadline);
+
+  INSERT INTO participants (room_id, anon_name, role)
+  SELECT v_room_id, format('anon_%s', gs), 'debater'
+  FROM generate_series(1, GREATEST(v_participants, 1)) AS gs;
+
+  RETURN v_room_id;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION submission_upsert(
   p_round_id uuid,
   p_author_id uuid,
@@ -109,4 +137,3 @@ CREATE OR REPLACE VIEW view_continue_tally AS
   FROM rounds r
   LEFT JOIN votes v ON v.round_id = r.id
   GROUP BY r.room_id, r.id;
-
