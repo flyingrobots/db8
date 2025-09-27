@@ -1,5 +1,28 @@
 BEGIN;
-SELECT plan(8);
+SELECT plan(11);
+
+-- RPC existence: room_create(topic, cfg)
+SELECT ok(
+  to_regprocedure('room_create(text,jsonb)') IS NOT NULL,
+  'room_create exists'
+);
+
+-- RPC behavior: room_create seeds participants and round 0
+DO $$
+DECLARE
+  rid uuid;
+  participant_count integer;
+  round_count integer;
+BEGIN
+  SELECT room_create('Demo room', jsonb_build_object('participant_count', 3, 'submit_minutes', 1)) INTO rid;
+  PERFORM ok(rid IS NOT NULL, 'room_create returned room id');
+
+  SELECT count(*) INTO participant_count FROM participants WHERE room_id = rid;
+  PERFORM ok(participant_count = 3, 'room_create seeded participants');
+
+  SELECT count(*) INTO round_count FROM rounds WHERE room_id = rid AND idx = 0;
+  PERFORM ok(round_count = 1, 'room_create created initial round 0');
+END$$;
 
 -- RPC existence: submission_upsert(round_id, author_id, content, claims, citations, canonical_sha256, client_nonce)
 SELECT ok(
@@ -53,4 +76,3 @@ END $$;
 
 SELECT * FROM finish();
 ROLLBACK;
-

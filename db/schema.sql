@@ -24,6 +24,18 @@ CREATE TABLE IF NOT EXISTS rounds (
 
 CREATE INDEX IF NOT EXISTS idx_rounds_room_idx ON rounds (room_id, idx DESC);
 
+-- Participants (seeded per room; referenced by submissions/votes conceptually)
+CREATE TABLE IF NOT EXISTS participants (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  room_id          uuid        NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  anon_name        text        NOT NULL,
+  role             text        NOT NULL DEFAULT 'debater',
+  jwt_sub          text,
+  ssh_fingerprint  text,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (room_id, anon_name)
+);
+
 -- Submissions: idempotent by (round_id, author_id, client_nonce)
 CREATE TABLE IF NOT EXISTS submissions (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
