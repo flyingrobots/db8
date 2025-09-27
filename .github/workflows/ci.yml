@@ -57,6 +57,14 @@ jobs:
           DATABASE_URL: postgresql://postgres:test@localhost:54329/db8
         run: npm test
 
+      - name: Tests (Postgres RPC integration)
+        if: ${{ vars.RUN_PGTAP == '1' || github.event.inputs.run_pgtap == '1' }}
+        env:
+          RUN_PGTAP: '1'
+          DATABASE_URL: postgresql://postgres:test@localhost:54329/db8
+          DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:54329/db8
+        run: npx vitest run server/test/rpc.db.postgres.test.js
+
       - name: pgTAP (optional)
         if: ${{ vars.RUN_PGTAP == '1' || github.event.inputs.run_pgtap == '1' }}
         env:
