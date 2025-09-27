@@ -183,18 +183,12 @@ PRs (labels/milestone set, auto-merge enabled where appropriate):
 
 ## Next Moves (Plan)
 
-Short-term (M1 finish):
+Short-term (M1 wrap):
 
-- DB RPC integration in server
-  - Prefer calling SQL RPCs (`submission_upsert`, `vote_submit`) when `DATABASE_URL` is set; retain memory fallback.
-  - Add small integration tests exercising DB path (mock PG or run against local Docker DB in CI as we do).
-- DB pgTAP expansion
-  - Add round behavior checks (publish/open) assertions with seeded rows; verify views reflect transitions.
-  - Optional: add advisory lock checks (naming only, functional smoke).
-- CLI
-  - Minimal device-code/magic-link scaffolding behind a flag to align with #25; non-interactive mode fails fast.
-- Web
-  - Render transcript once `/state` exposes submissions or add a dedicated endpoint for current round transcript.
+- `/events` + sync: stream countdown and transcript updates from the DB path; consider polling + diff as an interim step.
+- `/state` enrichment follow-up: replace demo round IDs with real DB-issued IDs and surface published_at / continue_close UNIX fields consistently.
+- CI hygiene: document the new Postgres suite trigger (`RUN_PGTAP` or workflow input) and decide if/when to promote it to always-on.
+- CLI polish: device-code/magic-link stub (#25) and `--dry-run` submit path from issue #6 once transcripts land.
 
 Medium-term (hexagonal preparation):
 
@@ -204,5 +198,25 @@ Medium-term (hexagonal preparation):
 
 Operational/CI:
 
-- Optionally enable pgTAP job via workflow dispatch (`RUN_PGTAP=1`) to exercise DB invariants in CI.
+- Evaluate enabling pgTAP + Postgres suite in a dedicated job once runtime stabilizes.
 - Continue Project board hygiene (Status/Workflow updates on issue start, PR open, and merge).
+
+## Agent Log — 2025-09-27
+
+### Work completed
+
+- Server
+  - `/rpc/submission.create` and `/rpc/vote.continue` call the SQL RPCs when `DATABASE_URL` is present, leaving the in-memory fallback for failures.
+  - `/state` now pulls the active round, tally, and transcript from Postgres (with deterministic fallback) and keeps transcript metadata in memory for demos.
+  - Added `__setDbPool` for tests, a stubbed PG pool spec, and a live Postgres Vitest suite that verifies persistence plus `/state` output.
+- Web
+  - Room and Spectator pages render the transcript (author, timestamp, canonical hash) returned by `/state`; submit card now reports transcript count.
+- CI / Issues
+  - CI workflow runs the Postgres RPC suite when `RUN_PGTAP` or `run_pgtap` is enabled.
+  - Logged follow-ups: #49 (docker-backed SQL RPC tests) and #50 (surface transcript) — both addressed here; remaining items tracked in updated plan.
+
+### Next up
+
+- Wire `/events` to emit DB-backed updates (or poll + diff) so the web UI sees transcript changes without refresh.
+- Expose richer `/state` metadata (e.g., published timestamps, vote window) once round lifecycle RPCs are exercised.
+- Decide on promotion of live-DB tests in CI and keep documentation current for contributors.
