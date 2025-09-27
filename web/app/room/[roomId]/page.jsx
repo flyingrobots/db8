@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { use, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -23,7 +23,8 @@ function mmss(secRemaining) {
 }
 
 export default function RoomPage({ params }) {
-  const roomId = decodeURIComponent(params.roomId || '');
+  const resolvedParams = typeof params?.then === 'function' ? use(params) : params;
+  const roomId = decodeURIComponent(resolvedParams?.roomId || '');
   const [state, setState] = useState(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [content, setContent] = useState('');
