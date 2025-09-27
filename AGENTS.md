@@ -209,6 +209,7 @@ Operational/CI:
   - `/rpc/submission.create` and `/rpc/vote.continue` call the SQL RPCs when `DATABASE_URL` is present, leaving the in-memory fallback for failures.
   - `/state` now pulls the active round, tally, and transcript from Postgres (with deterministic fallback) and keeps transcript metadata in memory for demos.
   - Added `__setDbPool` for tests, a stubbed PG pool spec, and a live Postgres Vitest suite that verifies persistence plus `/state` output.
+  - Introduced `room_create(topic,cfg)` SQL RPC to seed participants and open round 0.
 - Web
   - Room and Spectator pages render the transcript (author, timestamp, canonical hash) returned by `/state`; submit card now reports transcript count.
 - CI / Issues
