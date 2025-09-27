@@ -71,6 +71,13 @@ suite('Postgres-backed RPC integration', () => {
       first.body.submission_id
     ]);
     expect(rows.rows[0]?.canonical_sha256).toEqual(expectedHash);
+
+    const state = await request(app).get(`/state?room_id=${body.room_id}`).expect(200);
+    const transcriptEntry = state.body?.round?.transcript?.find(
+      (t) => t.submission_id === first.body.submission_id
+    );
+    expect(transcriptEntry).toBeTruthy();
+    expect(transcriptEntry?.canonical_sha256).toEqual(expectedHash);
   });
 
   it('persists continue votes through vote_submit', async () => {
@@ -93,5 +100,8 @@ suite('Postgres-backed RPC integration', () => {
     const raw = rows.rows[0]?.ballot;
     const ballot = typeof raw === 'string' ? JSON.parse(raw) : raw;
     expect(ballot?.choice).toBe('continue');
+
+    const state = await request(app).get(`/state?room_id=${body.room_id}`).expect(200);
+    expect(state.body.round.continue_tally).toEqual({ yes: 1, no: 0 });
   });
 });
