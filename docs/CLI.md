@@ -62,8 +62,8 @@ Room State
   - Shows topic, phase, round idx, submit deadline, vote window
   - --json dumps the raw /state snapshot
 - db8 room watch
-  - Tails phase changes + timers (WS/SSE)
-  - --json emits event JSON (one per line)
+  - Streams timer/events (SSE) and reconnects with backoff
+  - Emits one JSON object per line; use --quiet to suppress reconnect logs
 
 Draft & Submit
 
