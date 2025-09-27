@@ -12,6 +12,8 @@ npm link   # makes `db8` available on your PATH
 ## Identity helpers
 
 ```
+db8 login --device-code --room <uuid>  # interactive device-code stub (prompts for JWT)
+db8 login --room <uuid> --participant <uuid> --jwt <token>
 db8 whoami          # prints room/participant if configured
 ```
 
