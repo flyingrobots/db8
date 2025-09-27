@@ -103,6 +103,7 @@ export default function RoomPage({ params }) {
   const remaining = Math.max(0, (endsAt || 0) - now);
   const canSubmit =
     state?.ok && state?.round?.phase === 'submit' && isUUID(roomId) && isUUID(participant);
+  const transcript = Array.isArray(state?.round?.transcript) ? state.round.transcript : [];
 
   // Persist small fields locally for convenience
   useEffect(() => {
@@ -282,14 +283,41 @@ export default function RoomPage({ params }) {
             </div>
           </CardContent>
         </Card>
-      ) : (
-        <Card>
-          <CardContent className="p-5 space-y-2">
+      ) : null}
+
+      <Card>
+        <CardContent className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
             <div className="text-lg font-semibold">Transcript</div>
-            <div className="text-sm text-muted">Stub — submissions listing to be wired later.</div>
-          </CardContent>
-        </Card>
-      )}
+            <Badge variant="outline">{transcript.length} entries</Badge>
+          </div>
+          {transcript.length === 0 ? (
+            <p className="text-sm text-muted">No submissions yet.</p>
+          ) : (
+            <ul className="space-y-3">
+              {transcript.map((entry) => (
+                <li
+                  key={entry.submission_id}
+                  className="rounded border border-border p-3 space-y-2"
+                >
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span className="font-mono text-[11px]">{entry.author_id}</span>
+                    {entry.submitted_at ? (
+                      <time dateTime={new Date(entry.submitted_at * 1000).toISOString()}>
+                        {new Date(entry.submitted_at * 1000).toLocaleTimeString()}
+                      </time>
+                    ) : null}
+                  </div>
+                  <p className="whitespace-pre-line text-sm leading-relaxed">{entry.content}</p>
+                  <p className="text-[11px] text-muted-foreground font-mono">
+                    sha256: {entry.canonical_sha256}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
     </main>
   );
 }

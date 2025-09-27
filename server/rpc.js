@@ -31,7 +31,7 @@ export function __setDbPool(pool) {
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // In-memory idempotency and submission store (M1 stub / fallback)
-const memSubmissions = new Map(); // key -> { id, canonical_sha256 }
+const memSubmissions = new Map(); // key -> { id, canonical_sha256, content, author_id }
 
 // submission.create
 app.post('/rpc/submission.create', (req, res) => {
@@ -83,7 +83,12 @@ app.post('/rpc/submission.create', (req, res) => {
             submission_id = memSubmissions.get(key).id;
           } else {
             submission_id = crypto.randomUUID();
-            memSubmissions.set(key, { id: submission_id, canonical_sha256 });
+            memSubmissions.set(key, {
+              id: submission_id,
+              canonical_sha256,
+              content: input.content,
+              author_id: input.author_id
+            });
           }
           return res.json({
             ok: true,
@@ -99,7 +104,12 @@ app.post('/rpc/submission.create', (req, res) => {
       return res.json({ ok: true, submission_id: found.id, canonical_sha256 });
     }
     const submission_id = crypto.randomUUID();
-    memSubmissions.set(key, { id: submission_id, canonical_sha256 });
+    memSubmissions.set(key, {
+      id: submission_id,
+      canonical_sha256,
+      content: input.content,
+      author_id: input.author_id
+    });
     return res.json({ ok: true, submission_id, canonical_sha256 });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
@@ -203,12 +213,80 @@ function ensureRoom(roomId) {
 }
 
 // Authoritative state snapshot (enriched)
-app.get('/state', (req, res) => {
+app.get('/state', async (req, res) => {
   const roomId = String(req.query.room_id || 'local');
+  if (db) {
+    try {
+      const roundResult = await db.query(
+        `select room_id, round_id, idx, phase, submit_deadline_unix,
+                published_at_unix, continue_vote_close_unix
+           from view_current_round
+          where room_id = $1
+          order by idx desc
+          limit 1`,
+        [roomId]
+      );
+      const roundRow = roundResult.rows?.[0];
+      if (roundRow) {
+        const [tallyResult, submissionsResult] = await Promise.all([
+          db.query(
+            'select yes, no from view_continue_tally where room_id = $1 and round_id = $2 limit 1',
+            [roomId, roundRow.round_id]
+          ),
+          db.query(
+            `select id, author_id, content, canonical_sha256, submitted_at
+               from submissions
+              where round_id = $1
+              order by submitted_at asc nulls last, id asc`,
+            [roundRow.round_id]
+          )
+        ]);
+        const tallyRow = tallyResult.rows?.[0] || { yes: 0, no: 0 };
+        const transcript = submissionsResult.rows.map((row) => ({
+          submission_id: row.id,
+          author_id: row.author_id,
+          content: row.content,
+          canonical_sha256: row.canonical_sha256,
+          submitted_at: row.submitted_at ? Math.floor(row.submitted_at.getTime() / 1000) : null
+        }));
+        return res.json({
+          ok: true,
+          room_id: roomId,
+          round: {
+            idx: roundRow.idx,
+            phase: roundRow.phase,
+            submit_deadline_unix: roundRow.submit_deadline_unix,
+            published_at_unix: roundRow.published_at_unix,
+            continue_vote_close_unix: roundRow.continue_vote_close_unix,
+            continue_tally: {
+              yes: Number(tallyRow.yes || 0),
+              no: Number(tallyRow.no || 0)
+            },
+            transcript
+          }
+        });
+      }
+    } catch {
+      // fall through to in-memory state on error
+    }
+  }
   const state = ensureRoom(roomId);
   const round = state.round;
   const tally = memVoteTotals.get(roomId) || { yes: 0, no: 0 };
-  return res.json({ ok: true, room_id: roomId, round: { ...round, continue_tally: tally } });
+  const transcript = Array.from(memSubmissions.entries())
+    .filter(([key]) => key.startsWith(`${roomId}:`))
+    .map(([, value]) => ({
+      submission_id: value.id,
+      author_id: value.author_id,
+      content: value.content,
+      canonical_sha256: value.canonical_sha256,
+      submitted_at: null
+    }));
+  return res.json({
+    ok: true,
+    room_id: roomId,
+    round: { ...round, continue_tally: tally, transcript }
+  });
 });
 
 // SSE: timer events. Streams { t:'timer', room_id, ends_unix, round_idx, phase } every 1s.

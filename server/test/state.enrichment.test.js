@@ -9,6 +9,7 @@ describe('GET /state enrichment', () => {
     expect(r.body.room_id).toBe('roomA');
     expect(typeof r.body.round.submit_deadline_unix).toBe('number');
     expect(r.body.round.continue_tally).toEqual({ yes: 0, no: 0 });
+    expect(Array.isArray(r.body.round.transcript)).toBe(true);
   });
 
   it('updates tally when votes are cast', async () => {
@@ -36,5 +37,6 @@ describe('GET /state enrichment', () => {
       .expect(200);
     const after = await request(app).get(`/state?room_id=${ROOM_UUID}`).expect(200);
     expect(after.body.round.continue_tally).toEqual({ yes: 1, no: 1 });
+    expect(Array.isArray(after.body.round.transcript)).toBe(true);
   });
 });
