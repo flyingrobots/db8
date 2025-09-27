@@ -443,8 +443,9 @@ async function main() {
       }
     }
     case 'submit': {
-      if (!room || !participant || !jwt) {
-        printerr('Missing room/participant/JWT. Run db8 login or set env.');
+      const dryRun = Boolean(args['dry-run']);
+      if (!room || !participant || (!dryRun && !jwt)) {
+        printerr('Missing room/participant credentials. Run db8 login or set env.');
         return EXIT.AUTH;
       }
       const anon = process.env.DB8_ANON || 'anon';
@@ -466,6 +467,20 @@ async function main() {
         SubmissionIn.parse(payload);
         const canon = canonicalize(payload);
         const canonical_sha256 = sha256Hex(canon);
+        if (dryRun) {
+          const info = {
+            ok: true,
+            dry_run: true,
+            canonical_sha256,
+            client_nonce: payload.client_nonce
+          };
+          if (args.json) print(JSON.stringify(info));
+          else
+            print(
+              `canonical_sha256: ${canonical_sha256}\nclient_nonce: ${payload.client_nonce}\n(dry run — not submitted)`
+            );
+          return EXIT.OK;
+        }
         const url = `${apiUrl.replace(/\/$/, '')}/rpc/submission.create`;
         const res = await fetch(url, {
           method: 'POST',
