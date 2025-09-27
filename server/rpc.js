@@ -4,18 +4,20 @@ import pg from 'pg';
 import { rateLimitStub } from './mw/rate-limit.js';
 import { SubmissionIn, ContinueVote } from './schemas.js';
 import { canonicalize, sha256Hex } from './utils.js';
+import { loadConfig } from './config/config-builder.js';
 
 const app = express();
+const config = loadConfig();
 app.use(express.json());
-app.use(rateLimitStub({ enforce: process.env.ENFORCE_RATELIMIT === '1' }));
+app.use(rateLimitStub({ enforce: config.enforceRateLimit }));
 // Serve static demo files (public/*) so you can preview UI in a browser
 app.use(express.static('public'));
 
 // Optional DB client (if DATABASE_URL provided)
 let db = null;
-if (process.env.DATABASE_URL) {
+if (config.databaseUrl) {
   try {
-    db = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
+    db = new pg.Pool({ connectionString: config.databaseUrl, max: 2 });
   } catch {
     db = null;
   }
@@ -193,8 +195,8 @@ app.post('/rpc/vote.continue', (req, res) => {
 
 // In-memory room/round state and simple time-based transitions
 const memRooms = new Map(); // room_id -> { round: { idx, phase, submit_deadline_unix, published_at_unix?, continue_vote_close_unix? } }
-const SUBMIT_WINDOW_SEC = Number(process.env.SUBMIT_WINDOW_SEC || 300);
-const CONTINUE_WINDOW_SEC = Number(process.env.CONTINUE_WINDOW_SEC || 30);
+const SUBMIT_WINDOW_SEC = config.submitWindowSec;
+const CONTINUE_WINDOW_SEC = config.continueWindowSec;
 
 function ensureRoom(roomId) {
   let r = memRooms.get(roomId);
@@ -274,7 +276,7 @@ app.get('/events', (req, res) => {
 export default app;
 
 // If invoked directly, start server
-if (process.env.NODE_ENV !== 'test' && import.meta.url === `file://${process.argv[1]}`) {
-  const port = process.env.PORT || 3000;
+if (config.nodeEnv !== 'test' && import.meta.url === `file://${process.argv[1]}`) {
+  const port = config.port;
   app.listen(port, () => console.error(`rpc listening on ${port}`));
 }

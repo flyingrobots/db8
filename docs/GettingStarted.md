@@ -24,6 +24,8 @@ npm run dev:db      # starts Postgres 16 on localhost:54329
 
 Set `DATABASE_URL=postgresql://postgres:test@localhost:54329/db8` in your shell if you want the server to persist submissions/votes. Without it, the server uses in‑memory storage with idempotency.
 
+To apply the M1 schema and SQL RPCs to your local DB and optionally run pgTAP invariants, see docs/LocalDB.md.
+
 ## Start the server
 
 ```
