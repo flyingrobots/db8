@@ -30,6 +30,7 @@ $EDITOR db8/round-0/anon/draft.json
 db8 draft validate  # runs Zod locally; prints canonical SHA256
 
 db8 submit          # canonicalizes and POSTs to /rpc/submission.create
+db8 submit --dry-run  # prints canonical SHA + nonce without sending to the server
 ```
 
 Flags & env
