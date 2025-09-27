@@ -1,0 +1,56 @@
+BEGIN;
+SELECT plan(8);
+
+-- RPC existence: submission_upsert(round_id, author_id, content, claims, citations, canonical_sha256, client_nonce)
+SELECT ok(
+  to_regprocedure('submission_upsert(uuid,uuid,text,jsonb,jsonb,text,text)') IS NOT NULL,
+  'submission_upsert exists'
+);
+
+-- RPC behavior: submission_upsert is idempotent by (round_id, author_id, client_nonce)
+DO $$
+DECLARE
+  r uuid := '00000000-0000-0000-0000-0000000000aa';
+  a uuid := '00000000-0000-0000-0000-0000000000bb';
+  n text := 'nonce-sub-1';
+  id1 uuid; id2 uuid;
+BEGIN
+  SELECT submission_upsert(r, a, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n) INTO id1;
+  SELECT submission_upsert(r, a, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n) INTO id2;
+  PERFORM ok(id1 = id2, 'submission_upsert idempotent for same nonce');
+END$$;
+
+-- RPC existence: vote_submit(room_id, round_id, voter_id, kind, ballot, client_nonce)
+SELECT ok(
+  to_regprocedure('vote_submit(uuid,uuid,uuid,text,jsonb,text)') IS NOT NULL,
+  'vote_submit exists'
+);
+
+-- RPC behavior: vote_submit is idempotent by (round_id, voter_id, kind, client_nonce)
+DO $$
+DECLARE
+  room uuid := '00000000-0000-0000-0000-0000000000ac';
+  round uuid := '00000000-0000-0000-0000-0000000000ad';
+  voter uuid := '00000000-0000-0000-0000-0000000000ae';
+  n text := 'nonce-vote-1';
+  id1 uuid; id2 uuid;
+BEGIN
+  SELECT vote_submit(room, round, voter, 'continue', '{}'::jsonb, n) INTO id1;
+  SELECT vote_submit(room, round, voter, 'continue', '{}'::jsonb, n) INTO id2;
+  PERFORM ok(id1 = id2, 'vote_submit idempotent for same nonce');
+END$$;
+
+-- Round ops existence (skeleton)
+SELECT ok(to_regprocedure('round_publish_due()') IS NOT NULL, 'round_publish_due exists');
+SELECT ok(to_regprocedure('round_open_next()') IS NOT NULL, 'round_open_next exists');
+
+-- Round ops callable without error (no-op acceptable in M1)
+DO $$ BEGIN
+  PERFORM round_publish_due();
+  PERFORM round_open_next();
+  PERFORM pass('round ops are callable');
+END $$;
+
+SELECT * FROM finish();
+ROLLBACK;
+

@@ -131,3 +131,78 @@ Operational notes (for future‑you)
   - `POST /rpc/submission.create` — Zod, canonicalization, idempotent by `(room, round, author, client_nonce)`, optional DB.
   - `POST /rpc/vote.continue` — Zod, idempotent by `(round, voter, kind, client_nonce)`, optional DB.
   - `GET /state` — stub snapshot.
+
+---
+
+## Agent Log — 2025-09-26
+
+Summary of work completed end-to-end today:
+
+- Lint/CI pipeline
+  - Fixed ESLint blocking issues; added `.npm-cache/` to `.gitignore`.
+  - Introduced a dedicated web lint config, then unified to a single root ESLint with alias resolver (`@ -> ./web`).
+  - Updated `lint-staged` to avoid ignored-file warnings; CI now installs `web/` dependencies and caches both lockfiles.
+
+- CLI
+  - Implemented `login` (stores `~/.db8/session.json`) and verified `whoami` output.
+  - Polished `room status` (phase + timers + tally) and made `room watch` robust; added test-only single-event escape.
+  - Added focused Vitest for `login`, `room status`, and `room watch`.
+
+- Worker/Server
+  - Authoritative timers: `/events` uses real round deadlines (submit/continue windows).
+  - Fixed continue tally key in phase transition.
+  - Added watcher transition test with fake timers.
+
+- Web (Next.js)
+  - New `Room` page `/room/[roomId]`: snapshot + SSE countdown, submit stub in `submit` phase, continue tally otherwise.
+  - Polish: client-side Zod validation, inline error/success, localStorage convenience.
+
+- Database (M1)
+  - Schema: `rooms`, `rounds`, `submissions`, `votes` with idempotency uniques and indexes.
+  - SQL RPCs: `submission_upsert`, `vote_submit`, `round_publish_due`, `round_open_next`.
+  - Views: `view_current_round`, `view_continue_tally`.
+  - pgTAP: invariants for tables/uniques/views and RPC existence + idempotency; optional runner documented.
+
+- Configuration
+  - Introduced `SecretSource` + `ConfigBuilder`; eliminated direct `process.env` usage from server.
+
+- Documentation
+  - Added `docs/LocalDB.md` and linked it from `docs/GettingStarted.md`.
+
+- Project hygiene
+  - Synced the “db8 Roadmap” project items; set active issues to In Progress and PRs to In Review where applicable.
+
+PRs (labels/milestone set, auto-merge enabled where appropriate):
+
+- #43 feat(cli): login stores session; whoami reads it — merged
+- #44 feat(cli): room status formatter and watch lifecycle — merged (Closes #26)
+- #45 feat(worker): authoritative timers + SSE bound to deadlines — merged (Closes #3)
+- #46 feat(web): Room page with countdown, submit stub, tally — merged (Closes #5)
+- #47 feat(web): Room page polish (Zod, inline errors) — merged
+- #48 feat(db): M1 schema, views, and SQL RPCs — open/in review (Closes #1; Partially #2)
+
+## Next Moves (Plan)
+
+Short-term (M1 finish):
+
+- DB RPC integration in server
+  - Prefer calling SQL RPCs (`submission_upsert`, `vote_submit`) when `DATABASE_URL` is set; retain memory fallback.
+  - Add small integration tests exercising DB path (mock PG or run against local Docker DB in CI as we do).
+- DB pgTAP expansion
+  - Add round behavior checks (publish/open) assertions with seeded rows; verify views reflect transitions.
+  - Optional: add advisory lock checks (naming only, functional smoke).
+- CLI
+  - Minimal device-code/magic-link scaffolding behind a flag to align with #25; non-interactive mode fails fast.
+- Web
+  - Render transcript once `/state` exposes submissions or add a dedicated endpoint for current round transcript.
+
+Medium-term (hexagonal preparation):
+
+- Define ports (interfaces) under `server/ports/` for Repos, Clock, Id, Events.
+- Implement adapters: PG and in-memory repos, Express controllers, SSE publisher.
+- Migrate use-cases into `server/app/` with Zod at edges; keep deterministic behavior and easy unit tests.
+
+Operational/CI:
+
+- Optionally enable pgTAP job via workflow dispatch (`RUN_PGTAP=1`) to exercise DB invariants in CI.
+- Continue Project board hygiene (Status/Workflow updates on issue start, PR open, and merge).
