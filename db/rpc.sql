@@ -15,8 +15,8 @@ DECLARE
   v_room_id uuid;
   v_participants integer := COALESCE(NULLIF(p_cfg->>'participant_count', '')::int, 4);
   v_submit_minutes integer := COALESCE(NULLIF(p_cfg->>'submit_minutes', '')::int, 5);
-  v_now integer := extract(epoch from now())::int;
-  v_submit_deadline integer;
+  v_now bigint := extract(epoch from now())::bigint;
+  v_submit_deadline bigint;
   v_client_nonce text := NULLIF(p_client_nonce, '');
   v_created boolean := false;
 BEGIN
@@ -126,7 +126,7 @@ $$;
 CREATE OR REPLACE FUNCTION round_publish_due() RETURNS void
 LANGUAGE plpgsql
 AS $$
-DECLARE now_unix integer := extract(epoch from now())::int;
+DECLARE now_unix bigint := extract(epoch from now())::bigint;
 BEGIN
   UPDATE rounds SET
     phase = 'published',
@@ -139,7 +139,7 @@ $$;
 CREATE OR REPLACE FUNCTION round_open_next() RETURNS void
 LANGUAGE plpgsql
 AS $$
-DECLARE now_unix integer := extract(epoch from now())::int;
+DECLARE now_unix bigint := extract(epoch from now())::bigint;
 BEGIN
   -- advance published rounds whose continue window closed
   WITH due AS (
