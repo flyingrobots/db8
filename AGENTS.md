@@ -66,6 +66,7 @@ Guardrails (enforced by repo config)
 - ESLint + Prettier. See eslint.config.js and .prettierrc.
 - Git hooks for lint-staged and commit message checks.
 - CI runs lint and tests with a real Postgres service.
+- History hygiene: never amend, rebase, or force-push shared branches. Always add new commits and resolve forward.
 
 Test-first checklist (M1)
 
@@ -220,3 +221,35 @@ Operational/CI:
 - Wire `/events` to emit DB-backed updates (or poll + diff) so the web UI sees transcript changes without refresh.
 - Expose richer `/state` metadata (e.g., published timestamps, vote window) once round lifecycle RPCs are exercised.
 - Decide on promotion of live-DB tests in CI and keep documentation current for contributors.
+
+## Agent Log — 2025-09-29
+
+### Work completed
+
+- Database / RPCs
+  - Added `participants` table with role constraint (`debater|host|judge`), round/participant foreign keys, and supporting indexes/tests.
+  - Hardened `room_create`: unique `client_nonce`, idempotent `ON CONFLICT` insert, bounded inputs (`participant_count` 1..64, `submit_minutes` 1..1440), moved epoch math to `bigint`, and simplified seeding to rely on SQL idempotency.
+  - Documented the room creation contract (signature, defaults, nonce usage) in `docs/LocalDB.md` and added pgTAP coverage for happy path, idempotency reuse counts, boundary acceptance, and failure cases.
+  - Tightened `vote_submit` (allowed kinds + `ON CONFLICT … DO UPDATE` returning) and ensured zero-vote rounds finalize via COALESCE logic in both the RPC and `view_continue_tally`.
+- Tests / Tooling
+  - Expanded pgTAP suite (constraint/index checks, room_create invariants, submission/vote idempotency, finalize-without-votes).
+  - Updated Postgres Vitest fixture to seed participants, truncate optional tables safely, and exercise the DB path without fallback.
+  - Removed redundant submission nonce index; clarified docstrings/comments.
+- Docs / Process
+  - Clarified `room_create` usage in docs and recorded the no-force-push policy in `AGENTS.md`.
+
+### Problems encountered
+
+- Occasional Vitest watcher/rate-limit socket errors during rapid reruns; rerunning cleared them (not consistently reproducible).
+- Early force-push/amend usage prompted policy update (no history rewrites going forward).
+
+### Follow-ups / unresolved
+
+- Schema migration still needed to alter `rounds.*_unix` columns to `bigint` (logic already assumes it).
+- Wire the new `room_create` RPC into server/CLI flows and expose it via API.
+- Add higher-level tests for moderator flag surfacing and vote kind validation.
+
+### Next session starter
+
+- Begin by integrating `room_create` into server/CLI workflows (include client nonce handling) and verify end-to-end room creation.
+- Check PR #61 status; merge if CI is green, then move on to auth/moderation follow-ups.
