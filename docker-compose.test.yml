@@ -6,3 +6,22 @@ services:
       POSTGRES_DB: db8
     ports: ["54329:5432"]
 
+  tests:
+    image: node:20-bookworm
+    working_dir: /app
+    depends_on:
+      db:
+        condition: service_started
+    environment:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:test@db:5432/db8
+      DB8_TEST_DATABASE_URL: postgresql://postgres:test@db:5432/db8
+    volumes:
+      - ./:/app
+      - node_modules_linux:/app/node_modules
+      - node_modules_web_linux:/app/web/node_modules
+    command: ["tail", "-f", "/dev/null"]
+
+volumes:
+  node_modules_linux:
+  node_modules_web_linux:
