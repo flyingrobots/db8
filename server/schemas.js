@@ -37,3 +37,13 @@ export const ContinueVote = z.object({
   choice: z.enum(['continue', 'end']),
   client_nonce: z.string().min(8)
 });
+
+export const SubmissionFlag = z.object({
+  submission_id: z.string().uuid(),
+  reporter_id: z.string().min(1),
+  reporter_role: z
+    .enum(['participant', 'moderator', 'fact_checker', 'viewer', 'system'])
+    .optional()
+    .default('participant'),
+  reason: z.string().max(500).optional().default('')
+});

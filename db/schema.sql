@@ -60,4 +60,17 @@ CREATE TABLE IF NOT EXISTS votes (
 
 CREATE INDEX IF NOT EXISTS idx_votes_room_round_kind ON votes (room_id, round_id, kind);
 
+-- Submission flags: allow participants/moderators/viewers to report content
+CREATE TABLE IF NOT EXISTS submission_flags (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  submission_id  uuid        NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+  reporter_id    text        NOT NULL,
+  reporter_role  text        NOT NULL,
+  reason         text        NOT NULL DEFAULT '',
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (submission_id, reporter_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_submission_flags_submission ON submission_flags (submission_id);
+
 -- Future M1/M2: rooms/rounds tables, RLS policies, and RPCs
