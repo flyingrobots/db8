@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(18);
+SELECT plan(20);
 
 -- RPC existence: room_create(topic, cfg)
 SELECT ok(
@@ -36,6 +36,18 @@ BEGIN
   SELECT room_create('Another Room', '{"participant_count":2}'::jsonb, 'nonce-room-2') INTO new_room2;
   PERFORM ok(new_room2 <> new_room, 'room_create creates new room for new nonce');
 END$$;
+
+SELECT throws_ok(
+  $$select room_create('Too Few', '{"participant_count":0}'::jsonb, 'nonce-room-low')$$,
+  '22023',
+  'room_create rejects participant_count below range'
+);
+
+SELECT throws_ok(
+  $$select room_create('Too Late', '{"submit_minutes":2000}'::jsonb, 'nonce-room-high')$$,
+  '22023',
+  'room_create rejects submit_minutes above range'
+);
 
 -- RPC existence: submission_upsert(round_id, author_id, content, claims, citations, canonical_sha256, client_nonce)
 SELECT ok(

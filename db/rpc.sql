@@ -12,10 +12,22 @@ DECLARE
   v_participants integer := COALESCE((p_cfg->>'participant_count')::int, 4);
   v_submit_minutes integer := COALESCE((p_cfg->>'submit_minutes')::int, 5);
   v_now integer := extract(epoch from now())::int;
-  v_submit_deadline integer := v_now + GREATEST(v_submit_minutes, 1) * 60;
+  v_submit_deadline integer;
   v_client_nonce text := NULLIF(p_client_nonce, '');
   v_created boolean := false;
 BEGIN
+  IF v_participants < 1 OR v_participants > 64 THEN
+    RAISE EXCEPTION 'participant_count out of range [1..64]: %', v_participants
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF v_submit_minutes < 1 OR v_submit_minutes > 1440 THEN
+    RAISE EXCEPTION 'submit_minutes out of range [1..1440]: %', v_submit_minutes
+      USING ERRCODE = '22023';
+  END IF;
+
+  v_submit_deadline := v_now + v_submit_minutes * 60;
+
   IF v_client_nonce IS NOT NULL THEN
     SELECT id INTO v_room_id FROM rooms WHERE client_nonce = v_client_nonce;
   END IF;
@@ -38,7 +50,7 @@ BEGIN
 
     INSERT INTO participants (room_id, anon_name, role)
     SELECT v_room_id, format('agent_%s', gs), 'debater'
-    FROM generate_series(1, GREATEST(v_participants, 1)) AS gs
+    FROM generate_series(1, v_participants) AS gs
     ON CONFLICT (room_id, anon_name) DO NOTHING;
   END IF;
 
