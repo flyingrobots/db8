@@ -61,7 +61,7 @@ SELECT throws_ok(
 
 -- RPC existence: submission_upsert(round_id, author_id, content, claims, citations, canonical_sha256, client_nonce)
 SELECT ok(
-  to_regprocedure('submission_upsert(uuid,uuid,text,jsonb,jsonb,text,text)') IS NOT NULL,
+  to_regprocedure('public.submission_upsert(uuid,uuid,text,jsonb,jsonb,text,text)') IS NOT NULL,
   'submission_upsert exists'
 );
 
@@ -95,7 +95,7 @@ END$$;
 
 -- RPC existence: vote_submit(room_id, round_id, voter_id, kind, ballot, client_nonce)
 SELECT ok(
-  to_regprocedure('vote_submit(uuid,uuid,uuid,text,jsonb,text)') IS NOT NULL,
+  to_regprocedure('public.vote_submit(uuid,uuid,uuid,text,jsonb,text)') IS NOT NULL,
   'vote_submit exists'
 );
 
@@ -128,8 +128,8 @@ BEGIN
 END$$;
 
 -- Round ops existence (skeleton)
-SELECT ok(to_regprocedure('round_publish_due()') IS NOT NULL, 'round_publish_due exists');
-SELECT ok(to_regprocedure('round_open_next()') IS NOT NULL, 'round_open_next exists');
+SELECT ok(to_regprocedure('public.round_publish_due()') IS NOT NULL, 'round_publish_due exists');
+SELECT ok(to_regprocedure('public.round_open_next()') IS NOT NULL, 'round_open_next exists');
 
 -- Round ops callable without error (no-op acceptable in M1)
 DO $$ BEGIN
