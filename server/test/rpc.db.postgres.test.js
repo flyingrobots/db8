@@ -33,6 +33,13 @@ suite('Postgres-backed RPC integration', () => {
        values ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 0, 'submit', 0)
        on conflict (id) do nothing`
     );
+    await pool.query(
+      `insert into participants (id, room_id, anon_name, role)
+       values
+         ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'pg-author', 'debater'),
+         ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', 'pg-voter', 'debater')
+       on conflict (id) do nothing`
+    );
   });
 
   afterAll(async () => {
@@ -41,7 +48,15 @@ suite('Postgres-backed RPC integration', () => {
   });
 
   beforeEach(async () => {
-    await pool.query('TRUNCATE submissions, votes RESTART IDENTITY CASCADE;');
+    const tables = ['submission_flags', 'submissions', 'votes'];
+    const existing = [];
+    for (const table of tables) {
+      const res = await pool.query('select to_regclass($1) as reg', [`public.${table}`]);
+      if (res.rows[0]?.reg) existing.push(`"public"."${table}"`);
+    }
+    if (existing.length > 0) {
+      await pool.query(`TRUNCATE ${existing.join(', ')} RESTART IDENTITY CASCADE;`);
+    }
   });
 
   it('persists submissions through submission_upsert', async () => {

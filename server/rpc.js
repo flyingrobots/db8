@@ -141,8 +141,7 @@ app.post('/rpc/vote.continue', (req, res) => {
     const key = `${input.round_id}:${input.voter_id}:continue:${input.client_nonce}`;
     if (db) {
       return db
-        .query('select vote_submit($1::uuid,$2::uuid,$3::uuid,$4::text,$5::jsonb,$6::text) as id', [
-          input.room_id,
+        .query('select vote_submit($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::text) as id', [
           input.round_id,
           input.voter_id,
           'continue',
