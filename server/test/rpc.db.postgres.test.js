@@ -48,7 +48,15 @@ suite('Postgres-backed RPC integration', () => {
   });
 
   beforeEach(async () => {
-    await pool.query('TRUNCATE submission_flags, submissions, votes RESTART IDENTITY CASCADE;');
+    const tables = ['submission_flags', 'submissions', 'votes'];
+    const existing = [];
+    for (const table of tables) {
+      const res = await pool.query('select to_regclass($1) as reg', [`public.${table}`]);
+      if (res.rows[0]?.reg) existing.push(`"public"."${table}"`);
+    }
+    if (existing.length > 0) {
+      await pool.query(`TRUNCATE ${existing.join(', ')} RESTART IDENTITY CASCADE;`);
+    }
   });
 
   it('persists submissions through submission_upsert', async () => {
