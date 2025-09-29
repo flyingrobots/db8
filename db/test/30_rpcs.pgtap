@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(21);
+SELECT plan(22);
 
 -- RPC existence: room_create(topic, cfg)
 SELECT ok(
@@ -58,6 +58,20 @@ SELECT throws_ok(
   '23514',
   'participants role constraint rejects invalid values'
 );
+
+DO $$
+DECLARE
+  room uuid := '00000000-0000-0000-0000-00000000ffff';
+  round uuid := '00000000-0000-0000-0000-00000000ffee';
+BEGIN
+  INSERT INTO rooms (id, title, client_nonce) VALUES (room, 'finalize-test', 'nonce-final')
+    ON CONFLICT (id) DO NOTHING;
+  INSERT INTO rounds (id, room_id, idx, phase, submit_deadline_unix, continue_vote_close_unix)
+    VALUES (round, room, 0, 'published', 0, 0)
+    ON CONFLICT (id) DO NOTHING;
+  PERFORM round_publish_due();
+  PERFORM ok((SELECT phase FROM rounds WHERE id = round) = 'final', 'round_publish_due finalizes when no votes');
+END $$;
 
 -- RPC existence: submission_upsert(round_id, author_id, content, claims, citations, canonical_sha256, client_nonce)
 SELECT ok(
