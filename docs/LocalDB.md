@@ -22,6 +22,16 @@ psql postgresql://postgres:test@localhost:54329/db8 -f db/schema.sql
 psql postgresql://postgres:test@localhost:54329/db8 -f db/rpc.sql
 ```
 
+### Create a Room + Seed Participants
+
+The new `room_create(topic json)` RPC seeds a room, round 0, and a roster of anonymous participants. Example:
+
+```
+psql postgresql://postgres:test@localhost:54329/db8 -c "select room_create('Demo Topic', '{\"participant_count\":4,\"submit_minutes\":2}'::jsonb, 'demo-room-nonce');"
+```
+
+The function returns the `room_id` you can plug into API calls or the CLI. Repeating the call with the same nonce reuses the existing room.
+
 ## Optional: Run pgTAP Invariants
 
 We include pgTAP files that assert the DB invariants (tables, uniques, RPC existence, idempotency). These are optional and default to off in CI.

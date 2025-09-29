@@ -1,5 +1,41 @@
 BEGIN;
-SELECT plan(8);
+SELECT plan(18);
+
+-- RPC existence: room_create(topic, cfg)
+SELECT ok(
+  to_regprocedure('public.room_create(text,jsonb,text)') IS NOT NULL,
+  'room_create exists'
+);
+
+-- RPC behavior: room_create seeds participants and round deadline
+DO $$
+DECLARE
+  new_room uuid;
+  participant_count integer;
+  round_deadline integer;
+  round_phase text;
+  round_idx integer;
+  role_count integer;
+  same_room uuid;
+  new_room2 uuid;
+BEGIN
+  SELECT room_create('Test Room', '{"participant_count":3,"submit_minutes":1}'::jsonb, 'nonce-room-1') INTO new_room;
+  SELECT count(*) INTO participant_count FROM participants WHERE room_id = new_room;
+  SELECT submit_deadline_unix, phase, idx
+    INTO round_deadline, round_phase, round_idx
+    FROM rounds WHERE room_id = new_room AND idx = 0;
+  SELECT count(*) INTO role_count FROM participants WHERE room_id = new_room AND role = 'debater';
+  PERFORM ok(participant_count = 3, 'room_create seeds configured participants');
+  PERFORM ok(round_deadline > extract(epoch from now())::int, 'room_create schedules submit deadline in future');
+  PERFORM ok(round_phase = 'submit' AND round_idx = 0, 'room_create opens round 0 in submit phase');
+  PERFORM ok(role_count = participant_count, 'room_create participants default to debater');
+
+  SELECT room_create('Updated Title', '{"participant_count":5}'::jsonb, 'nonce-room-1') INTO same_room;
+  PERFORM ok(same_room = new_room, 'room_create reuses room id for same nonce');
+
+  SELECT room_create('Another Room', '{"participant_count":2}'::jsonb, 'nonce-room-2') INTO new_room2;
+  PERFORM ok(new_room2 <> new_room, 'room_create creates new room for new nonce');
+END$$;
 
 -- RPC existence: submission_upsert(round_id, author_id, content, claims, citations, canonical_sha256, client_nonce)
 SELECT ok(
@@ -10,14 +46,29 @@ SELECT ok(
 -- RPC behavior: submission_upsert is idempotent by (round_id, author_id, client_nonce)
 DO $$
 DECLARE
-  r uuid := '00000000-0000-0000-0000-0000000000aa';
-  a uuid := '00000000-0000-0000-0000-0000000000bb';
+  room uuid := '00000000-0000-0000-0000-0000000000a0';
+  round uuid := '00000000-0000-0000-0000-0000000000aa';
+  author uuid := '00000000-0000-0000-0000-0000000000bb';
   n text := 'nonce-sub-1';
-  id1 uuid; id2 uuid;
+  n2 text := 'nonce-sub-2';
+  id1 uuid; id2 uuid; id3 uuid;
+  sub_count integer;
 BEGIN
-  SELECT submission_upsert(r, a, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n) INTO id1;
-  SELECT submission_upsert(r, a, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n) INTO id2;
+  INSERT INTO rooms (id, title) VALUES (room, 'rpc-test-room')
+    ON CONFLICT (id) DO NOTHING;
+  INSERT INTO rounds (id, room_id, idx, phase, submit_deadline_unix)
+    VALUES (round, room, 0, 'submit', 0)
+    ON CONFLICT (id) DO NOTHING;
+  INSERT INTO participants (id, room_id, anon_name, role)
+    VALUES (author, room, 'rpc_test_agent', 'debater')
+    ON CONFLICT (id) DO NOTHING;
+  SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n) INTO id1;
+  SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n) INTO id2;
   PERFORM ok(id1 = id2, 'submission_upsert idempotent for same nonce');
+  SELECT count(*) INTO sub_count FROM submissions WHERE round_id = round AND author_id = author;
+  PERFORM ok(sub_count = 1, 'submission_upsert stores single row for repeated nonce');
+  SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n2) INTO id3;
+  PERFORM ok(id3 <> id1, 'submission_upsert creates new row for different nonce');
 END$$;
 
 -- RPC existence: vote_submit(room_id, round_id, voter_id, kind, ballot, client_nonce)
@@ -29,15 +80,29 @@ SELECT ok(
 -- RPC behavior: vote_submit is idempotent by (round_id, voter_id, kind, client_nonce)
 DO $$
 DECLARE
-  room uuid := '00000000-0000-0000-0000-0000000000ac';
-  round uuid := '00000000-0000-0000-0000-0000000000ad';
+  v_room uuid := '00000000-0000-0000-0000-0000000000ac';
+  v_round uuid := '00000000-0000-0000-0000-0000000000ad';
   voter uuid := '00000000-0000-0000-0000-0000000000ae';
   n text := 'nonce-vote-1';
-  id1 uuid; id2 uuid;
+  n2 text := 'nonce-vote-2';
+  id1 uuid; id2 uuid; id3 uuid;
+  votes_count integer;
 BEGIN
-  SELECT vote_submit(room, round, voter, 'continue', '{}'::jsonb, n) INTO id1;
-  SELECT vote_submit(room, round, voter, 'continue', '{}'::jsonb, n) INTO id2;
+  INSERT INTO rooms (id, title) VALUES (v_room, 'rpc-test-room-2')
+    ON CONFLICT (id) DO NOTHING;
+  INSERT INTO rounds (id, room_id, idx, phase, submit_deadline_unix)
+    VALUES (v_round, v_room, 0, 'published', 0)
+    ON CONFLICT (id) DO NOTHING;
+  INSERT INTO participants (id, room_id, anon_name, role)
+    VALUES (voter, v_room, 'rpc_test_voter', 'debater')
+    ON CONFLICT (id) DO NOTHING;
+  SELECT vote_submit(v_room, v_round, voter, 'continue', '{}'::jsonb, n) INTO id1;
+  SELECT vote_submit(v_room, v_round, voter, 'continue', '{}'::jsonb, n) INTO id2;
   PERFORM ok(id1 = id2, 'vote_submit idempotent for same nonce');
+  SELECT count(*) INTO votes_count FROM votes WHERE round_id = v_round AND voter_id = voter AND kind = 'continue';
+  PERFORM ok(votes_count = 1, 'vote_submit stores single row for repeated nonce');
+  SELECT vote_submit(v_room, v_round, voter, 'continue', '{}'::jsonb, n2) INTO id3;
+  PERFORM ok(id3 <> id1, 'vote_submit creates new row for different nonce');
 END$$;
 
 -- Round ops existence (skeleton)
@@ -53,4 +118,3 @@ END $$;
 
 SELECT * FROM finish();
 ROLLBACK;
-

@@ -1,4 +1,50 @@
--- db/rpc.sql — SQL RPCs for idempotent upserts and round operations
+-- db/rpc.sql — SQL RPCs for room lifecycle, idempotent submissions, and round operations
+
+CREATE OR REPLACE FUNCTION room_create(
+  p_topic text,
+  p_cfg jsonb DEFAULT '{}'::jsonb,
+  p_client_nonce text DEFAULT NULL
+) RETURNS uuid
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_room_id uuid;
+  v_participants integer := COALESCE((p_cfg->>'participant_count')::int, 4);
+  v_submit_minutes integer := COALESCE((p_cfg->>'submit_minutes')::int, 5);
+  v_now integer := extract(epoch from now())::int;
+  v_submit_deadline integer := v_now + GREATEST(v_submit_minutes, 1) * 60;
+  v_client_nonce text := NULLIF(p_client_nonce, '');
+  v_created boolean := false;
+BEGIN
+  IF v_client_nonce IS NOT NULL THEN
+    SELECT id INTO v_room_id FROM rooms WHERE client_nonce = v_client_nonce;
+  END IF;
+
+  IF v_room_id IS NULL THEN
+    INSERT INTO rooms (title, client_nonce)
+    VALUES (NULLIF(p_topic, ''), v_client_nonce)
+    RETURNING id INTO v_room_id;
+    v_created := true;
+  ELSE
+    UPDATE rooms
+       SET title = COALESCE(title, NULLIF(p_topic, ''))
+     WHERE id = v_room_id;
+  END IF;
+
+  IF v_created THEN
+    INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix)
+    VALUES (v_room_id, 0, 'submit', v_submit_deadline)
+    ON CONFLICT (room_id, idx) DO NOTHING;
+
+    INSERT INTO participants (room_id, anon_name, role)
+    SELECT v_room_id, format('agent_%s', gs), 'debater'
+    FROM generate_series(1, GREATEST(v_participants, 1)) AS gs
+    ON CONFLICT (room_id, anon_name) DO NOTHING;
+  END IF;
+
+  RETURN v_room_id;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION submission_upsert(
   p_round_id uuid,
@@ -109,4 +155,3 @@ CREATE OR REPLACE VIEW view_continue_tally AS
   FROM rounds r
   LEFT JOIN votes v ON v.round_id = r.id
   GROUP BY r.room_id, r.id;
-
