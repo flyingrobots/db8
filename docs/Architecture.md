@@ -8,10 +8,11 @@ Yes—for agents and the CLI, SSH can do both auth and provenance cleanly. For t
 
 ## The Winning Pattern
 
-1) Identity & auth (SSH)
+1. Identity & auth (SSH)
+
 - Key material: Ed25519 SSH keys (~/.ssh/id_ed25519) for agents/CLI.
 - SSH CA: issue short-lived SSH certificates (minutes–hours) binding a principal like anon_3@room_abc.
-- CA pubkey lives in your Git trust ref (immutable): refs/_db8/trust/ssh_ca.pub.
+- CA pubkey lives in your Git trust ref (immutable): refs/\_db8/trust/ssh_ca.pub.
 - Challenge auth (no sockets): keep HTTPS/JSON-RPC. Do a stateless challenge:
   1. Client asks /auth/challenge → server returns {nonce, expires_at, audience:"db8"}.
   2. Client signs the nonce with SSH: ssh-keygen -Y sign -f ~/.ssh/id_ed25519 -n db8 nonce.txt.
@@ -20,16 +21,18 @@ Yes—for agents and the CLI, SSH can do both auth and provenance cleanly. For t
   5. Server mints a short JWT session (or just accepts the signed header per request).
 - Rotation/revocation: you don’t revoke keys; you expire certs quickly. Re-issue on demand.
 
-2) Provenance (SSH signatures on content)
+2. Provenance (SSH signatures on content)
+
 - Canonicalize each submission (stable JSON).
 - Sign with SSH (detached):
   ssh-keygen -Y sign -f ~/.ssh/id_ed25519 -n db8 submission.json.
-- Attach the *.sig (OpenSSH sig format) with the payload.
+- Attach the \*.sig (OpenSSH sig format) with the payload.
 - Server verifies against the same allowed_signers set; stores {payload, sha256, ssh_sig, signer_principal}.
 - Round checkpoints: server also signs the rolling chain hash with a hardware key (KMS/minisign). Belt + suspenders.
-- Journal: commit {payload, hash, ssh_sig, checkpoint.sig} to Shiplog refs/_db8/journal/<room>.
+- Journal: commit {payload, hash, ssh_sig, checkpoint.sig} to Shiplog refs/\_db8/journal/<room>.
 
-3) Browser (humans)
+3. Browser (humans)
+
 - Browsers don’t have native SSH keys/agent. Two options:
 - Pragmatic hybrid (recommended): Web uses Supabase Auth (magic link/passkey). Server performs server-side attestation (signs the submission in KMS) and publishes the checkpoint.
 - You still get strong tamper-evidence; user identity rides on Supabase JWT + RLS.
@@ -91,29 +94,34 @@ curl -X POST https://api.db8.app/rpc/submission.create \
 ```
 
 Server verifies:
+
 - Build allowed_signers for the room from CA pubkey + principal list.
 - ssh-keygen -Y verify -f allowed_signers -I anon_3@room_abc -n db8 -s submission.json.sig < submission.json
 
 Checkpoint signing (server):
-- chain_i = sha256(chain_{i-1} || sha256(submission.json))
+
+- chain*i = sha256(chain*{i-1} || sha256(submission.json))
 - sig_chain = kms_sign(chain_i)
 - Publish all to Shiplog.
 
 ---
 
 ## Why This Is Solid
+
 - One keypair for both login and signing (for agents/CLI).
 - Short-lived certs kill the revocation problem.
 - Standard tooling (ssh-keygen -Y sign/verify)—no bespoke crypto.
 - Public verifiability: anyone can fetch your trust ref + journal and run ssh-keygen -Y verify.
 
 ### Pitfalls (and the answers)
+
 - Browser can’t SSH-sign: use Supabase Auth + server attestation, or browser Ed25519 (non-SSH) signatures.
 - Key sharing by bots: bind cert principals to room ids; refuse cross-room use.
 - Replay attacks: nonces + short cert TTLs; submissions include round_id and deadline in the signed payload.
 - Clock skew: accept small skew; prefer server timestamps in challenges.
 
 ### Bottom Line
+
 - Yes: make SSH your identity + signature backbone for bots/CLI.
 - Hybrid: keep web UX sane with Supabase Auth + server/browse-Ed25519 signatures.
 - You’ll get strong, auditable provenance without inventing a new crypto stack.
@@ -123,6 +131,7 @@ Perfect. Here’s the clean hybrid: JWT for session/authZ, SSH/Ed25519 for per-s
 ---
 
 ## 0) Identity Model
+
 - Humans (web): OIDC/Supabase Auth → JWT (sub = user id). Browser doesn’t sign payloads.
 - Agents/CLI: SSH Ed25519 keypair (+ optional short-lived SSH cert). They sign each submission.
 - Everyone ends up as a participant in a room. RLS keys off (room_id, participant_id).
@@ -165,29 +174,33 @@ Hash: sha256(canonical_json_string).
 ## 3) Wire Schemas (Zod)
 
 ```js
-import { z } from "zod";
+import { z } from 'zod';
 
 const Claim = z.object({
   id: z.string(),
   text: z.string().min(3),
-  support: z.array(z.object({
-    kind: z.enum(["citation","logic","data"]),
-    ref: z.string()
-  })).min(1)
+  support: z
+    .array(
+      z.object({
+        kind: z.enum(['citation', 'logic', 'data']),
+        ref: z.string()
+      })
+    )
+    .min(1)
 });
 
 const SubmissionIn = z.object({
   room_id: z.string().uuid(),
   round_id: z.string().uuid(),
   author_id: z.string().uuid(),
-  phase: z.enum(["RESEARCH","OPENING","ARGUMENT","FINAL"]),
+  phase: z.enum(['RESEARCH', 'OPENING', 'ARGUMENT', 'FINAL']),
   deadline_unix: z.number().int(),
   content: z.string().min(1).max(4000),
   claims: z.array(Claim).min(1).max(5),
   citations: z.array(z.object({ url: z.string().url(), title: z.string().optional() })).min(2),
 
   // Optional provenance for agents/CLI:
-  signature_kind: z.enum(["ssh","ed25519"]).optional(),
+  signature_kind: z.enum(['ssh', 'ed25519']).optional(),
   signature_b64: z.string().optional(),
   signer_fingerprint: z.string().optional()
 });
@@ -205,6 +218,7 @@ Auth: Authorization: Bearer <JWT> (web + CLI).
 Route: POST /rpc/submission.create
 
 Server flow:
+
 1. Zod validate.
 2. Build canonical JSON, compute sha256.
 3. If signature_kind present:
@@ -212,9 +226,9 @@ Server flow:
    - Verify ed25519: libsodium crypto_sign_verify_detached.
    - Enforce that the signer principal/fingerprint maps to author_id.
 4. Check deadline and RLS.
- 5. Enforce idempotency via (round_id, author_id, client_nonce) uniqueness.
- 6. Insert row (status = submitted), persist signature fields.
- 7. Return {ok, submission_id, canonical_sha256}.
+5. Enforce idempotency via (round_id, author_id, client_nonce) uniqueness.
+6. Insert row (status = submitted), persist signature fields.
+7. Return {ok, submission_id, canonical_sha256}.
 
 Example (CLI, SSH signed):
 
@@ -262,11 +276,13 @@ Commit to ShipLog (per round):
 ```
 
 Anyone can verify locally:
+
 - Client provenance (SSH/Ed25519) → ssh-keygen -Y verify or libsodium.
 - Server attestation → verify round.chain.sig against published server pubkey.
 - Immutability → Git ref history.
 
 ## 6) RLS + Mapping
+
 - participants has: id, room_id, jwt_sub (nullable), ssh_fingerprint (nullable)
 - RLS policy:
   - Submit: auth.jwt() ->> 'sub' = participants.jwt_sub OR the provided signer_fingerprint = participants.ssh_fingerprint, and participants.room_id = submissions.room_id, and phase is submit.
@@ -274,15 +290,17 @@ Anyone can verify locally:
   - Read (post-publish): all submissions in that round.
 
 ## 7) Web UX vs CLI/Agent UX
+
 - Web (JWT): user writes, hits Submit → server stores + later covers it with checkpoint signature (so the transcript is tamper-evident even without client keys).
 - CLI/Agent (SSH/Ed25519): they sign each submission; server verifies and stores signature + fp; checkpoint still happens.
 
 ## 8) Security Knobs
+
 - Anti-replay: signed payload includes room_id, round_id, author_id, deadline_unix. Reject if expired/mismatched.
 - Cert TTL (optional): if using SSH certs, enforce short TTL and principal anon_X@room_Y.
 - Rate limits: per (room_id, author_id) on submission.create.
 - Advisory lock: wrap PUBLISH in pg_advisory_lock(hash(room_id)) to flip atomically.
-- DLQ: submissions failing signature or deadline go to pgmq _dlq with reason.
+- DLQ: submissions failing signature or deadline go to pgmq \_dlq with reason.
 
 ## 9) Minimal Server Verify (JS, no TS)
 
@@ -345,6 +363,7 @@ export async function submissionCreate(req, res) {
 - Recovery: clients call `GET /state?room_id=...` after reconnect to fetch authoritative room/round state and resume rendering.
 
 ## 11) Why This Is the Right Split
+
 - JWT nails session/authZ (esp. web).
 - SSH/Ed25519 nails content provenance (who signed this exact text).
 - Checkpoint signature nails tamper-evidence for the whole round, even for web users who didn’t sign.
@@ -451,6 +470,7 @@ create table round_journal (
 ```
 
 RLS (sketch)
+
 - Enable RLS on participants, rounds, submissions, votes.
 - Policies:
   - participants: user can select their own row via jwt_sub = auth.jwt()->>'sub' or via ssh_fingerprint attached in session context.
@@ -555,11 +575,11 @@ begin
 end; $$ language plpgsql;
 
 -- votes
-create or replace function vote_submit(room uuid, round_in uuid, voter uuid, kind text, ballot jsonb)
+create or replace function vote_submit(round_in uuid, voter uuid, kind text, ballot jsonb)
 returns void as $$
 begin
-  insert into votes(room_id, round_id, voter_id, kind, ballot)
-  values (room, round_in, voter, kind, ballot)
+  insert into votes(round_id, voter_id, kind, ballot)
+  values (round_in, voter, kind, ballot)
   on conflict (round_id, voter_id, kind) do update set ballot = excluded.ballot, created_at = now();
 end; $$ language plpgsql;
 ```
@@ -569,11 +589,13 @@ end; $$ language plpgsql;
 ### 3) Sessions (Server/CLI/Web)
 
 Web (JWT)
+
 - User logs in via Supabase Auth → JWT in browser.
 - Every RPC call sends Authorization: Bearer <jwt>.
 - Server passes jwt_sub to RPC (Supabase RPC can read auth.jwt() directly if you call from client with anon key; for service-role backend, include it explicitly).
 
 CLI/Agents (SSH + JWT hybrid)
+
 - Obtain room token (one-time web auth or short-lived API token) → exchange for room-scoped JWT (simple).
 - For provenance, client SSH-signs the canonical submission and sends signature_kind='ssh', signature_b64, signer_fingerprint.
 - Server maps signer_fingerprint → participant row; RLS allows write.
@@ -609,9 +631,10 @@ STATE: research_k      (tools on, no writes)      [timer T_research]
 ```
 
 Transitions (guards):
+
 - submit_k → verify_k: now() ≥ submit_deadline.
 - verify_k → published_k: all submissions.status ∈ {'verified','forfeit'} for round.
-- published_k → research_{k+1}: continue vote passed.
+- published*k → research*{k+1}: continue vote passed.
 - published_k → final_submit: continue vote failed or max rounds reached.
 
 ### 5) JSON/Zod Wire Contracts
@@ -619,27 +642,31 @@ Transitions (guards):
 Submission (in/out)
 
 ```js
-import { z } from "zod";
+import { z } from 'zod';
 
 export const Claim = z.object({
   id: z.string(),
   text: z.string().min(3),
-  support: z.array(z.object({
-    kind: z.enum(["citation","logic","data"]),
-    ref: z.string()
-  })).min(1)
+  support: z
+    .array(
+      z.object({
+        kind: z.enum(['citation', 'logic', 'data']),
+        ref: z.string()
+      })
+    )
+    .min(1)
 });
 
 export const SubmissionIn = z.object({
   room_id: z.string().uuid(),
   round_id: z.string().uuid(),
   author_id: z.string().uuid(),
-  phase: z.enum(["OPENING","ARGUMENT","FINAL"]),
+  phase: z.enum(['OPENING', 'ARGUMENT', 'FINAL']),
   deadline_unix: z.number().int(),
   content: z.string().min(1).max(4000),
   claims: z.array(Claim).min(1).max(5),
   citations: z.array(z.object({ url: z.string().url(), title: z.string().optional() })).min(2),
-  signature_kind: z.enum(["ssh","ed25519"]).optional(),
+  signature_kind: z.enum(['ssh', 'ed25519']).optional(),
   signature_b64: z.string().optional(),
   signer_fingerprint: z.string().optional()
 });
@@ -657,12 +684,12 @@ Votes
 export const ContinueVote = z.object({
   room_id: z.string().uuid(),
   round_id: z.string().uuid(),
-  choice: z.enum(["continue","end"])
+  choice: z.enum(['continue', 'end'])
 });
 
 export const FinalVote = z.object({
   room_id: z.string().uuid(),
-  approval: z.array(z.string().uuid()).min(1),   // participant_ids approved
+  approval: z.array(z.string().uuid()).min(1), // participant_ids approved
   ranking: z.array(z.string().uuid()).optional() // tie-break
 });
 ```
@@ -679,16 +706,23 @@ import { supabase } from './supabase.js'; // service role, but pass jwt_sub thro
 const app = express();
 app.use(express.json());
 
-function canonicalize(obj){ return JSON.stringify(obj, Object.keys(obj).sort()); }
+function canonicalize(obj) {
+  return JSON.stringify(obj, Object.keys(obj).sort());
+}
 
-app.post('/rpc/submission.create', async (req,res) => {
+app.post('/rpc/submission.create', async (req, res) => {
   const jwt_sub = req.auth.sub; // from middleware that verifies JWT
   const input = SubmissionIn.parse(req.body);
 
   const canonical = canonicalize({
-    room_id: input.room_id, round_id: input.round_id, author_id: input.author_id,
-    phase: input.phase, deadline_unix: input.deadline_unix,
-    content: input.content, claims: input.claims, citations: input.citations
+    room_id: input.room_id,
+    round_id: input.round_id,
+    author_id: input.author_id,
+    phase: input.phase,
+    deadline_unix: input.deadline_unix,
+    content: input.content,
+    claims: input.claims,
+    citations: input.citations
   });
   const sha = crypto.createHash('sha256').update(canonical).digest('hex');
 
@@ -705,17 +739,17 @@ app.post('/rpc/submission.create', async (req,res) => {
     signer_fp: input.signer_fingerprint ?? null,
     jwt_sub_in: jwt_sub
   });
-  if (error) return res.status(400).json({ ok:false, error: error.message });
+  if (error) return res.status(400).json({ ok: false, error: error.message });
 
-  res.json(SubmissionOut.parse({ ok:true, submission_id: data, canonical_sha256: sha }));
+  res.json(SubmissionOut.parse({ ok: true, submission_id: data, canonical_sha256: sha }));
 });
 
-app.post('/rpc/vote.continue', async (req,res) => {
+app.post('/rpc/vote.continue', async (req, res) => {
   const jwt_sub = req.auth.sub;
   const V = ContinueVote.parse(req.body);
   // lookup voter_id via participants(jwt_sub)
-  // call vote_submit(room, round, voter, 'continue', { choice })
-  res.json({ ok:true });
+  // call vote_submit(round, voter, 'continue', { choice })
+  res.json({ ok: true });
 });
 
 app.listen(process.env.PORT || 3000);
@@ -734,12 +768,13 @@ async function tick() {
 
   // open next rounds when previous just published & continue passed
   // (you can encode continue_passed as an aggregate on votes table)
-  const { data: to_open } = await sb.from('rounds')
+  const { data: to_open } = await sb
+    .from('rounds')
     .select('room_id, idx')
-    .eq('phase','published')
+    .eq('phase', 'published')
     .in('room_id', /* rooms needing new round */ []);
 
-  for (const r of (to_open||[])) {
+  for (const r of to_open || []) {
     await sb.rpc('round_open_next', { room: r.room_id, prev_idx: r.idx, submit_minutes: 5 });
   }
 }
@@ -748,6 +783,7 @@ setInterval(tick, 4000);
 ```
 
 ### 8) Debate Loop Spec (invariants)
+
 - Barrier invariant: a round is published only when all live submissions are verified|forfeit.
 - Privacy invariant: before published_at, only author_id can read their submission.
 - Provenance invariant: every published submission has a canonical_sha256. If signature_kind is set, a valid detached signature over the canonical JSON is stored.
@@ -755,12 +791,14 @@ setInterval(tick, 4000);
 - Continuation decision: count votes(kind='continue') within window; strict majority advances; tie rule configurable.
 
 ### 9) CLI Flow (agent/human)
+
 - db8 login → get room-scoped JWT (stores in ~/.db8/session.json).
 - db8 draft open → writes draft.json, validates with Zod.
 - db8 submit → canonicalize → (optional) SSH-sign → POST /rpc/submission.create.
 - db8 watch → prints timers; blocks until PUBLISH; dumps all submissions.
 
 ### 10) What to Add Next (when MVP runs)
+
 - Fact-checker worker → fill verified|rejected with reasons.
 - Continue vote RPC + tally in SQL.
 - Round journal chain + server KMS signature → write to Shiplog.
@@ -771,11 +809,13 @@ setInterval(tick, 4000);
 ## Realtime Stack
 
 Transport
+
 - WebSocket primary.
 - Supabase Realtime for DB→client fanout (logical replication).
 - Optional SSE fallback (for CLI tailing in dumb shells).
 
 Auth
+
 - JWT from Supabase Auth in the WS Authorization header.
 - Room access enforced by RLS on the backing views.
 
@@ -792,50 +832,51 @@ realtime:room.<room_id>.votes
 ```
 
 Publish via:
+
 - Supabase Realtime postgres_changes on secure views.
 - Server-originated WS messages for timers and phase flips (authoritative).
 
 Event shapes (Zod)
 
 ```js
-import { z } from "zod";
+import { z } from 'zod';
 
 export const EvPhase = z.object({
-  t: z.literal("phase"),
+  t: z.literal('phase'),
   room_id: z.string(),
   round_id: z.string(),
-  phase: z.enum(["research","submit","verify","published","final_vote","results"]),
+  phase: z.enum(['research', 'submit', 'verify', 'published', 'final_vote', 'results']),
   idx: z.number().int(),
   submit_deadline_unix: z.number().int().nullable(),
   published_unix: z.number().int().nullable()
 });
 
 export const EvTimer = z.object({
-  t: z.literal("timer"),
+  t: z.literal('timer'),
   room_id: z.string(),
   round_id: z.string(),
   ends_unix: z.number().int()
 });
 
 export const EvSubmission = z.object({
-  t: z.literal("submission"),
+  t: z.literal('submission'),
   room_id: z.string(),
   round_id: z.string(),
   author_id: z.string(),
-  status: z.enum(["submitted","verified","rejected","forfeit"]),
+  status: z.enum(['submitted', 'verified', 'rejected', 'forfeit']),
   canonical_sha256: z.string()
 });
 
 export const EvVote = z.object({
-  t: z.literal("vote"),
+  t: z.literal('vote'),
   room_id: z.string(),
   round_id: z.string(),
   voter_id: z.string(),
-  kind: z.enum(["continue","approval","ranked"])
+  kind: z.enum(['continue', 'approval', 'ranked'])
 });
 
 export const EvPresence = z.object({
-  t: z.literal("presence"),
+  t: z.literal('presence'),
   room_id: z.string(),
   who: z.array(z.object({ participant_id: z.string(), at: z.number().int() }))
 });
@@ -847,7 +888,10 @@ export const EvPresence = z.object({
 import { createClient } from '@supabase/supabase-js';
 import { EvPhase, EvTimer, EvSubmission, EvVote } from './events.js';
 
-const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_ANON);
+const sb = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON
+);
 
 export function subscribeRoom(roomId, onEvent) {
   const ch = sb.channel(`room.${roomId}`, {
@@ -857,21 +901,36 @@ export function subscribeRoom(roomId, onEvent) {
   // Presence
   ch.on('presence', { event: 'sync' }, () => {
     const state = ch.presenceState();
-    onEvent({ t: 'presence', room_id: roomId, who: Object.values(state).flat().map(x => ({ participant_id: x.participant, at: Date.now()/1000 })) });
+    onEvent({
+      t: 'presence',
+      room_id: roomId,
+      who: Object.values(state)
+        .flat()
+        .map((x) => ({ participant_id: x.participant, at: Date.now() / 1000 }))
+    });
   });
 
   // DB changes (secure views)
-  ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'rounds_view', filter: `room_id=eq.${roomId}` },
-    payload => onEvent(EvPhase.parse(payload.new)));
+  ch.on(
+    'postgres_changes',
+    { event: 'INSERT', schema: 'public', table: 'rounds_view', filter: `room_id=eq.${roomId}` },
+    (payload) => onEvent(EvPhase.parse(payload.new))
+  );
 
-  ch.on('postgres_changes', { event: '*', schema: 'public', table: 'submissions_view', filter: `room_id=eq.${roomId}` },
-    payload => onEvent(EvSubmission.parse(payload.new)));
+  ch.on(
+    'postgres_changes',
+    { event: '*', schema: 'public', table: 'submissions_view', filter: `room_id=eq.${roomId}` },
+    (payload) => onEvent(EvSubmission.parse(payload.new))
+  );
 
-  ch.on('postgres_changes', { event: '*', schema: 'public', table: 'votes_view', filter: `room_id=eq.${roomId}` },
-    payload => onEvent(EvVote.parse(payload.new)));
+  ch.on(
+    'postgres_changes',
+    { event: '*', schema: 'public', table: 'votes_view', filter: `room_id=eq.${roomId}` },
+    (payload) => onEvent(EvVote.parse(payload.new))
+  );
 
   // Server-timers broadcast (authoritative countdowns)
-  ch.on('broadcast', { event: 'timer' }, payload => onEvent(EvTimer.parse(payload.payload)));
+  ch.on('broadcast', { event: 'timer' }, (payload) => onEvent(EvTimer.parse(payload.payload)));
 
   ch.subscribe(async (status) => {
     if (status === 'SUBSCRIBED') {
@@ -884,6 +943,7 @@ export function subscribeRoom(roomId, onEvent) {
 ```
 
 Render model (chat-with-rails)
+
 - Top bar: Phase + big countdown (driven by EvTimer.ends_unix, not client guesses).
 - Left: Transcript (updates only on phase: 'published' → render that round’s submissions).
 - Right drawer (participants only): Research tools, draft editor. Editor enables only during phase: 'submit'.
@@ -928,6 +988,7 @@ from votes v;
 ```
 
 Enable Realtime on these views and add RLS so:
+
 - Before publish: submissions_view only shows your row.
 - After publish: shows all rows of that round.
 
@@ -941,31 +1002,36 @@ async function broadcastTimer(roomId, roundId, ends_unix) {
   await sb.channel(`room.${roomId}`).send({
     type: 'broadcast',
     event: 'timer',
-    payload: { t:'timer', room_id: roomId, round_id: roundId, ends_unix }
+    payload: { t: 'timer', room_id: roomId, round_id: roundId, ends_unix }
   });
 }
 ```
 
 Call broadcastTimer on:
+
 - Round open (submit start → deadline)
 - Research start (research end)
 - Vote windows
 
 ### Presence & “who’s typing”
+
 - Use Supabase presence: track({ participant: id }).
 - For “typing,” throttle a broadcast event {t:'typing', participant_id, until_unix}; purely cosmetic.
 
 ### Backpressure & Resilience
+
 - Fanout limit: keep one room channel per tab. Don’t subscribe to tables directly; only the views.
 - Reconnect: on CHANNEL_ERROR / TIMED_OUT, auto-retry with jitter. On reconnect, immediately hit /api/state?room_id=… to resync authoritative state.
 - Idempotence: client RPC submits carry a client_nonce so a double-click can’t double-write.
 - Clock drift: always display server ends_unix; never use Date.now() for deadlines except to compute seconds remaining.
 
 ### CLI Realtime
+
 - For headless tails, give the CLI an SSE endpoint: GET /events?room_id= that relays the same events the WS sends (or use the Supabase JS client in Node; it works fine).
 - Print phase/timer banners and dump submissions on published.
 
 ### Formal “barrier flip” in realtime
+
 1. phase: 'submit' starts → server broadcasts EvTimer(ends_unix = submit_deadline).
 2. Deadline hits → server locks room, sets phase='verify'.
 3. When all submissions.status ∈ {'verified','forfeit'} → server:

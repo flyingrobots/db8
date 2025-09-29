@@ -18,7 +18,6 @@ DECLARE
   v_now bigint := extract(epoch from now())::bigint;
   v_submit_deadline bigint;
   v_client_nonce text := NULLIF(p_client_nonce, '');
-  v_created boolean := false;
 BEGIN
   IF v_participants < 1 OR v_participants > 64 THEN
     RAISE EXCEPTION 'participant_count out of range [1..64]: %', v_participants
@@ -30,28 +29,13 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
-  v_submit_deadline := v_now + v_submit_minutes * 60;
+  v_submit_deadline := v_now + (v_submit_minutes::bigint * 60);
 
-  v_room_id := NULL;
   INSERT INTO rooms (title, client_nonce)
   VALUES (NULLIF(p_topic, ''), v_client_nonce)
-  ON CONFLICT (client_nonce) DO NOTHING
+  ON CONFLICT (client_nonce)
+    DO UPDATE SET title = COALESCE(rooms.title, EXCLUDED.title)
   RETURNING id INTO v_room_id;
-
-  IF v_room_id IS NULL THEN
-    IF v_client_nonce IS NOT NULL THEN
-      SELECT id INTO v_room_id FROM rooms WHERE client_nonce = v_client_nonce;
-    END IF;
-    IF v_room_id IS NULL THEN
-      INSERT INTO rooms (title)
-      VALUES (NULLIF(p_topic, ''))
-      RETURNING id INTO v_room_id;
-    END IF;
-  END IF;
-
-  UPDATE rooms
-     SET title = COALESCE(title, NULLIF(p_topic, ''))
-   WHERE id = v_room_id;
 
   INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix)
   VALUES (v_room_id, 0, 'submit', v_submit_deadline)
@@ -91,7 +75,6 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION vote_submit(
-  p_room_id uuid,
   p_round_id uuid,
   p_voter_id uuid,
   p_kind text,
@@ -106,8 +89,8 @@ BEGIN
     RAISE EXCEPTION 'unsupported vote kind: %', p_kind USING ERRCODE = '22023';
   END IF;
 
-  INSERT INTO votes (room_id, round_id, voter_id, kind, ballot, client_nonce)
-  VALUES (p_room_id, p_round_id, p_voter_id, p_kind, p_ballot, p_client_nonce)
+  INSERT INTO votes (round_id, voter_id, kind, ballot, client_nonce)
+  VALUES (p_round_id, p_voter_id, p_kind, p_ballot, p_client_nonce)
   ON CONFLICT (round_id, voter_id, kind, client_nonce)
   DO UPDATE SET ballot = votes.ballot
   RETURNING id INTO v_id;
@@ -124,7 +107,7 @@ BEGIN
   UPDATE rounds SET
     phase = 'published',
     published_at_unix = now_unix,
-    continue_vote_close_unix = now_unix + 30
+    continue_vote_close_unix = now_unix + 30::bigint
   WHERE phase = 'submit' AND submit_deadline_unix > 0 AND submit_deadline_unix < now_unix;
 END;
 $$;
@@ -154,7 +137,7 @@ BEGIN
 
   -- create next round for winners
   INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix)
-  SELECT w.room_id, w.idx + 1, 'submit', now_unix + 300
+  SELECT w.room_id, w.idx + 1, 'submit', now_unix + 300::bigint
   FROM winners w
   WHERE w.yes > w.no
   ON CONFLICT (room_id, idx) DO NOTHING;

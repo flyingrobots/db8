@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS submissions (
   citations           jsonb       NOT NULL DEFAULT '[]'::jsonb,
   status              text        NOT NULL DEFAULT 'submitted',
   submitted_at        timestamptz NOT NULL DEFAULT now(),
-  canonical_sha256    text        NOT NULL,
+  canonical_sha256    char(64)    NOT NULL CHECK (canonical_sha256 ~ '^[0-9a-f]{64}$'),
   signature_kind      text,
   signature_b64       text,
   signer_fingerprint  text,
@@ -58,21 +58,18 @@ CREATE TABLE IF NOT EXISTS submissions (
   UNIQUE (round_id, author_id, client_nonce)
 );
 
-CREATE INDEX IF NOT EXISTS idx_submissions_round_author ON submissions (round_id, author_id);
-
 -- Votes: idempotent by (round_id, voter_id, kind, client_nonce)
 CREATE TABLE IF NOT EXISTS votes (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  room_id       uuid        NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   round_id      uuid        NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
   voter_id      uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-  kind          text        NOT NULL, -- e.g., 'continue'
+  kind          text        NOT NULL CHECK (kind IN ('continue')),
   ballot        jsonb       NOT NULL DEFAULT '{}'::jsonb,
   client_nonce  text        NOT NULL,
   created_at    timestamptz NOT NULL DEFAULT now(),
   UNIQUE (round_id, voter_id, kind, client_nonce)
 );
 
-CREATE INDEX IF NOT EXISTS idx_votes_room_round_kind ON votes (room_id, round_id, kind);
+CREATE INDEX IF NOT EXISTS idx_votes_round_kind ON votes (round_id, kind);
 
 -- Future M1/M2: rooms/rounds tables, RLS policies, and RPCs
