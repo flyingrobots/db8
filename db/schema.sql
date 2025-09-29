@@ -17,9 +17,9 @@ CREATE TABLE IF NOT EXISTS rounds (
   room_id                   uuid        NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   idx                       integer     NOT NULL DEFAULT 0,
   phase                     text        NOT NULL DEFAULT 'submit' CHECK (phase IN ('submit','published','final')),
-  submit_deadline_unix      integer     NOT NULL DEFAULT 0,
-  published_at_unix         integer,
-  continue_vote_close_unix  integer,
+  submit_deadline_unix      bigint      NOT NULL DEFAULT 0,
+  published_at_unix         bigint,
+  continue_vote_close_unix  bigint,
   UNIQUE (room_id, idx)
 );
 
