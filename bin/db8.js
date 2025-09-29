@@ -55,6 +55,7 @@ Commands:
   draft validate       validate and print canonical sha
   submit               submit current draft
   resubmit             resubmit with a new nonce
+  flag submission      report a submission to moderators
 `);
 }
 
@@ -81,7 +82,8 @@ async function main() {
       'draft:open',
       'draft:validate',
       'submit',
-      'resubmit'
+      'resubmit',
+      'flag:submission'
     ]);
 
     // Help handling
@@ -125,6 +127,23 @@ async function main() {
 
     if (args.participant !== undefined && typeof args.participant !== 'string') {
       throw new CLIError('--participant must be a string', EXIT.VALIDATION);
+    }
+
+    if (key === 'flag:submission') {
+      if (typeof args.submission !== 'string' || args.submission.length === 0) {
+        throw new CLIError('flag submission requires --submission <uuid>', EXIT.VALIDATION);
+      }
+      if (!uuidRe.test(args.submission))
+        printerr('--submission looks non-standard (expecting uuid-like string)');
+      if (args.reason !== undefined && typeof args.reason !== 'string') {
+        throw new CLIError('--reason must be a string', EXIT.VALIDATION);
+      }
+      if (args.role !== undefined && typeof args.role !== 'string') {
+        throw new CLIError('--role must be a string', EXIT.VALIDATION);
+      }
+      if (args.reporter !== undefined && typeof args.reporter !== 'string') {
+        throw new CLIError('--reporter must be a string', EXIT.VALIDATION);
+      }
     }
 
     return { wantHelp: false };
@@ -482,6 +501,60 @@ async function main() {
 
       process.removeListener('SIGINT', onSigint);
       return lastExit;
+    }
+    case 'flag:submission': {
+      const submissionId = String(args.submission || '').trim();
+      const allowedRoles = new Set([
+        'participant',
+        'moderator',
+        'fact_checker',
+        'viewer',
+        'system'
+      ]);
+      const role = String(args.role || 'participant').toLowerCase();
+      if (!allowedRoles.has(role)) {
+        throw new CLIError(`Unknown --role value: ${role}`, EXIT.VALIDATION);
+      }
+      let reporterId = String(args.reporter || '').trim();
+      if (!reporterId && role === 'participant') reporterId = participant;
+      if (!reporterId) {
+        throw new CLIError(
+          'flag submission requires --reporter or configured participant id',
+          EXIT.VALIDATION
+        );
+      }
+      const reason = args.reason ? String(args.reason).trim() : '';
+      const url = `${apiUrl.replace(/\/$/, '')}/rpc/submission.flag`;
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
+          },
+          body: JSON.stringify({
+            submission_id: submissionId,
+            reporter_id: reporterId,
+            reporter_role: role,
+            reason
+          })
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          printerr(body?.error || `Server error ${res.status}`);
+          return EXIT.NETWORK;
+        }
+        if (args.json) {
+          print(JSON.stringify(body));
+        } else {
+          const count = typeof body.flag_count === 'number' ? body.flag_count : null;
+          print(`flag recorded${count !== null ? ` (total: ${count})` : ''}`);
+        }
+        return EXIT.OK;
+      } catch (e) {
+        printerr(e?.message || String(e));
+        return EXIT.NETWORK;
+      }
     }
     case 'draft:open': {
       // Create a local draft scaffold
