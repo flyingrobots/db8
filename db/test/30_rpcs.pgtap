@@ -1,13 +1,10 @@
 BEGIN;
-SELECT plan(24);
+SELECT plan(27);
 
 -- RPC existence: room_create(topic, cfg)
-SELECT ok(
-  to_regprocedure('public.room_create(text,jsonb,text)') IS NOT NULL,
-  'room_create exists'
-);
+SELECT has_function('public','room_create', ARRAY['text','jsonb','text']);
 
--- RPC behavior: room_create seeds participants and round deadline
+-- RPC behavior: room_create seeds participants, round deadline, and enforces idempotent seeding
 DO $$
 DECLARE
   new_room uuid;
@@ -36,6 +33,7 @@ BEGIN
   PERFORM ok(round_phase = 'submit' AND round_idx = 0, 'room_create opens round 0 in submit phase');
   PERFORM ok(role_count = participant_count, 'room_create participants default to debater');
 
+  -- capture seeded counts before retrying the same nonce to ensure idempotency
   SELECT count(*) INTO pre_rounds FROM rounds WHERE room_id = new_room;
   SELECT count(*) INTO pre_participants FROM participants WHERE room_id = new_room;
   SELECT count(*) INTO pre_roles FROM participants WHERE room_id = new_room AND role = 'debater';
@@ -43,6 +41,7 @@ BEGIN
   SELECT room_create('Updated Title', '{"participant_count":5}'::jsonb, 'nonce-room-1') INTO same_room;
   PERFORM ok(same_room = new_room, 'room_create reuses room id for same nonce');
 
+  -- ensure reusing the nonce does not duplicate seeded entities
   SELECT count(*) INTO post_rounds FROM rounds WHERE room_id = new_room;
   SELECT count(*) INTO post_participants FROM participants WHERE room_id = new_room;
   SELECT count(*) INTO post_roles FROM participants WHERE room_id = new_room AND role = 'debater';
@@ -67,14 +66,14 @@ SELECT throws_ok(
   'room_create rejects submit_minutes above range'
 );
 
-PERFORM ok(
+SELECT ok(
   room_create('Min Bounds', '{"participant_count":1,"submit_minutes":1}'::jsonb, 'nonce-room-min') IS NOT NULL,
-  'room_create accepts minimum bounds'
+  'room_create accepts minimum participant and submit bounds'
 );
 
-PERFORM ok(
+SELECT ok(
   room_create('Max Bounds', '{"participant_count":64,"submit_minutes":1440}'::jsonb, 'nonce-room-max') IS NOT NULL,
-  'room_create accepts maximum bounds'
+  'room_create accepts maximum participant and submit bounds'
 );
 
 SELECT throws_ok(
@@ -102,10 +101,7 @@ BEGIN
 END $$;
 
 -- RPC existence: submission_upsert(round_id, author_id, content, claims, citations, canonical_sha256, client_nonce)
-SELECT ok(
-  to_regprocedure('public.submission_upsert(uuid,uuid,text,jsonb,jsonb,text,text)') IS NOT NULL,
-  'submission_upsert exists'
-);
+SELECT has_function('public','submission_upsert', ARRAY['uuid','uuid','text','jsonb','jsonb','text','text']);
 
 -- RPC behavior: submission_upsert is idempotent by (round_id, author_id, client_nonce)
 DO $$
@@ -126,20 +122,21 @@ BEGIN
   INSERT INTO participants (id, room_id, anon_name, role)
     VALUES (author, room, 'rpc_test_agent', 'debater')
     ON CONFLICT (id) DO NOTHING;
-  SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n) INTO id1;
-  SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n) INTO id2;
+  SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', n) INTO id1;
+  SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', n) INTO id2;
   PERFORM ok(id1 = id2, 'submission_upsert idempotent for same nonce');
+  -- Change canonical and ensure the row updates
+  PERFORM submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe', n);
+  PERFORM ok((SELECT canonical_sha256 FROM submissions WHERE id = id1) = 'cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe',
+    'submission_upsert updates canonical on conflict');
   SELECT count(*) INTO sub_count FROM submissions WHERE round_id = round AND author_id = author;
   PERFORM ok(sub_count = 1, 'submission_upsert stores single row for repeated nonce');
-  SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n2) INTO id3;
+  SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', n2) INTO id3;
   PERFORM ok(id3 <> id1, 'submission_upsert creates new row for different nonce');
 END$$;
 
--- RPC existence: vote_submit(room_id, round_id, voter_id, kind, ballot, client_nonce)
-SELECT ok(
-  to_regprocedure('public.vote_submit(uuid,uuid,uuid,text,jsonb,text)') IS NOT NULL,
-  'vote_submit exists'
-);
+-- RPC existence: vote_submit(round_id, voter_id, kind, ballot, client_nonce)
+SELECT has_function('public','vote_submit', ARRAY['uuid','uuid','text','jsonb','text']);
 
 -- RPC behavior: vote_submit is idempotent by (round_id, voter_id, kind, client_nonce)
 DO $$
@@ -160,18 +157,20 @@ BEGIN
   INSERT INTO participants (id, room_id, anon_name, role)
     VALUES (voter, v_room, 'rpc_test_voter', 'debater')
     ON CONFLICT (id) DO NOTHING;
-  SELECT vote_submit(v_room, v_round, voter, 'continue', '{}'::jsonb, n) INTO id1;
-  SELECT vote_submit(v_room, v_round, voter, 'continue', '{}'::jsonb, n) INTO id2;
+  SELECT vote_submit(v_round, voter, 'continue', '{}'::jsonb, n) INTO id1;
+  SELECT vote_submit(v_round, voter, 'continue', '{}'::jsonb, n) INTO id2;
   PERFORM ok(id1 = id2, 'vote_submit idempotent for same nonce');
   SELECT count(*) INTO votes_count FROM votes WHERE round_id = v_round AND voter_id = voter AND kind = 'continue';
   PERFORM ok(votes_count = 1, 'vote_submit stores single row for repeated nonce');
-  SELECT vote_submit(v_room, v_round, voter, 'continue', '{}'::jsonb, n2) INTO id3;
+  SELECT vote_submit(v_round, voter, 'continue', '{}'::jsonb, n2) INTO id3;
   PERFORM ok(id3 <> id1, 'vote_submit creates new row for different nonce');
+  SELECT count(*) INTO votes_count FROM votes WHERE round_id = v_round AND voter_id = voter AND kind = 'continue';
+  PERFORM ok(votes_count = 2, 'vote_submit stores two rows for two different nonces');
 END$$;
 
 -- Round ops existence (skeleton)
-SELECT ok(to_regprocedure('public.round_publish_due()') IS NOT NULL, 'round_publish_due exists');
-SELECT ok(to_regprocedure('public.round_open_next()') IS NOT NULL, 'round_open_next exists');
+SELECT has_function('public','round_publish_due', ARRAY[]::text[]);
+SELECT has_function('public','round_open_next', ARRAY[]::text[]);
 
 -- Round ops callable without error (no-op acceptable in M1)
 DO $$ BEGIN

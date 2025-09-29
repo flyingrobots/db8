@@ -24,7 +24,7 @@ class FakePool {
       return { rows: [{ id }] };
     }
     if (text.includes('vote_submit')) {
-      const [_roomId, roundId, voterId, _kind, _ballotJson, clientNonce] = params;
+      const [roundId, voterId, _kind, _ballotJson, clientNonce] = params;
       const key = `${roundId}:${voterId}:${clientNonce}`;
       if (!this.votes.has(key)) {
         this.votes.set(key, randomUUID());
