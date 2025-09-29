@@ -66,6 +66,7 @@ Guardrails (enforced by repo config)
 - ESLint + Prettier. See eslint.config.js and .prettierrc.
 - Git hooks for lint-staged and commit message checks.
 - CI runs lint and tests with a real Postgres service.
+- History hygiene: never amend, rebase, or force-push shared branches. Always add new commits and resolve forward.
 
 Test-first checklist (M1)
 
