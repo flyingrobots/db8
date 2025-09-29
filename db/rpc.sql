@@ -13,8 +13,8 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
   v_room_id uuid;
-  v_participants integer := COALESCE((p_cfg->>'participant_count')::int, 4);
-  v_submit_minutes integer := COALESCE((p_cfg->>'submit_minutes')::int, 5);
+  v_participants integer := COALESCE(NULLIF(p_cfg->>'participant_count', '')::int, 4);
+  v_submit_minutes integer := COALESCE(NULLIF(p_cfg->>'submit_minutes', '')::int, 5);
   v_now integer := extract(epoch from now())::int;
   v_submit_deadline integer;
   v_client_nonce text := NULLIF(p_client_nonce, '');
@@ -32,16 +32,27 @@ BEGIN
 
   v_submit_deadline := v_now + v_submit_minutes * 60;
 
-  IF v_client_nonce IS NOT NULL THEN
-    SELECT id INTO v_room_id FROM rooms WHERE client_nonce = v_client_nonce;
-  END IF;
+  v_room_id := NULL;
+  INSERT INTO rooms (title, client_nonce)
+  VALUES (NULLIF(p_topic, ''), v_client_nonce)
+  ON CONFLICT (client_nonce) DO NOTHING
+  RETURNING id INTO v_room_id;
 
   IF v_room_id IS NULL THEN
-    INSERT INTO rooms (title, client_nonce)
-    VALUES (NULLIF(p_topic, ''), v_client_nonce)
-    RETURNING id INTO v_room_id;
-    v_created := true;
+    IF v_client_nonce IS NOT NULL THEN
+      SELECT id INTO v_room_id FROM rooms WHERE client_nonce = v_client_nonce;
+      UPDATE rooms
+         SET title = COALESCE(title, NULLIF(p_topic, ''))
+       WHERE id = v_room_id;
+    ELSE
+      -- no nonce provided; we fell through without insert (should not happen)
+      INSERT INTO rooms (title)
+      VALUES (NULLIF(p_topic, ''))
+      RETURNING id INTO v_room_id;
+      v_created := true;
+    END IF;
   ELSE
+    v_created := true;
     UPDATE rooms
        SET title = COALESCE(title, NULLIF(p_topic, ''))
      WHERE id = v_room_id;
