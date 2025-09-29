@@ -41,7 +41,7 @@
   },
   "dependencies": {
     "express": "^5.1.0",
-    "zod": "^3.25.76"
+    "zod": "^4.1.11"
   },
   "optionalDependencies": {
     "@rollup/rollup-linux-x64-gnu": "^4.52.3",
