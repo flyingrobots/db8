@@ -24,9 +24,15 @@ psql postgresql://postgres:test@localhost:54329/db8 -f db/rpc.sql
 
 ### Create a Room + Seed Participants
 
-The new `room_create(topic json)` RPC seeds a room, round 0, and a roster of anonymous participants. Example:
+The new `room_create(topic text, cfg jsonb DEFAULT '{}'::jsonb)` RPC seeds a room, round 0, and a roster of anonymous participants. Defaults: `participant_count=4`, `submit_minutes=5`.
+
+Examples:
 
 ```
+-- simplest call
+psql postgresql://postgres:test@localhost:54329/db8 -c "select room_create('Demo Topic');"
+
+-- override participant count and submit window, plus a client nonce for idempotency
 psql postgresql://postgres:test@localhost:54329/db8 -c "select room_create('Demo Topic', '{\"participant_count\":4,\"submit_minutes\":2}'::jsonb, 'demo-room-nonce');"
 ```
 
