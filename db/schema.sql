@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS participants (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   room_id          uuid        NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   anon_name        text        NOT NULL,
-  role             text        NOT NULL DEFAULT 'debater',
+  role             text        NOT NULL DEFAULT 'debater' CHECK (role IN ('debater','host','judge')),
   jwt_sub          text,
   ssh_fingerprint  text,
   created_at       timestamptz NOT NULL DEFAULT now(),
