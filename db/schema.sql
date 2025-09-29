@@ -58,8 +58,6 @@ CREATE TABLE IF NOT EXISTS submissions (
   UNIQUE (round_id, author_id, client_nonce)
 );
 
-CREATE INDEX IF NOT EXISTS idx_submissions_nonce ON submissions (round_id, author_id, client_nonce);
-
 CREATE INDEX IF NOT EXISTS idx_submissions_round_author ON submissions (round_id, author_id);
 
 -- Votes: idempotent by (round_id, voter_id, kind, client_nonce)

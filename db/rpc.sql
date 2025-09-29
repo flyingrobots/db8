@@ -1,4 +1,8 @@
 -- db/rpc.sql — SQL RPCs for room lifecycle, idempotent submissions, and round operations
+-- room_create parameters:
+--   participant_count: default 4, allowed range [1..64]
+--   submit_minutes:    default 5, allowed range [1..1440]
+--   client_nonce:      optional idempotency token; reuse to get the same room_id
 
 CREATE OR REPLACE FUNCTION room_create(
   p_topic text,
