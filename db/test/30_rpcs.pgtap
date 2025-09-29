@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(22);
+SELECT plan(24);
 
 -- RPC existence: room_create(topic, cfg)
 SELECT ok(
@@ -65,6 +65,16 @@ SELECT throws_ok(
   $$select room_create('Too Late', '{"submit_minutes":2000}'::jsonb, 'nonce-room-high')$$,
   '22023',
   'room_create rejects submit_minutes above range'
+);
+
+PERFORM ok(
+  room_create('Min Bounds', '{"participant_count":1,"submit_minutes":1}'::jsonb, 'nonce-room-min') IS NOT NULL,
+  'room_create accepts minimum bounds'
+);
+
+PERFORM ok(
+  room_create('Max Bounds', '{"participant_count":64,"submit_minutes":1440}'::jsonb, 'nonce-room-max') IS NOT NULL,
+  'room_create accepts maximum bounds'
 );
 
 SELECT throws_ok(
