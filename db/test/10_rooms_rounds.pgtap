@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(6);
+SELECT plan(7);
 
 -- rooms table exists
 SELECT ok(
@@ -17,6 +17,15 @@ SELECT ok(
     WHERE table_schema = 'public' AND table_name = 'rounds'
   ),
   'rounds table exists'
+);
+
+-- participants table exists
+SELECT ok(
+  EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'participants'
+  ),
+  'participants table exists'
 );
 
 -- rounds has unique (room_id, idx)
