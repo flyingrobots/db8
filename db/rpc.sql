@@ -109,16 +109,15 @@ LANGUAGE plpgsql
 AS $$
 DECLARE v_id uuid;
 BEGIN
+  IF p_kind <> 'continue' THEN
+    RAISE EXCEPTION 'unsupported vote kind: %', p_kind USING ERRCODE = '22023';
+  END IF;
+
   INSERT INTO votes (room_id, round_id, voter_id, kind, ballot, client_nonce)
   VALUES (p_room_id, p_round_id, p_voter_id, p_kind, p_ballot, p_client_nonce)
   ON CONFLICT (round_id, voter_id, kind, client_nonce)
-  DO NOTHING
+  DO UPDATE SET ballot = votes.ballot
   RETURNING id INTO v_id;
-  IF v_id IS NULL THEN
-    SELECT id INTO v_id FROM votes
-    WHERE round_id = p_round_id AND voter_id = p_voter_id AND kind = p_kind AND client_nonce = p_client_nonce
-    LIMIT 1;
-  END IF;
   RETURN v_id;
 END;
 $$;
@@ -148,15 +147,15 @@ BEGIN
     WHERE r.phase = 'published' AND r.continue_vote_close_unix IS NOT NULL AND r.continue_vote_close_unix < now_unix
   ), tallied AS (
     SELECT d.room_id, d.id as round_id,
-           SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='continue' THEN 1 ELSE 0 END) AS yes,
-           SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='end' THEN 1 ELSE 0 END) AS no
+           COALESCE(SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='continue' THEN 1 ELSE 0 END), 0) AS yes,
+           COALESCE(SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='end' THEN 1 ELSE 0 END), 0) AS no
     FROM due d
     LEFT JOIN votes v ON v.round_id = d.id
     GROUP BY d.room_id, d.id
   ), winners AS (
     SELECT t.*, r.idx FROM tallied t JOIN rounds r ON r.id = t.round_id
   )
-  UPDATE rounds r SET phase = CASE WHEN w.yes > w.no THEN r.phase ELSE 'final' END
+  UPDATE rounds r SET phase = 'final'
   FROM winners w
   WHERE r.id = w.round_id AND w.yes <= w.no;
 
@@ -177,8 +176,8 @@ CREATE OR REPLACE VIEW view_current_round AS
 
 CREATE OR REPLACE VIEW view_continue_tally AS
   SELECT r.room_id, r.id as round_id,
-    SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='continue' THEN 1 ELSE 0 END) AS yes,
-    SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='end' THEN 1 ELSE 0 END) AS no
+    COALESCE(SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='continue' THEN 1 ELSE 0 END), 0) AS yes,
+    COALESCE(SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='end' THEN 1 ELSE 0 END), 0) AS no
   FROM rounds r
   LEFT JOIN votes v ON v.round_id = r.id
   GROUP BY r.room_id, r.id;
