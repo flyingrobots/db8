@@ -41,33 +41,26 @@ BEGIN
   IF v_room_id IS NULL THEN
     IF v_client_nonce IS NOT NULL THEN
       SELECT id INTO v_room_id FROM rooms WHERE client_nonce = v_client_nonce;
-      UPDATE rooms
-         SET title = COALESCE(title, NULLIF(p_topic, ''))
-       WHERE id = v_room_id;
-    ELSE
-      -- no nonce provided; we fell through without insert (should not happen)
+    END IF;
+    IF v_room_id IS NULL THEN
       INSERT INTO rooms (title)
       VALUES (NULLIF(p_topic, ''))
       RETURNING id INTO v_room_id;
-      v_created := true;
     END IF;
-  ELSE
-    v_created := true;
-    UPDATE rooms
-       SET title = COALESCE(title, NULLIF(p_topic, ''))
-     WHERE id = v_room_id;
   END IF;
 
-  IF v_created THEN
-    INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix)
-    VALUES (v_room_id, 0, 'submit', v_submit_deadline)
-    ON CONFLICT (room_id, idx) DO NOTHING;
+  UPDATE rooms
+     SET title = COALESCE(title, NULLIF(p_topic, ''))
+   WHERE id = v_room_id;
 
-    INSERT INTO participants (room_id, anon_name, role)
-    SELECT v_room_id, format('agent_%s', gs), 'debater'
-    FROM generate_series(1, v_participants) AS gs
-    ON CONFLICT (room_id, anon_name) DO NOTHING;
-  END IF;
+  INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix)
+  VALUES (v_room_id, 0, 'submit', v_submit_deadline)
+  ON CONFLICT (room_id, idx) DO NOTHING;
+
+  INSERT INTO participants (room_id, anon_name, role)
+  SELECT v_room_id, format('agent_%s', gs), 'debater'
+  FROM generate_series(1, v_participants) AS gs
+  ON CONFLICT (room_id, anon_name) DO NOTHING;
 
   RETURN v_room_id;
 END;
