@@ -136,6 +136,19 @@ BEGIN
   WHERE r.id = w.round_id AND w.yes <= w.no;
 
   -- create next round for winners
+  WITH due AS (
+    SELECT r.* FROM rounds r
+    WHERE r.phase = 'published' AND r.continue_vote_close_unix IS NOT NULL AND r.continue_vote_close_unix < now_unix
+  ), tallied AS (
+    SELECT d.room_id, d.id as round_id,
+           COALESCE(SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='continue' THEN 1 ELSE 0 END), 0) AS yes,
+           COALESCE(SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='end' THEN 1 ELSE 0 END), 0) AS no
+    FROM due d
+    LEFT JOIN votes v ON v.round_id = d.id
+    GROUP BY d.room_id, d.id
+  ), winners AS (
+    SELECT t.*, r.idx FROM tallied t JOIN rounds r ON r.id = t.round_id
+  )
   INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix)
   SELECT w.room_id, w.idx + 1, 'submit', now_unix + 300::bigint
   FROM winners w
@@ -157,3 +170,58 @@ CREATE OR REPLACE VIEW view_continue_tally AS
   FROM rounds r
   LEFT JOIN votes v ON v.round_id = r.id
   GROUP BY r.room_id, r.id;
+
+-- Read-only views for safe consumption (RLS-ready)
+CREATE OR REPLACE VIEW submissions_view AS
+  SELECT
+    s.id,
+    r.room_id,
+    s.round_id,
+    s.author_id,
+    s.content,
+    s.canonical_sha256,
+    s.submitted_at
+  FROM submissions s
+  JOIN rounds r ON r.id = s.round_id;
+
+CREATE OR REPLACE VIEW votes_view AS
+  SELECT
+    v.id,
+    r.room_id,
+    v.round_id,
+    v.voter_id,
+    v.kind,
+    v.ballot,
+    v.created_at
+  FROM votes v
+  JOIN rounds r ON r.id = v.round_id;
+
+-- Notify function
+CREATE OR REPLACE FUNCTION notify_rounds_change() RETURNS trigger AS $fn$
+DECLARE
+  r record;
+BEGIN
+  r := COALESCE(NEW, OLD);
+  PERFORM pg_notify(
+    'db8_rounds',
+    json_build_object(
+      't', 'phase',
+      'room_id', r.room_id::text,
+      'round_id', r.id::text,
+      'idx', r.idx,
+      'phase', r.phase,
+      'submit_deadline_unix', r.submit_deadline_unix,
+      'published_at_unix', r.published_at_unix,
+      'continue_vote_close_unix', r.continue_vote_close_unix
+    )::text
+  );
+  RETURN NULL;
+END;
+$fn$ LANGUAGE plpgsql;
+
+-- Drop and recreate trigger to avoid duplicates across repeated test runs
+DROP TRIGGER IF EXISTS trg_rounds_notify_change ON rounds;
+CREATE TRIGGER trg_rounds_notify_change
+AFTER INSERT OR UPDATE ON rounds
+FOR EACH ROW
+EXECUTE PROCEDURE notify_rounds_change();

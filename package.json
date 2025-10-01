@@ -15,7 +15,8 @@
     "typecheck": "echo 'No TypeScript. ✅'",
     "bootstrap": "bash ./scripts/bootstrap.sh",
     "dev:db": "docker compose up -d db && sleep 2 && echo 'DB on :54329'",
-    "stop:db": "docker compose down"
+    "stop:db": "docker compose down",
+    "sync:issues": "./scripts/sync-issues.sh"
   },
   "lint-staged": {
     "**/*.{js,jsx,json,md}": [

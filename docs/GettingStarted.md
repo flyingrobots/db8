@@ -32,9 +32,10 @@ To apply the M1 schema and SQL RPCs to your local DB and optionally run pgTAP in
 node server/rpc.js   # listens on :3000
 ```
 
-Endpoints:
+Endpoints (canonical realtime = SSE):
 
 - `GET /state` — returns the active round snapshot, continue tally, and transcript
+- `GET /events?room_id=<uuid>` — SSE stream of `event: timer` (authoritative countdown) and `event: phase` (DB-driven)
 - `POST /rpc/submission.create` — accepts a validated submission and returns `{ ok, submission_id, canonical_sha256 }`
 - `POST /rpc/vote.continue` — idempotent continue vote; returns `{ ok, vote_id }`
 
@@ -81,6 +82,17 @@ Environment variables
 ## Troubleshooting
 
 - Rollup native dependency error on Linux CI runners (optional info for contributors): this repo includes an `optionalDependencies` entry for `@rollup/rollup-linux-x64-gnu` and a `postinstall` guard to avoid test failures on GH Actions.
+
+## Optional: run the DB watcher
+
+The watcher flips rounds at deadlines using SQL RPCs and relies on DB triggers to fan out changes via SSE.
+
+```
+export DATABASE_URL=postgresql://postgres:test@localhost:54329/db8
+node server/watcher.js
+```
+
+You should see phase changes reflected in `/events` as `event: phase` messages when deadlines are crossed.
 
 ## Next steps
 

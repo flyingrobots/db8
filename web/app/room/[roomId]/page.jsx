@@ -137,7 +137,7 @@ export default function RoomPage({ params }) {
         room_id: z.string().uuid(),
         round_id: z.string().uuid(),
         author_id: z.string().uuid(),
-        phase: z.enum(['OPENING', 'ARGUMENT', 'FINAL']),
+        phase: z.enum(['submit', 'published', 'final']),
         deadline_unix: z.number().int(),
         content: z.string().min(1).max(4000),
         claims: z
@@ -169,7 +169,7 @@ export default function RoomPage({ params }) {
       room_id: roomId,
       round_id: '00000000-0000-0000-0000-000000000002',
       author_id: participant,
-      phase: 'OPENING',
+      phase: 'submit',
       deadline_unix: state.round.submit_deadline_unix || 0,
       content: content || '',
       claims: [
