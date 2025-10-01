@@ -8,7 +8,7 @@ describe('POST /rpc/submission.create (validation)', () => {
       room_id: '00000000-0000-0000-0000-000000000001',
       round_id: '00000000-0000-0000-0000-000000000002',
       author_id: '00000000-0000-0000-0000-000000000003',
-      phase: 'OPENING',
+      phase: 'submit',
       deadline_unix: 0,
       content: 'Hello world',
       claims: [{ id: 'c1', text: 'Valid claim', support: [{ kind: 'logic', ref: 'r1' }] }],

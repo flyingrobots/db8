@@ -193,7 +193,8 @@ const SubmissionIn = z.object({
   room_id: z.string().uuid(),
   round_id: z.string().uuid(),
   author_id: z.string().uuid(),
-  phase: z.enum(['RESEARCH', 'OPENING', 'ARGUMENT', 'FINAL']),
+  // Align with DB phases
+  phase: z.enum(['submit', 'published', 'final']),
   deadline_unix: z.number().int(),
   content: z.string().min(1).max(4000),
   claims: z.array(Claim).min(1).max(5),
@@ -929,8 +930,9 @@ export function subscribeRoom(roomId, onEvent) {
     (payload) => onEvent(EvVote.parse(payload.new))
   );
 
-  // Server-timers broadcast (authoritative countdowns)
-  ch.on('broadcast', { event: 'timer' }, (payload) => onEvent(EvTimer.parse(payload.payload)));
+  // Canonical realtime path: server SSE backed by DB LISTEN/NOTIFY
+  // Subscribe via GET /events?room_id=... for timers and phase updates.
+  // Supabase Realtime is optional; if used, mirror phase/timer events there.
 
   ch.subscribe(async (status) => {
     if (status === 'SUBSCRIBED') {
@@ -992,26 +994,10 @@ Enable Realtime on these views and add RLS so:
 - Before publish: submissions_view only shows your row.
 - After publish: shows all rows of that round.
 
-Server→Client (Broadcast timers)
+Server→Client (Timers & Phase via SSE)
 
-Your RoundWatcher (or a tiny WS broadcaster) emits authoritative timers so clients don’t drift:
-
-```js
-// round-watcher.js (snippet)
-async function broadcastTimer(roomId, roundId, ends_unix) {
-  await sb.channel(`room.${roomId}`).send({
-    type: 'broadcast',
-    event: 'timer',
-    payload: { t: 'timer', room_id: roomId, round_id: roundId, ends_unix }
-  });
-}
-```
-
-Call broadcastTimer on:
-
-- Round open (submit start → deadline)
-- Research start (research end)
-- Vote windows
+- `/events?room_id=` streams `event: timer` frames every second with authoritative `ends_unix` derived from DB round state, and `event: phase` when `rounds` mutate (DB NOTIFY trigger).
+- A small watcher invokes `round_publish_due()`/`round_open_next()` to flip phases; DB trigger emits NOTIFY; SSE relays immediacy.
 
 ### Presence & “who’s typing”
 

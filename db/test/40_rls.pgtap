@@ -1,0 +1,58 @@
+-- 40_rls.pgtap — minimal RLS invariants for submissions visibility
+BEGIN;
+SELECT plan(6);
+
+-- Ensure RLS is enabled
+SELECT has_rls('public', 'submissions') AS rls_enabled \gset
+SELECT ok(:'rls_enabled', 'RLS enabled on submissions');
+
+-- Seed minimal data
+DO $$
+DECLARE rid uuid := '10000000-0000-0000-0000-000000000001';
+        r0  uuid := '10000000-0000-0000-0000-000000000002';
+        p1  uuid := '10000000-0000-0000-0000-000000000003';
+        p2  uuid := '10000000-0000-0000-0000-000000000004';
+BEGIN
+  INSERT INTO rooms(id,title) VALUES (rid,'RLS Room') ON CONFLICT DO NOTHING;
+  INSERT INTO rounds(id,room_id,idx,phase,submit_deadline_unix)
+    VALUES (r0,rid,0,'submit', extract(epoch from now())::bigint + 300)
+    ON CONFLICT DO NOTHING;
+  INSERT INTO participants(id,room_id,anon_name,role)
+    VALUES (p1,rid,'anon_1','debater'),(p2,rid,'anon_2','debater')
+    ON CONFLICT DO NOTHING;
+  INSERT INTO submissions(round_id, author_id, content, canonical_sha256, client_nonce)
+    VALUES (r0,p1,'A','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','n1')
+    ON CONFLICT DO NOTHING;
+  INSERT INTO submissions(round_id, author_id, content, canonical_sha256, client_nonce)
+    VALUES (r0,p2,'B','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','n2')
+    ON CONFLICT DO NOTHING;
+END $$;
+
+-- During submit: p1 sees only their row
+SELECT set_config('db8.participant_id','10000000-0000-0000-0000-000000000003', false);
+SELECT results_eq(
+  $$ SELECT count(*)::int FROM submissions s JOIN rounds r ON r.id=s.round_id WHERE r.phase='submit' $$,
+  ARRAY[1::int],
+  'During submit: author sees only 1 row'
+);
+
+-- During submit: p2 sees only their row
+SELECT set_config('db8.participant_id','10000000-0000-0000-0000-000000000004', false);
+SELECT results_eq(
+  $$ SELECT count(*)::int FROM submissions s JOIN rounds r ON r.id=s.round_id WHERE r.phase='submit' $$,
+  ARRAY[1::int],
+  'During submit: other author also sees only 1 row'
+);
+
+-- After publish: anyone sees both
+UPDATE rounds SET phase='published', published_at_unix = extract(epoch from now())::bigint WHERE id='10000000-0000-0000-0000-000000000002';
+SELECT set_config('db8.participant_id','00000000-0000-0000-0000-000000000000', false);
+SELECT results_eq(
+  $$ SELECT count(*)::int FROM submissions s JOIN rounds r ON r.id=s.round_id WHERE r.phase='published' $$,
+  ARRAY[2::int],
+  'After publish: all can see both rows'
+);
+
+SELECT finish();
+ROLLBACK;
+

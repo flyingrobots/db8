@@ -9,7 +9,7 @@ describe('POST /rpc/submission.create', () => {
       room_id: '00000000-0000-0000-0000-000000000001',
       round_id: '00000000-0000-0000-0000-000000000002',
       author_id: '00000000-0000-0000-0000-000000000003',
-      phase: 'OPENING',
+      phase: 'submit',
       deadline_unix: 0,
       content: 'Hello',
       claims: [{ id: 'c1', text: 'Abc', support: [{ kind: 'logic', ref: 'r1' }] }],

@@ -227,7 +227,8 @@ async function main() {
     room_id: z.string().uuid(),
     round_id: z.string().uuid(),
     author_id: z.string().uuid(),
-    phase: z.enum(['OPENING', 'ARGUMENT', 'FINAL']),
+    // Align with DB phases
+    phase: z.enum(['submit', 'published', 'final']),
     deadline_unix: z.number().int(),
     content: z.string().min(1).max(4000),
     claims: z.array(Claim).min(1).max(5),
@@ -563,7 +564,7 @@ async function main() {
       const dir = path.join(process.cwd(), 'db8', `round-${idx}`, anon);
       const file = path.join(dir, 'draft.json');
       const template = {
-        phase: 'OPENING',
+        phase: 'submit',
         deadline_unix: 0,
         content: '',
         claims: [{ id: 'c1', text: '', support: [{ kind: 'citation', ref: '' }] }],
@@ -586,7 +587,7 @@ async function main() {
           room_id: room || '00000000-0000-0000-0000-000000000001',
           round_id: '00000000-0000-0000-0000-000000000002',
           author_id: participant || '00000000-0000-0000-0000-000000000003',
-          phase: draft.phase || 'OPENING',
+          phase: draft.phase || 'submit',
           deadline_unix: draft.deadline_unix || 0,
           content: draft.content,
           claims: draft.claims,
@@ -619,7 +620,7 @@ async function main() {
           room_id: room,
           round_id: '00000000-0000-0000-0000-000000000002',
           author_id: participant,
-          phase: draft.phase || 'OPENING',
+          phase: draft.phase || 'submit',
           deadline_unix: draft.deadline_unix || 0,
           content: draft.content,
           claims: draft.claims,
