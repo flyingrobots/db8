@@ -36,7 +36,7 @@ describe('CLI flag submission', () => {
       room_id: room,
       round_id: round,
       author_id: author,
-      phase: 'OPENING',
+      phase: 'submit',
       deadline_unix: 0,
       content: 'CLI flag content',
       claims: [
