@@ -60,11 +60,19 @@ PGURL=postgresql://postgres:test@localhost:54329/db8 ./db/test/run.sh
 
 ## Run Node Tests with DB Backed Path
 
-Export `DATABASE_URL` so the server code uses the DB path, then run tests:
+`npm test` launches Vitest through Docker compose so the suite always sees a Postgres sidecar:
 
 ```
-export DATABASE_URL=postgresql://postgres:test@localhost:54329/db8
 npm test
+```
+
+The command brings up the `db` container (if needed), applies `db/schema.sql` and `db/rpc.sql`, executes tests from the `tests` service against `postgresql://postgres:test@db:5432/db8`, and then tears the stack down automatically when the run finishes.
+
+Need to bypass Docker for debugging? Set `CI=true` or call the inner script directly:
+
+```
+CI=true npm test
+npm run test:inner
 ```
 
 ## Run the Server with DB
