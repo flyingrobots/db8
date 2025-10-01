@@ -15,7 +15,7 @@ describe('POST /rpc/submission.flag', () => {
       room_id: ROOM_ID,
       round_id: ROUND_ID,
       author_id: AUTHOR_ID,
-      phase: 'OPENING',
+      phase: 'submit',
       deadline_unix: 0,
       content: 'Test content',
       claims: [
