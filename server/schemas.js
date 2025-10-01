@@ -19,7 +19,8 @@ export const SubmissionIn = z.object({
   room_id: z.string().uuid(),
   round_id: z.string().uuid(),
   author_id: z.string().uuid(),
-  phase: z.enum(['OPENING', 'ARGUMENT', 'FINAL']),
+  // Align phases with DB: submit|published|final
+  phase: z.enum(['submit', 'published', 'final']),
   deadline_unix: z.number().int(),
   content: z.string().min(1).max(4000),
   claims: z.array(Claim).min(1).max(5),

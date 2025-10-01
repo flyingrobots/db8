@@ -182,12 +182,14 @@ const CONTINUE_WINDOW_SEC = config.continueWindowSec;
 function ensureRoom(roomId) {
   let r = memRooms.get(roomId);
   const now = Math.floor(Date.now() / 1000);
+  const justCreated = !r;
   if (!r) {
     r = { round: { idx: 0, phase: 'submit', submit_deadline_unix: now + SUBMIT_WINDOW_SEC } };
     memRooms.set(roomId, r);
   }
   const round = r.round;
   // Simple phase transitions based on time windows (demo only)
+  if (justCreated) return r; // avoid flipping in the same tick as creation
   if (round.phase === 'submit' && now > round.submit_deadline_unix) {
     round.phase = 'published';
     round.published_at_unix = now;
@@ -234,7 +236,7 @@ app.get('/state', async (req, res) => {
           ),
           db.query(
             `select id, author_id, content, canonical_sha256, submitted_at
-               from submissions
+               from submissions_view
               where round_id = $1
               order by submitted_at asc nulls last, id asc`,
             [roundRow.round_id]
@@ -289,7 +291,7 @@ app.get('/state', async (req, res) => {
 });
 
 // SSE: timer events. Streams { t:'timer', room_id, ends_unix, round_idx, phase } every 1s.
-app.get('/events', (req, res) => {
+app.get('/events', async (req, res) => {
   const roomId = String(req.query.room_id || 'local');
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -297,29 +299,120 @@ app.get('/events', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
 
-  const send = () => {
+  // If DB is configured, drive events from DB state + LISTEN/NOTIFY.
+  let currentRound = null;
+  let listenerClient = null;
+  let closed = false;
+
+  async function loadCurrentRound() {
+    if (!db) return null;
+    const r = await db.query(
+      `select room_id, round_id, idx, phase, submit_deadline_unix,
+              published_at_unix, continue_vote_close_unix
+         from view_current_round
+        where room_id = $1
+        order by idx desc
+        limit 1`,
+      [roomId]
+    );
+    currentRound = r.rows?.[0] || null;
+    return currentRound;
+  }
+
+  function endsUnixFromRound(roundRow) {
     const now = Math.floor(Date.now() / 1000);
-    const { round } = ensureRoom(roomId);
-    let ends = now;
-    if (round.phase === 'submit' && round.submit_deadline_unix) ends = round.submit_deadline_unix;
-    else if (round.phase === 'published' && round.continue_vote_close_unix)
-      ends = round.continue_vote_close_unix;
+    if (!roundRow) return now;
+    if (roundRow.phase === 'submit' && roundRow.submit_deadline_unix)
+      return Number(roundRow.submit_deadline_unix);
+    if (roundRow.phase === 'published' && roundRow.continue_vote_close_unix)
+      return Number(roundRow.continue_vote_close_unix);
+    return now;
+  }
+
+  function sendTimer() {
+    const now = Math.floor(Date.now() / 1000);
+    const round = currentRound || ensureRoom(roomId).round;
     const payload = JSON.stringify({
       t: 'timer',
       room_id: roomId,
-      ends_unix: ends,
-      round_idx: round.idx,
-      phase: round.phase
+      ends_unix: endsUnixFromRound(currentRound) || now,
+      round_idx: round.idx ?? currentRound?.idx ?? 0,
+      phase: round.phase ?? currentRound?.phase ?? 'submit'
     });
     res.write(`event: timer\n`);
     res.write(`data: ${payload}\n\n`);
-  };
-  send();
-  const iv = setInterval(send, 1000);
+  }
+
+  // Start timer tick now; DB listener will update currentRound and emit 'phase'.
+  const iv = setInterval(() => {
+    try {
+      if (!closed) sendTimer();
+    } catch {
+      /* ignore */
+    }
+  }, 1000);
+
+  try {
+    if (db) {
+      await loadCurrentRound();
+      listenerClient = await db.connect();
+      await listenerClient.query('LISTEN db8_rounds');
+      const onNotification = (msg) => {
+        if (msg.channel !== 'db8_rounds' || closed) return;
+        try {
+          const payload = JSON.parse(msg.payload || '{}');
+          if (payload.room_id !== roomId) return;
+          // Update cached round and emit a phase event immediately
+          currentRound = {
+            room_id: payload.room_id,
+            round_id: payload.round_id,
+            idx: payload.idx,
+            phase: payload.phase,
+            submit_deadline_unix: payload.submit_deadline_unix,
+            published_at_unix: payload.published_at_unix,
+            continue_vote_close_unix: payload.continue_vote_close_unix
+          };
+          res.write(`event: phase\n`);
+          res.write(`data: ${JSON.stringify({ t: 'phase', ...currentRound })}\n\n`);
+        } catch {
+          // ignore bad payloads
+        }
+      };
+      listenerClient.on('notification', onNotification);
+      // Attach to underlying pg Client to get notifications
+      listenerClient.connection?.stream?.on?.('error', () => {});
+
+      // Ensure cleanup
+      req.on('close', async () => {
+        closed = true;
+        clearInterval(iv);
+        try {
+          if (listenerClient) {
+            listenerClient.removeListener('notification', onNotification);
+            await listenerClient.query('UNLISTEN db8_rounds');
+            listenerClient.release();
+          }
+        } catch {
+          /* ignore */
+        }
+        res.end();
+      });
+
+      // send initial timer frame promptly
+      sendTimer();
+      return;
+    }
+  } catch {
+    // If DB path fails, fall back to in-memory
+  }
+
+  // Fallback to in-memory authority when DB is unavailable
   req.on('close', () => {
+    closed = true;
     clearInterval(iv);
     res.end();
   });
+  sendTimer();
 });
 
 export default app;

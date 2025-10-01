@@ -18,7 +18,7 @@ async function writeDraft(baseDir, content) {
   await fs.mkdir(draftDir, { recursive: true });
   const draftPath = path.join(draftDir, 'draft.json');
   const draft = {
-    phase: 'OPENING',
+    phase: 'submit',
     deadline_unix: 0,
     content,
     claims: [
