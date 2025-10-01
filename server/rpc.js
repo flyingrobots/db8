@@ -2,7 +2,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
 import { rateLimitStub } from './mw/rate-limit.js';
-import { SubmissionIn, ContinueVote } from './schemas.js';
+import { SubmissionIn, ContinueVote, SubmissionFlag } from './schemas.js';
 import { canonicalize, sha256Hex } from './utils.js';
 import { loadConfig } from './config/config-builder.js';
 
@@ -31,7 +31,9 @@ export function __setDbPool(pool) {
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // In-memory idempotency and submission store (M1 stub / fallback)
-const memSubmissions = new Map(); // key -> { id, canonical_sha256, content, author_id }
+const memSubmissions = new Map(); // key -> { id, canonical_sha256, content, author_id, room_id }
+const memSubmissionIndex = new Map(); // submission_id -> { room_id }
+const memFlags = new Map(); // submission_id -> Map(reporter_id -> { role, reason, created_at })
 
 // submission.create
 app.post('/rpc/submission.create', (req, res) => {
@@ -87,8 +89,10 @@ app.post('/rpc/submission.create', (req, res) => {
               id: submission_id,
               canonical_sha256,
               content: input.content,
-              author_id: input.author_id
+              author_id: input.author_id,
+              room_id: input.room_id
             });
+            memSubmissionIndex.set(submission_id, { room_id: input.room_id });
           }
           return res.json({
             ok: true,
@@ -108,8 +112,10 @@ app.post('/rpc/submission.create', (req, res) => {
       id: submission_id,
       canonical_sha256,
       content: input.content,
-      author_id: input.author_id
+      author_id: input.author_id,
+      room_id: input.room_id
     });
+    memSubmissionIndex.set(submission_id, { room_id: input.room_id });
     return res.json({ ok: true, submission_id, canonical_sha256 });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
@@ -169,6 +175,65 @@ app.post('/rpc/vote.continue', (req, res) => {
     memVotes.set(key, { id: vote_id, choice: input.choice });
     addVoteToTotals(input.room_id, input.choice);
     return res.json({ ok: true, vote_id });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// submission.flag
+app.post('/rpc/submission.flag', async (req, res) => {
+  try {
+    const input = SubmissionFlag.parse(req.body);
+    const cleanReason = (input.reason || '').trim();
+    if (db) {
+      try {
+        const result = await db.query(
+          `with upsert as (
+             insert into submission_flags (submission_id, reporter_id, reporter_role, reason)
+             values ($1, $2, $3, $4)
+             on conflict (submission_id, reporter_id)
+             do update set reporter_role = excluded.reporter_role,
+                           reason = excluded.reason,
+                           created_at = now()
+             returning submission_id
+           )
+           select submission_id,
+                  (select count(*) from submission_flags where submission_id = $1) as flag_count
+             from upsert`,
+          [input.submission_id, input.reporter_id, input.reporter_role, cleanReason]
+        );
+        const count = Number(result.rows?.[0]?.flag_count || 0);
+        return res.json({ ok: true, flag_count: count });
+      } catch (e) {
+        if (e?.code === '23503') {
+          return res.status(404).json({ ok: false, error: 'submission_not_found' });
+        }
+        if (e?.code === '23505') {
+          return res.status(200).json({ ok: true, note: 'duplicate_flag' });
+        }
+        // fall back to in-memory store if DB is unreachable or other errors occur
+        const details =
+          e?.message ||
+          (Array.isArray(e?.errors) ? e.errors.map((err) => err.message).join('; ') : String(e));
+        console.warn('submission.flag db error, falling back to memory', details);
+      }
+    }
+
+    if (!memSubmissionIndex.has(input.submission_id)) {
+      return res.status(404).json({ ok: false, error: 'submission_not_found' });
+    }
+    const existing = memFlags.get(input.submission_id) || new Map();
+    const duplicate = existing.has(input.reporter_id);
+    existing.set(input.reporter_id, {
+      reporter_id: input.reporter_id,
+      reporter_role: input.reporter_role,
+      reason: cleanReason,
+      created_at: Math.floor(Date.now() / 1000)
+    });
+    memFlags.set(input.submission_id, existing);
+    const payload = { ok: true, flag_count: existing.size };
+    if (duplicate) payload.note = 'duplicate_flag';
+    return res.json(payload);
   } catch (err) {
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
   }
@@ -235,10 +300,28 @@ app.get('/state', async (req, res) => {
             [roomId, roundRow.round_id]
           ),
           db.query(
-            `select id, author_id, content, canonical_sha256, submitted_at
-               from submissions_view
-              where round_id = $1
-              order by submitted_at asc nulls last, id asc`,
+            `select s.id,
+                    s.author_id,
+                    s.content,
+                    s.canonical_sha256,
+                    s.submitted_at,
+                    coalesce(f.flag_count, 0) as flag_count,
+                    coalesce(f.flag_details, '[]'::jsonb) as flag_details
+               from submissions s
+               left join (
+                 select submission_id,
+                        count(*) as flag_count,
+                        jsonb_agg(jsonb_build_object(
+                          'reporter_id', reporter_id,
+                          'reporter_role', reporter_role,
+                          'reason', reason,
+                          'created_at', extract(epoch from created_at)::bigint
+                        ) order by created_at desc) as flag_details
+                   from submission_flags
+                  group by submission_id
+               ) f on f.submission_id = s.id
+              where s.round_id = $1
+              order by s.submitted_at asc nulls last, s.id asc`,
             [roundRow.round_id]
           )
         ]);
@@ -248,8 +331,13 @@ app.get('/state', async (req, res) => {
           author_id: row.author_id,
           content: row.content,
           canonical_sha256: row.canonical_sha256,
-          submitted_at: row.submitted_at ? Math.floor(row.submitted_at.getTime() / 1000) : null
+          submitted_at: row.submitted_at ? Math.floor(row.submitted_at.getTime() / 1000) : null,
+          flag_count: Number(row.flag_count || 0),
+          flags: Array.isArray(row.flag_details) ? row.flag_details : []
         }));
+        const flagged = transcript
+          .filter((entry) => entry.flag_count > 0)
+          .map((entry) => ({ submission_id: entry.submission_id, flag_count: entry.flag_count }));
         return res.json({
           ok: true,
           room_id: roomId,
@@ -264,7 +352,8 @@ app.get('/state', async (req, res) => {
               no: Number(tallyRow.no || 0)
             },
             transcript
-          }
+          },
+          flags: flagged
         });
       }
     } catch {
@@ -276,17 +365,34 @@ app.get('/state', async (req, res) => {
   const tally = memVoteTotals.get(roomId) || { yes: 0, no: 0 };
   const transcript = Array.from(memSubmissions.entries())
     .filter(([key]) => key.startsWith(`${roomId}:`))
-    .map(([, value]) => ({
-      submission_id: value.id,
-      author_id: value.author_id,
-      content: value.content,
-      canonical_sha256: value.canonical_sha256,
-      submitted_at: null
-    }));
+    .map(([, value]) => {
+      const flags = memFlags.get(value.id);
+      const flagEntries = flags
+        ? Array.from(flags.entries()).map(([, detail]) => ({
+            reporter_id: detail.reporter_id,
+            reporter_role: detail.reporter_role,
+            reason: detail.reason,
+            created_at: detail.created_at
+          }))
+        : [];
+      return {
+        submission_id: value.id,
+        author_id: value.author_id,
+        content: value.content,
+        canonical_sha256: value.canonical_sha256,
+        submitted_at: null,
+        flag_count: flagEntries.length,
+        flags: flagEntries
+      };
+    });
+  const flagged = transcript
+    .filter((entry) => entry.flag_count > 0)
+    .map((entry) => ({ submission_id: entry.submission_id, flag_count: entry.flag_count }));
   return res.json({
     ok: true,
     room_id: roomId,
-    round: { ...round, continue_tally: tally, transcript }
+    round: { ...round, continue_tally: tally, transcript },
+    flags: flagged
   });
 });
 
