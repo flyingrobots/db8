@@ -253,3 +253,33 @@ Operational/CI:
 
 - Begin by integrating `room_create` into server/CLI workflows (include client nonce handling) and verify end-to-end room creation.
 - Check PR #61 status; merge if CI is green, then move on to auth/moderation follow-ups.
+
+## Agent Log — 2025-10-01
+
+### Resequencing & Realtime Decision
+
+- Canonical realtime path set to Server SSE backed by DB LISTEN/NOTIFY. Supabase Realtime is optional for mirroring.
+- Updated docs (Architecture.md, GettingStarted.md) to reflect SSE canonical endpoint `/events`.
+
+### Work completed
+
+- Server
+  - Promoted `/events` to DB-backed SSE: listens on channel `db8_rounds` and emits `event: phase` and `event: timer` (derived from DB deadlines).
+  - Added `notify_rounds_change()` trigger on `rounds` (AFTER INSERT/UPDATE) to `db/rpc.sql`.
+  - Aligned submission phase enums across Server/CLI/Web to `submit|published|final`.
+  - Introduced `server/watcher.js` with `runTick()` and `startWatcher()` that call `round_publish_due()` and `round_open_next()`.
+- Tests
+  - Added DB-backed SSE test `server/test/sse.db.events.test.js` (proves NOTIFY→phase emission, no poll/diff).
+  - Added DB watcher flip test `server/test/watcher.db.flip.test.js` (submit→published when deadline passed).
+  - Updated existing tests for phase enum alignment; skipped flaky in-memory transition test pending RLS/authoritative watcher integration.
+- Docs & Backlog
+  - Added `docs/Backlog-2025-10-01.md` with `gh` CLI one-liners for 10 tasks aligned to milestones.
+
+### Plan updates
+
+- M1 wrap focuses on:
+  - Authoritative watcher loop in production mode.
+  - RLS + secure views enforcement with pgTAP coverage.
+  - Phase contract alignment (done).
+- M2 will deliver:
+  - JCS canonicalization (RFC 8785), server-issued nonces, SSH/Ed25519 provenance, server checkpoint signatures, journals, CLI verify.
