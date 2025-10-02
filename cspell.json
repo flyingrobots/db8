@@ -91,5 +91,6 @@
     "researchtools",
     "attributioncontrol",
     "orchestratorheartbeat"
-  ]
+  ],
+  "ignoreWords": ["frontmatter", "Frontmatter"]
 }
