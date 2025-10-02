@@ -1,9 +1,35 @@
 ---
 id: FP-20250928-fact-checking-quorum
-status: Draft
+status: Accepted
 authors: James Ross <james@flyingrobots.dev>
 date: 2025-09-28
-related-issues: []
+related-issues: [#81, #86, #87, #88, #89]
+
+## Implementation Plan (Accepted)
+
+Milestone: M3 — Fact-Checking & Verify
+
+- Database (area/db)
+  - fact_check_verdicts table (per-checker rows), indexes, RLS
+  - Aggregation view: quorum confidence heuristic and counts, exposed for datasets
+  - pgTAP invariants for schema, RLS, and aggregation correctness
+
+- RPCs (area/server, area/db)
+  - fact_check.submit (idempotent per submission/checker)
+  - quorum finalize/aggregate or automatic compute at thresholds
+
+- Worker (area/worker)
+  - Aggregator job to compute/store quorum results when thresholds met
+
+- Web (area/web)
+  - Surface verification status per submission and quorum confidence indicator
+
+- CLI (area/cli)
+  - Optional: inspector to print quorum stats for a round
+
+Tracking
+
+- Issues will be linked here once created.
 ---
 
 # Quorum-Based Fact-Checking With Confidence Heuristic

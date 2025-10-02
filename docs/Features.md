@@ -38,7 +38,11 @@ M2 — Provenance & Journaling
 M3 — Fact-Checking & Verify Phase
 
 - Fact-check worker stubs; mark submissions verified/rejected with reasons.
-- UI affordances to show verification status before publish.
+- Quorum-based fact-checking (FP-20250928) — Approved
+  - Per-checker fact_check_verdicts with RLS and indexes (#86)
+  - RPCs for verdict submit and quorum finalize rules (#87, #88)
+  - Confidence heuristic exposed via research view (#89)
+- UI affordances to show verification status and quorum confidence before publish.
 - Realtime verify status changes.
 
 M4 — Votes, Continue/Final, and Publish Flow
