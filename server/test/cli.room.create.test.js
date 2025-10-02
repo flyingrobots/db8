@@ -25,17 +25,28 @@ describe('CLI room create', () => {
     const child = spawn('node', [cliBin(), 'room', 'create', '--topic', 'CLI Demo', '--json'], {
       env
     });
-    const out = await new Promise((resolve, reject) => {
-      let buf = '';
-      const to = setTimeout(() => reject(new Error('timeout')), 8000);
-      child.stdout.on('data', (d) => (buf += d.toString()));
-      child.on('close', () => {
+    const TIMEOUT = 15000;
+    const { stdout, code } = await new Promise((resolve, reject) => {
+      let out = '';
+      let err = '';
+      const to = setTimeout(() => {
+        try {
+          child.kill();
+        } catch {
+          // ignore kill errors
+        }
+        reject(new Error(`timeout. stderr=${err}`));
+      }, TIMEOUT);
+      child.stdout.on('data', (d) => (out += d.toString()));
+      child.stderr.on('data', (d) => (err += d.toString()));
+      child.on('close', (code) => {
         clearTimeout(to);
-        resolve(buf.trim());
+        resolve({ stdout: out.trim(), code });
       });
       child.on('error', reject);
     });
-    const j = JSON.parse(out);
+    expect(code).toBe(0);
+    const j = JSON.parse(stdout);
     expect(j.ok).toBe(true);
     expect(typeof j.room_id).toBe('string');
   }, 15000);

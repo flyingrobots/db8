@@ -513,9 +513,27 @@ async function main() {
         return EXIT.VALIDATION;
       }
       const cfg = {};
-      if (args.participants) cfg.participant_count = Number(args.participants);
-      if (args['submit-minutes']) cfg.submit_minutes = Number(args['submit-minutes']);
-      const payload = { topic, cfg, client_nonce: String(args.nonce || randomNonce()) };
+      if (args.participants !== undefined) {
+        const n = Number(args.participants);
+        if (!Number.isInteger(n) || n < 1 || n > 64) {
+          printerr('--participants must be an integer between 1 and 64');
+          return EXIT.VALIDATION;
+        }
+        cfg.participant_count = n;
+      }
+      if (args['submit-minutes'] !== undefined) {
+        const m = Number(args['submit-minutes']);
+        if (!Number.isInteger(m) || m < 0 || m > 1440) {
+          printerr('--submit-minutes must be an integer between 0 and 1440');
+          return EXIT.VALIDATION;
+        }
+        cfg.submit_minutes = m;
+      }
+      const payload = {
+        topic,
+        ...(Object.keys(cfg).length ? { cfg } : {}),
+        client_nonce: String(args.nonce || randomNonce())
+      };
       const url = `${apiUrl.replace(/\/$/, '')}/rpc/room.create`;
       try {
         const res = await fetch(url, {
