@@ -300,28 +300,16 @@ app.get('/state', async (req, res) => {
             [roomId, roundRow.round_id]
           ),
           db.query(
-            `select s.id,
-                    s.author_id,
-                    s.content,
-                    s.canonical_sha256,
-                    s.submitted_at,
-                    coalesce(f.flag_count, 0) as flag_count,
-                    coalesce(f.flag_details, '[]'::jsonb) as flag_details
-               from submissions s
-               left join (
-                 select submission_id,
-                        count(*) as flag_count,
-                        jsonb_agg(jsonb_build_object(
-                          'reporter_id', reporter_id,
-                          'reporter_role', reporter_role,
-                          'reason', reason,
-                          'created_at', extract(epoch from created_at)::bigint
-                        ) order by created_at desc) as flag_details
-                   from submission_flags
-                  group by submission_id
-               ) f on f.submission_id = s.id
-              where s.round_id = $1
-              order by s.submitted_at asc nulls last, s.id asc`,
+            `select id,
+                    author_id,
+                    content,
+                    canonical_sha256,
+                    submitted_at,
+                    flag_count,
+                    flag_details
+               from submissions_with_flags_view
+              where round_id = $1
+              order by submitted_at asc nulls last, id asc`,
             [roundRow.round_id]
           )
         ]);

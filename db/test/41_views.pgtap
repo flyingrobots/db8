@@ -1,0 +1,46 @@
+-- 41_views.pgtap — Ensure submissions_with_flags_view exists and returns expected columns
+BEGIN;
+SELECT plan(4);
+
+-- View exists
+SELECT ok(to_regclass('public.submissions_with_flags_view') IS NOT NULL, 'submissions_with_flags_view exists');
+
+-- Seed tiny dataset
+DO $$
+DECLARE rid uuid := '20000000-0000-0000-0000-000000000001';
+        r0  uuid := '20000000-0000-0000-0000-000000000002';
+        p1  uuid := '20000000-0000-0000-0000-000000000003';
+        sid uuid;
+BEGIN
+  INSERT INTO rooms(id,title) VALUES (rid,'View Room') ON CONFLICT DO NOTHING;
+  INSERT INTO rounds(id,room_id,idx,phase,submit_deadline_unix)
+    VALUES (r0,rid,0,'published', extract(epoch from now())::bigint)
+    ON CONFLICT DO NOTHING;
+  INSERT INTO participants(id,room_id,anon_name,role)
+    VALUES (p1,rid,'anon_1','debater')
+    ON CONFLICT DO NOTHING;
+  INSERT INTO submissions(round_id, author_id, content, canonical_sha256, client_nonce)
+    VALUES (r0,p1,'Hello','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','vv1')
+    RETURNING id INTO sid;
+  INSERT INTO submission_flags(submission_id, reporter_id, reporter_role, reason)
+    VALUES (sid,'r1','viewer','test flag')
+  ON CONFLICT DO NOTHING;
+END $$;
+
+-- Selecting from the view yields one row
+SELECT results_eq(
+  $$ SELECT count(*)::int FROM submissions_with_flags_view WHERE round_id = '20000000-0000-0000-0000-000000000002' $$,
+  ARRAY[1::int],
+  'View returns exactly one row for seeded round'
+);
+
+-- flag_count column aggregates from submission_flags
+SELECT results_eq(
+  $$ SELECT flag_count::int FROM submissions_with_flags_view WHERE round_id = '20000000-0000-0000-0000-000000000002' $$,
+  ARRAY[1::int],
+  'flag_count reflects aggregated submission_flags'
+);
+
+SELECT finish();
+ROLLBACK;
+
