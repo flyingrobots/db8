@@ -10,7 +10,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 BEGIN
-  IF current_database() NOT LIKE '%test%' THEN
+  IF COALESCE(current_setting('app.env', true), '') <> 'test' THEN
     RAISE EXCEPTION 'TEST ONLY: round_set_submit_deadline not available in production'
       USING ERRCODE = '42501';
   END IF;
@@ -20,4 +20,3 @@ BEGIN
    WHERE id = p_round_id;
 END;
 $$;
-
