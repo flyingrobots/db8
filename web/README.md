@@ -1,16 +1,18 @@
 # DB8 Web (Next.js + shadcn/ui, JS-only)
 
-This is a lightweight Next.js app using Tailwind + shadcn‑style components (JavaScript only). It mirrors the Design Guide and provides Kitchen Sink and Spectator pages.
+This is a lightweight Next.js app using Tailwind + shadcn‑style components
+(JavaScript only). It mirrors the Design Guide and provides Kitchen Sink and
+Spectator pages.
 
 ## Run
 
-```
+````text
 cd web
 npm install
 npm run dev
-```
+```text
 
-Open http://localhost:3001
+Open <http://localhost:3001>
 
 ## Theme tokens
 
@@ -32,3 +34,4 @@ Brand palette mapped in `app/globals.css` via CSS variables:
 - No TypeScript; components are simple JS.
 - Can be wired to server SSE at `/events?room_id=...` later for countdowns.
 - For the full style guide, see `../docs/DesignGuide.md`.
+````
