@@ -53,6 +53,5 @@
   },
   "bin": {
     "db8": "./bin/db8.js"
-  },
-  "postinstall": "node -e \"try{require('@rollup/rollup-linux-x64-gnu');process.exit(0)}catch(e){process.exit(1)}\" || npm i @rollup/rollup-linux-x64-gnu@latest || true"
+  }
 }
