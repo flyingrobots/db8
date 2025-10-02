@@ -191,7 +191,9 @@ CREATE OR REPLACE VIEW votes_view AS
   JOIN rounds r ON r.id = v.round_id;
 
 -- Aggregated submissions with flags for secure consumption
-CREATE OR REPLACE VIEW submissions_with_flags_view AS
+CREATE OR REPLACE VIEW submissions_with_flags_view
+  WITH (security_barrier=true)
+AS
   SELECT
     s.id,
     r.room_id,

@@ -1,6 +1,6 @@
 -- 41_views.pgtap — Ensure submissions_with_flags_view exists and returns expected columns
 BEGIN;
-SELECT plan(4);
+SELECT plan(3);
 
 -- View exists
 SELECT ok(to_regclass('public.submissions_with_flags_view') IS NOT NULL, 'submissions_with_flags_view exists');
@@ -43,4 +43,3 @@ SELECT results_eq(
 
 SELECT finish();
 ROLLBACK;
-
