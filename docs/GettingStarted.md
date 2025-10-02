@@ -13,18 +13,18 @@ This guide helps you run db8 locally and try the CLI and server.
 
 ## Clone & bootstrap
 
-````bash
+```bash
 git clone <https://github.com/flyingrobots/db8.git>
 cd db8
 npm install
 ./scripts/bootstrap.sh   # enables commit hooks (optional for contributors)
-```bash
+```
 
 ## Run a local DB (optional)
 
 ```bash
 npm run dev:db      # starts Postgres 16 on localhost:54329
-```bash
+```
 
 Set `DATABASE_URL=postgresql://postgres:test@localhost:54329/db8_test`
 in your shell
@@ -42,7 +42,7 @@ load them in production.
 
 ```bash
 node server/rpc.js   # listens on :3000
-```bash
+```
 
 Endpoints (canonical realtime = SSE):
 
@@ -51,37 +51,39 @@ Endpoints (canonical realtime = SSE):
 - `GET /events?room_id=<uuid>` — SSE stream of realtime events
   - event: timer
 
-    - Payload shape:
-      - t: "timer"
-      - room_id: string (uuid)
-      - ends_unix: number (unix seconds)
-      - round_idx: number
-      - phase: "submit" | "published" | "final"
-    - Example frame:
+  - Payload shape:
+
+  - t: "timer"
+    - room_id: string (uuid)
+    - ends_unix: number (unix seconds)
+    - round_idx: number
+    - phase: "submit" | "published" | "final"
+  - Example frame:
 
 event: timer data:
 {"t":"timer","room_id":"00000000-0000-0000-0000-0000000000ab","ends_unix":1730505600,"round_idx":0,"phase":"submit"}
 
   - event: phase (emitted on DB NOTIFY when `rounds` change)
 
-    - Payload shape:
-      - t: "phase"
-      - room_id: string (uuid)
-      - round_id: string (uuid)
-      - idx: number
-      - phase: "submit" | "published" | "final"
-      - submit_deadline_unix?: number
-      - published_at_unix?: number
-      - continue_vote_close_unix?: number
-    - Example frame:
+  - Payload shape:
+
+    - t: "phase"
+    - room_id: string (uuid)
+    - round_id: string (uuid)
+    - idx: number
+    - phase: "submit" | "published" | "final"
+    - submit_deadline_unix?: number
+    - published_at_unix?: number
+    - continue_vote_close_unix?: number
+  - Example frame:
 
 event: phase data:
 {"t":"phase","room_id":"00000000-0000-0000-0000-0000000000ab","round_id":"00000000-0000-0000-0000-0000000000ac","idx":0,"phase":"published","published_at_unix":1730505601,"continue_vote_close_unix":1730505631}
 
   - Errors
 
-    - HTTP error responses: 4xx/5xx with JSON body `{ ok:false, error:string }`
-    - SSE connection guidance: use EventSource with default retry; if
+  - HTTP error responses: 4xx/5xx with JSON body `{ ok:false, error:string }`
+  - SSE connection guidance: use EventSource with default retry; if
       disconnected, reconnect and also fetch `GET /state` to resync
       authoritative state.
 
@@ -94,7 +96,7 @@ event: phase data:
 
 ```bash
 npm test
-````
+```
 
 The default suite exercises the in-memory server. To run the live Postgres tests
 (the same ones CI executes on every build), start the docker Postgres service
