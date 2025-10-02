@@ -94,7 +94,7 @@ CREATE INDEX IF NOT EXISTS idx_submission_flags_submission ON submission_flags (
 DROP TABLE IF EXISTS admin_audit_log CASCADE;
 
 CREATE TABLE admin_audit_log (
-  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  id            uuid NOT NULL DEFAULT gen_random_uuid(),
   action        text        NOT NULL,
   entity_type   text        NOT NULL,
   entity_id     uuid        NOT NULL,
@@ -115,7 +115,8 @@ CREATE TABLE admin_audit_log (
   -- Exactly one of actor_id or system_actor must be set
   CONSTRAINT admin_audit_actor_oneof_ck
     CHECK ((actor_id IS NOT NULL AND system_actor IS NULL)
-        OR (actor_id IS NULL AND system_actor IS NOT NULL))
+        OR (actor_id IS NULL AND system_actor IS NOT NULL)),
+  PRIMARY KEY (created_at, id)
 )
 PARTITION BY RANGE (created_at);
 
@@ -127,6 +128,7 @@ CREATE TABLE IF NOT EXISTS admin_audit_log_default PARTITION OF admin_audit_log
 CREATE INDEX IF NOT EXISTS idx_admin_audit_entity ON admin_audit_log (entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_created_at_desc ON admin_audit_log (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_actor_time ON admin_audit_log (actor_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_id ON admin_audit_log (id);
 
 COMMENT ON TABLE admin_audit_log IS 'Administrative audit log; RLS locked down. Writes via privileged service only.';
 COMMENT ON COLUMN admin_audit_log.actor_context IS 'Additional context about actor (e.g., IP, UA), JSON';
