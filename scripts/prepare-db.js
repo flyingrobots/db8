@@ -22,7 +22,7 @@ async function applyFile(client, filePath) {
 }
 
 async function main() {
-  const dbUrl = process.env.DATABASE_URL || 'postgresql://postgres:test@localhost:54329/db8';
+  const dbUrl = process.env.DATABASE_URL || 'postgresql://postgres:test@localhost:54329/db8_test';
   const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const schemaPath = path.join(rootDir, 'db', 'schema.sql');
   const rpcPath = path.join(rootDir, 'db', 'rpc.sql');

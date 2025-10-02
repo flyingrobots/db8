@@ -7,7 +7,8 @@ import app, { __setDbPool } from '../rpc.js';
 import { canonicalize, sha256Hex } from '../utils.js';
 
 const shouldRun = process.env.RUN_PGTAP === '1' || process.env.DB8_TEST_PG === '1';
-const dbUrl = process.env.DB8_TEST_DATABASE_URL || 'postgresql://postgres:test@localhost:54329/db8';
+const dbUrl =
+  process.env.DB8_TEST_DATABASE_URL || 'postgresql://postgres:test@localhost:54329/db8_test';
 
 const suite = shouldRun ? describe : describe.skip;
 
@@ -96,6 +97,16 @@ suite('Postgres-backed RPC integration', () => {
   });
 
   it('persists continue votes through vote_submit', async () => {
+    // Ensure round is in a voteable phase with an open window
+    const now = Math.floor(Date.now() / 1000);
+    await pool.query(
+      `update rounds
+          set phase='published',
+              published_at_unix = $1::bigint,
+              continue_vote_close_unix = $2::bigint
+        where id = '00000000-0000-0000-0000-000000000002'`,
+      [now, now + 60]
+    );
     const body = {
       room_id: '00000000-0000-0000-0000-000000000001',
       round_id: '00000000-0000-0000-0000-000000000002',
