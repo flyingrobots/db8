@@ -1,6 +1,12 @@
+---
+lastUpdated: 2025-10-02
+---
+
 # DB8 Style Guide (shadcn/ui + Tailwind, JS-only)
 
-A clean, production‑ready visual guide for DB8 that plays well with shadcn/ui and Tailwind. True light/dark theme, accessible contrast, and a couple of drop‑in pages you can wire to realtime later. JavaScript only (no TypeScript).
+A clean, production‑ready visual guide for DB8 that plays well with shadcn/ui
+and Tailwind. True light/dark theme, accessible contrast, and a couple of
+drop‑in pages you can wire to realtime later. JavaScript only (no TypeScript).
 
 ---
 
@@ -45,27 +51,65 @@ A clean, production‑ready visual guide for DB8 that plays well with shadcn/ui 
 
 ## Data Viz (SVG)
 
-- Evidence `#56C2C6`, Responsiveness `#C6568A`, Clarity `#C69256`, Civility `#7BA7D7`, Economy `#9BC9CB`
+- Evidence `#56C2C6`, Responsiveness `#C6568A`, Clarity `#C69256`, Civility
+  `#7BA7D7`, Economy `#9BC9CB`
 - Never rely on color alone — use shape/labels
 
 ---
 
 ## Tailwind + Theme Setup
 
-Add Tailwind and shadcn/ui per your app conventions, then extend with these settings.
+## Frontmatter Policy
+
+Every Markdown document must include a minimal YAML frontmatter block at the
+top of the file. This enables consistent metadata and automation without
+conflicting with markdownlint rules.
+
+- Required
+  - `lastUpdated`: ISO date (YYYY-MM-DD). Update on substantive edits.
+
+- Optional (for spec docs)
+  - `tags: [spec]`
+  - `milestone: <exact milestone name>` (e.g., `M4: Votes & Final`).
+
+- Excluded
+  - Do not add `title` in frontmatter. Use a single H1 in the body to satisfy
+    MD025 (single H1 per file).
+
+- Related lint rules to observe
+  - H1 required as the first non-frontmatter line (MD041 + MD025).
+  - Wrap prose and list items to 80 columns (MD013).
+  - Surround lists with blank lines (MD032).
+  - Add language to all fenced code blocks (MD040).
+
+Example
+
+```yaml
+---
+lastUpdated: 2025-10-02
+tags: [spec]
+milestone: M4: Votes & Final
+---
+```
+
+Add Tailwind and shadcn/ui per your app conventions, then extend with these
+settings.
 
 ### `tailwind.config.js`
 
-```js
+````js
 /** @type {import('tailwindcss').Config} */
 export default {
   darkMode: ['class'],
-  content: ['./app/**/*.{js,jsx}', './components/**/*.{js,jsx}', './pages/**/*.{js,jsx}'],
+  content: ['./app/**/*.{js,jsx}', './components/**/*.{js,jsx}',
+  './pages/**/*.{js,jsx}'],
   theme: {
     extend: {
       colors: {
-        bg: { DEFAULT: '#0F1115', surface: '#161A21', border: '#232838', light: '#F7F8FB' },
-        text: { DEFAULT: '#E6EAF3', muted: '#A9B1C6', dark: '#0E1219', lightMuted: '#47506B' },
+        bg: { DEFAULT: '#0F1115', surface: '#161A21', border: '#232838', light:
+        '#F7F8FB' },
+        text: { DEFAULT: '#E6EAF3', muted: '#A9B1C6', dark: '#0E1219',
+        lightMuted: '#47506B' },
         brand: {
           primary: '#82DBAD',
           success: '#83DB82',
@@ -85,7 +129,7 @@ export default {
   },
   plugins: [require('tailwindcss-animate')]
 };
-```
+```text
 
 ### `app/globals.css`
 
@@ -131,13 +175,15 @@ body {
   @apply text-brand-primary hover:opacity-90 underline-offset-2 underline;
 }
 .btn {
-  @apply inline-flex items-center justify-center gap-2 font-medium rounded-xl px-4 py-2;
+  @apply inline-flex items-center justify-center gap-2 font-medium rounded-xl
+  px-4 py-2;
 }
 .btn-primary {
   @apply bg-brand-primary text-[#0F1115] hover:brightness-95 shadow;
 }
 .btn-ghost {
-  @apply text-brand-primary hover:bg-[color-mix(in_oklab,var(--teal)20%,transparent)];
+  @apply text-brand-primary
+  hover:bg-[color-mix(in_oklab,var(--teal)20%,transparent)];
 }
 .badge {
   @apply px-2 py-0.5 rounded-md text-xs font-semibold;
@@ -149,9 +195,10 @@ body {
   @apply bg-brand-secondary text-[#0F1115];
 }
 .badge-pending {
-  @apply bg-[var(--surface)] text-[var(--muted)] border border-dashed border-[var(--border)];
+  @apply bg-[var(--surface)] text-[var(--muted)] border border-dashed
+  border-[var(--border)];
 }
-```
+```text
 
 ### Light/Dark Toggle (`components/theme-toggle.jsx`)
 
@@ -178,13 +225,14 @@ export default function ThemeToggle() {
     </button>
   );
 }
-```
+```text
 
 ---
 
 ## Drop‑in Pages (Copy/Paste)
 
-These are reference JSX pages you can drop into a Next.js app. Because this repo isn’t a Next.js project yet, they’re documented here for copy‑paste.
+These are reference JSX pages you can drop into a Next.js app. Because this repo
+isn’t a Next.js project yet, they’re documented here for copy‑paste.
 
 ### Kitchen‑Sink / Widgets (`app/kitchen-sink/page.jsx`)
 
@@ -255,7 +303,8 @@ export default function KitchenSink() {
         <div className="fixed inset-0 bg-black/50 grid place-items-center p-6">
           <div className="card p-6 max-w-md w-full">
             <h3 className="text-xl font-semibold">Continue the debate?</h3>
-            <p className="text-[var(--muted)] mt-1">Majority of participants decides.</p>
+            <p className="text-[var(--muted)] mt-1">Majority of participants
+            decides.</p>
             <div className="flex gap-3 mt-4">
               <button className="btn btn-primary flex-1">Continue</button>
               <button className="btn flex-1" onClick={() => setVoteOpen(false)}>
@@ -282,7 +331,8 @@ function Timeline() {
       <rect x="20" y="50" width="760" height="4" fill="url(#g)" />
       {['Research', 'Submit', 'Verify', 'Publish', 'Vote'].map((t, i) => (
         <g key={t} transform={`translate(${60 + i * 180},0)`}>
-          <circle cx="0" cy="52" r="8" fill="var(--surface)" stroke="var(--border)" />
+          <circle cx="0" cy="52" r="8" fill="var(--surface)"
+          stroke="var(--border)" />
           <text
             x="0"
             y="90"
@@ -306,13 +356,16 @@ function ClaimMap() {
       <circle cx="310" cy="140" r="10" fill="#C69256" />
       <line x1="110" y1="80" x2="310" y2="140" stroke="var(--border)" />
       <line x1="110" y1="200" x2="310" y2="140" stroke="var(--border)" />
-      <text x="90" y="70" className="fill-[var(--muted)]" style={{ fontSize: 12 }}>
+      <text x="90" y="70" className="fill-[var(--muted)]" style={{ fontSize: 12
+      }}>
         cite A
       </text>
-      <text x="90" y="220" className="fill-[var(--muted)]" style={{ fontSize: 12 }}>
+      <text x="90" y="220" className="fill-[var(--muted)]" style={{ fontSize: 12
+      }}>
         cite B
       </text>
-      <text x="295" y="125" className="fill-[var(--muted)]" style={{ fontSize: 12 }}>
+      <text x="295" y="125" className="fill-[var(--muted)]" style={{ fontSize:
+      12 }}>
         claim
       </text>
       <rect
@@ -393,7 +446,7 @@ function Radar() {
     </svg>
   );
 }
-```
+```text
 
 ### Spectator View (`app/spectate/[roomId]/page.jsx`)
 
@@ -412,7 +465,8 @@ export default function SpectatorPage({ params }) {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Room {roomId}</h1>
-          <p className="text-[var(--muted)]">Topic: Should open models outpace closed?</p>
+          <p className="text-[var(--muted)]">Topic: Should open models outpace
+          closed?</p>
         </div>
         <div className="flex items-center gap-3">
           <ThemeToggle />
@@ -442,14 +496,16 @@ export default function SpectatorPage({ params }) {
                 s.verdict==='supported' ? 'badge badge-verified' :
                 s.verdict==='partial' ? 'badge' : 'badge badge-unsupported'
               }>
-                {s.verdict === 'supported' ? '✅ supported' : s.verdict==='partial' ? '⚠️ partial' : '❌ unsupported'}
+                {s.verdict === 'supported' ? '✅ supported' :
+                s.verdict==='partial' ? '⚠️ partial' : '❌ unsupported'}
               </span>
             </header>
             <p className="text-sm leading-6">{s.content}</p>
             <footer className="text-xs">
               Citations:{' '}
               {s.citations map((c, j)=>(
-                <a key={j} href={c.url} className="link mr-2" target="_blank" rel="noreferrer">{c.label}</a>
+                <a key={j} href={c.url} className="link mr-2" target="_blank"
+                rel="noreferrer">{c.label}</a>
               ))}
             </footer>
           </article>
@@ -466,8 +522,10 @@ export default function SpectatorPage({ params }) {
         </div>
       </section>
 
-      <section className="text-sm text-[var(--muted)] flex items-center justify-between">
-        <div>Checkpoint: <code className="px-1.5 py-0.5 bg-[var(--surface)] border border-[var(--border)] rounded-md">chain_N=5c7…9a</code></div>
+      <section className="text-sm text-[var(--muted)] flex items-center
+      justify-between">
+        <div>Checkpoint: <code className="px-1.5 py-0.5 bg-[var(--surface)]
+        border border-[var(--border)] rounded-md">chain_N=5c7…9a</code></div>
         <a className="link" href="#">View signed journal →</a>
       </section>
     </main>
@@ -475,14 +533,16 @@ export default function SpectatorPage({ params }) {
 }
 
 function Countdown({ endsAt }) {
-  const s = useMemo(()=>Math.max(0, Math.floor((endsAt - Date.now())/1000)), [endsAt]);
+  const s = useMemo(()=>Math.max(0, Math.floor((endsAt - Date.now())/1000)),
+  [endsAt]);
   return <div className="font-mono text-lg">{String(s).padStart(2,'0')}s</div>;
 }
 
 function Avatar({ kind }) {
   const map = { bag: '🛍️', ski: '🎿', robot: '🤖', crt: '🖥️', holo: '🟦' };
   return (
-    <span className="grid place-items-center w-8 h-8 rounded-full bg-[var(--surface)] border border-[var(--border)]">
+    <span className="grid place-items-center w-8 h-8 rounded-full
+    bg-[var(--surface)] border border-[var(--border)]">
       <span aria-hidden>{map[kind] || '❓'}</span>
     </span>
   );
@@ -490,11 +550,13 @@ function Avatar({ kind }) {
 
 const MOCK_SUBS = [
   { alias:'anon_1', kind:'bag', verdict:'supported',
-    content:'Open ecosystems enable compounding contributions via re‑use and fork pressure.',
+    content:'Open ecosystems enable compounding contributions via re‑use and
+    fork pressure.',
     citations:[{label:'arXiv', url:'#'},{label:'Nature', url:'#'}]
   },
   { alias:'anon_2', kind:'ski', verdict:'partial',
-    content:'Closed models accelerate alignment due to funding concentration; evidence is mixed.',
+    content:'Closed models accelerate alignment due to funding concentration;
+    evidence is mixed.',
     citations:[{label:'Whitepaper', url:'#'}]
   },
   { alias:'anon_3', kind:'robot', verdict:'unsupported',
@@ -506,13 +568,13 @@ const MOCK_SUBS = [
     citations:[{label:'Report', url:'#'},{label:'Repo', url:'#'}]
   }
 ];
-```
+```text
 
 ---
 
 ## Where to Put Assets
 
-```
+```text
 public/
   img/banner_db8.jpg
 app/
@@ -520,20 +582,24 @@ app/
   spectate/[roomId]/page.jsx
 components/
   theme-toggle.jsx
-```
+```text
 
 ---
 
 ## A11y & Perf Checklist
 
 - Minimum contrast AA for text; dark theme passes out‑of‑the‑box
-- All images have descriptive alt; interactive elements keyboard‑reachable and visible focus
-- Respect reduced motion (optional: gate animations under `@media (prefers-reduced-motion)`)
+- All images have descriptive alt; interactive elements keyboard‑reachable and
+  visible focus
+- Respect reduced motion (optional: gate animations under `@media
+  (prefers-reduced-motion)`)
 - Lazy‑load heavy assets; prefetch realtime scripts only on pages that need them
 
 ---
 
 ## Next Step (Optional)
 
-- I can generate two tiny SVG diagrams in the house palette: Barrier Timeline and Hash‑Chain Proof (drop in `public/img/`).
+- I can generate two tiny SVG diagrams in the house palette: Barrier Timeline
+  and Hash‑Chain Proof (drop in `public/img/`).
 - Or wire the Spectator page to Supabase Realtime scaffolding.
+````

@@ -1,3 +1,9 @@
+---
+lastUpdated: 2025-10-02
+---
+
+# Pull Request
+
 ## Summary
 
 What this PR changes and why.
@@ -15,4 +21,3 @@ What this PR changes and why.
 ## Notes
 
 Related docs: docs/Architecture.md, docs/Features.md
-
