@@ -88,3 +88,14 @@ CREATE TABLE IF NOT EXISTS submission_flags (
 CREATE INDEX IF NOT EXISTS idx_submission_flags_submission ON submission_flags (submission_id);
 
 -- Future M1/M2: rooms/rounds tables, RLS policies, and RPCs
+
+-- Minimal admin audit log
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  action       text        NOT NULL,
+  entity_type  text        NOT NULL,
+  entity_id    uuid        NOT NULL,
+  actor        text        NOT NULL,
+  details      jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);

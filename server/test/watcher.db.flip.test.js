@@ -37,11 +37,10 @@ suite('Watcher DB flips', () => {
     const cur = await pool.query(
       `select room_id, round_id, idx, phase, submit_deadline_unix
          from view_current_round
-        where room_id=$1
-        order by idx desc
-        limit 1`,
+        where room_id=$1`,
       [roomId]
     );
+    if (cur.rows.length === 0) throw new Error(`no current round found for roomId ${roomId}`);
     roundId = cur.rows[0].round_id;
     // Move deadline to the past via service RPC
     const now = Math.floor(Date.now() / 1000);
@@ -52,9 +51,7 @@ suite('Watcher DB flips', () => {
     const r = await pool.query(
       `select room_id, round_id, idx, phase, published_at_unix
          from view_current_round
-        where room_id=$1
-        order by idx desc
-        limit 1`,
+        where room_id=$1`,
       [roomId]
     );
     expect(r.rows[0].phase).toBe('published');
