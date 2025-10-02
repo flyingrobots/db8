@@ -1,2 +1,6 @@
 #!/usr/bin/env bash
-npm run lint && npm run test
+set -euo pipefail
+
+npm run lint
+npm run lint:md
+npm run test
