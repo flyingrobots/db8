@@ -19,6 +19,40 @@ Progress tracking
   M1–M7).
 - When you open PRs, link the corresponding issues and set the milestone.
 
+Issue & Backlog Discipline (must follow)
+
+- Source of truth: GitHub Issues + Project “db8 Roadmap”. Backlog file is
+  staging only.
+- No PRs without a linked issue, except trivial changes (docs typos, ignore
+  entries ≤ 5 changed lines). For trivial changes, either:
+  - Create a retro issue and close it with links, or
+  - Log the item in `docs/tasks/backlog.md` if truly non-urgent (but promote to
+    an issue before any follow-up work).
+- Backlog usage (`docs/tasks/backlog.md`):
+  - Add well-formed entries using the provided template (Title, Type, Area,
+    Priority, Milestone, Status, Summary, Acceptance, Links).
+  - When promoting to an issue: remove the entry from the backlog in the same
+    commit and include the new issue number in the commit message.
+  - Never leave duplicates: a task exists in exactly one place (backlog OR an
+    open issue), never both.
+- Board hygiene (strict): whenever status changes, immediately update the Issue
+  fields and Project board.
+  - Start: Status=Todo, Workflow=Todo, Milestone set.
+  - Actively coding: Status=In Progress, Workflow=In Progress.
+  - PR opened: add label `status/in-review`, Workflow=In Review.
+  - Merged: Status=Done, Workflow=Done; issue closed via PR body (“Fixes #<n>”).
+  - Delete the branch after merge.
+- Milestone discipline:
+  - M1 is the primary focus unless explicitly approved otherwise. After any
+    side-task (e.g., urgent fix), return to M1 immediately.
+- Commit/PR discipline:
+  - Conventional Commits, scoped labels (`area/*`, `type/*`, `priority/*`), and
+    milestone on every PR. PR body must include Summary / Changes / Tests / Next
+    and an auto-close reference (`Fixes #<n>`).
+  - If a PR must merge without an issue (exceptional trivial change), add a
+    short “Why no issue” note in the PR body and open a retro issue that closes
+    immediately with links.
+
 Pull requests
 
 - Use Markdown in PR bodies (no HTML). Lead with a short Summary and bullet
