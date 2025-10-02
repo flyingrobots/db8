@@ -32,7 +32,7 @@ psql postgresql://postgres:test@localhost:54329/db8 -f db/rpc.sql
 
 Row-Level Security (RLS) is enabled for core tables, and the server reads via
 secure views only. Views are marked as `security_barrier` to prevent predicate
-pushdown across RLS boundaries.
+push-down across RLS boundaries.
 
 - Files
   - `db/rls.sql`: enables RLS and defines policies.
