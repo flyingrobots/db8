@@ -1,9 +1,9 @@
 BEGIN;
-SELECT plan(11);
+SELECT plan(16);
 
--- RPC existence: room_create(topic, cfg)
+-- RPC existence: room_create(topic, cfg, client_nonce)
 SELECT ok(
-  to_regprocedure('room_create(text,jsonb)') IS NOT NULL,
+  to_regprocedure('room_create(text,jsonb,text)') IS NOT NULL,
   'room_create exists'
 );
 
@@ -14,14 +14,18 @@ DECLARE
   participant_count integer;
   round_count integer;
 BEGIN
-  SELECT room_create('Demo room', jsonb_build_object('participant_count', 3, 'submit_minutes', 1)) INTO rid;
+  SELECT room_create('Demo room', jsonb_build_object('participant_count', 3, 'submit_minutes', 1), 'nonce-demo-1') INTO rid;
   PERFORM ok(rid IS NOT NULL, 'room_create returned room id');
+  PERFORM ok(EXISTS (SELECT 1 FROM rooms WHERE id = rid AND title = 'Demo room'), 'room exists with correct title');
 
   SELECT count(*) INTO participant_count FROM participants WHERE room_id = rid;
   PERFORM ok(participant_count = 3, 'room_create seeded participants');
+  PERFORM ok(NOT EXISTS (
+    SELECT 1 FROM participants WHERE room_id = rid AND anon_name NOT LIKE 'anon_%'
+  ), 'participant anon names use anon_N pattern');
 
-  SELECT count(*) INTO round_count FROM rounds WHERE room_id = rid AND idx = 0;
-  PERFORM ok(round_count = 1, 'room_create created initial round 0');
+  SELECT count(*) INTO round_count FROM rounds WHERE room_id = rid AND idx = 0 AND phase = 'submit' AND submit_deadline_unix > 0;
+  PERFORM ok(round_count = 1, 'room_create created initial round 0 with valid deadline');
 END$$;
 
 -- RPC existence: submission_upsert(round_id, author_id, content, claims, citations, canonical_sha256, client_nonce)
@@ -30,16 +34,19 @@ SELECT ok(
   'submission_upsert exists'
 );
 
--- RPC behavior: submission_upsert is idempotent by (round_id, author_id, client_nonce)
 DO $$
 DECLARE
-  r uuid := '00000000-0000-0000-0000-0000000000aa';
-  a uuid := '00000000-0000-0000-0000-0000000000bb';
+  room_id uuid;
+  round_id uuid;
+  author_id uuid;
   n text := 'nonce-sub-1';
   id1 uuid; id2 uuid;
 BEGIN
-  SELECT submission_upsert(r, a, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n) INTO id1;
-  SELECT submission_upsert(r, a, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n) INTO id2;
+  SELECT room_create('Test room', '{}'::jsonb, 'nonce-sub-room-1') INTO room_id;
+  SELECT id INTO round_id FROM rounds WHERE room_id = room_id AND idx = 0;
+  SELECT id INTO author_id FROM participants WHERE room_id = room_id LIMIT 1;
+  SELECT submission_upsert(round_id, author_id, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n) INTO id1;
+  SELECT submission_upsert(round_id, author_id, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeef', n) INTO id2;
   PERFORM ok(id1 = id2, 'submission_upsert idempotent for same nonce');
 END$$;
 
@@ -49,17 +56,19 @@ SELECT ok(
   'vote_submit exists'
 );
 
--- RPC behavior: vote_submit is idempotent by (round_id, voter_id, kind, client_nonce)
 DO $$
 DECLARE
-  room uuid := '00000000-0000-0000-0000-0000000000ac';
-  round uuid := '00000000-0000-0000-0000-0000000000ad';
-  voter uuid := '00000000-0000-0000-0000-0000000000ae';
+  room_id uuid;
+  round_id uuid;
+  voter_id uuid;
   n text := 'nonce-vote-1';
   id1 uuid; id2 uuid;
 BEGIN
-  SELECT vote_submit(room, round, voter, 'continue', '{}'::jsonb, n) INTO id1;
-  SELECT vote_submit(room, round, voter, 'continue', '{}'::jsonb, n) INTO id2;
+  SELECT room_create('Vote room', '{}'::jsonb, 'nonce-vote-room-1') INTO room_id;
+  SELECT id INTO round_id FROM rounds WHERE room_id = room_id AND idx = 0;
+  SELECT id INTO voter_id FROM participants WHERE room_id = room_id LIMIT 1;
+  SELECT vote_submit(room_id, round_id, voter_id, 'continue', '{}'::jsonb, n) INTO id1;
+  SELECT vote_submit(room_id, round_id, voter_id, 'continue', '{}'::jsonb, n) INTO id2;
   PERFORM ok(id1 = id2, 'vote_submit idempotent for same nonce');
 END$$;
 
@@ -73,6 +82,23 @@ DO $$ BEGIN
   PERFORM round_open_next();
   PERFORM pass('round ops are callable');
 END $$;
+
+-- Edge cases: invalid inputs should raise exceptions
+SELECT throws_ok(
+  $$ SELECT room_create('', '{}'::jsonb, 'n1') $$,
+  '22023',
+  'room_create rejects empty topic'
+);
+SELECT throws_ok(
+  $$ SELECT room_create('Bad participants', jsonb_build_object('participant_count', 0), 'n2') $$,
+  '22023',
+  'room_create rejects participant_count < 1'
+);
+SELECT throws_ok(
+  $$ SELECT room_create('Bad minutes', jsonb_build_object('submit_minutes', 0), 'n3') $$,
+  '22023',
+  'room_create rejects submit_minutes < 1'
+);
 
 SELECT * FROM finish();
 ROLLBACK;
