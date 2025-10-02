@@ -51,6 +51,7 @@ Commands:
   whoami               print current identity
   room status          show room snapshot
   room watch           stream events (WS/SSE)
+  room create         create a new room (server RPC)
   draft open           create/open draft.json
   draft validate       validate and print canonical sha
   submit               submit current draft
@@ -79,6 +80,7 @@ async function main() {
       'whoami',
       'room:status',
       'room:watch',
+      'room:create',
       'draft:open',
       'draft:validate',
       'submit',
@@ -502,6 +504,37 @@ async function main() {
 
       process.removeListener('SIGINT', onSigint);
       return lastExit;
+    }
+    case 'room:create': {
+      // Create a room via API
+      const topic = args.topic || args.t;
+      if (!topic || typeof topic !== 'string' || topic.length < 3) {
+        printerr('room create requires --topic <string> (min 3 chars)');
+        return EXIT.VALIDATION;
+      }
+      const cfg = {};
+      if (args.participants) cfg.participant_count = Number(args.participants);
+      if (args['submit-minutes']) cfg.submit_minutes = Number(args['submit-minutes']);
+      const payload = { topic, cfg, client_nonce: String(args.nonce || randomNonce()) };
+      const url = `${apiUrl.replace(/\/$/, '')}/rpc/room.create`;
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          printerr(body?.error || `Server error ${res.status}`);
+          return EXIT.NETWORK;
+        }
+        if (args.json) print(JSON.stringify(body));
+        else print(`room_id: ${body.room_id}`);
+        return EXIT.OK;
+      } catch (e) {
+        printerr(`Failed to create room: ${e?.message || e}`);
+        return EXIT.NETWORK;
+      }
     }
     case 'flag:submission': {
       const submissionId = String(args.submission || '').trim();
