@@ -27,7 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_rounds_room_idx ON rounds (room_id, idx DESC);
 -- Support RLS policy predicate on rounds(id, phase)
 CREATE INDEX IF NOT EXISTS idx_rounds_id_phase ON rounds (id, phase);
 
--- Participants: seeded roster for each room / agent configuration
+-- Participants: seeded roster for each room; referenced by submissions and votes
 CREATE TABLE IF NOT EXISTS participants (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   room_id          uuid        NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
