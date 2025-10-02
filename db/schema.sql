@@ -89,13 +89,44 @@ CREATE INDEX IF NOT EXISTS idx_submission_flags_submission ON submission_flags (
 
 -- Future M1/M2: rooms/rounds tables, RLS policies, and RPCs
 
--- Minimal admin audit log
-CREATE TABLE IF NOT EXISTS admin_audit_log (
-  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  action       text        NOT NULL,
-  entity_type  text        NOT NULL,
-  entity_id    uuid        NOT NULL,
-  actor        text        NOT NULL,
-  details      jsonb       NOT NULL DEFAULT '{}'::jsonb,
-  created_at   timestamptz NOT NULL DEFAULT now()
-);
+-- Admin audit log: partitioned by time, constrained values, and secure by default
+-- Note: recreated here to add constraints, indexes, and partitioning. Safe in dev/CI.
+DROP TABLE IF EXISTS admin_audit_log CASCADE;
+
+CREATE TABLE admin_audit_log (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  action        text        NOT NULL,
+  entity_type   text        NOT NULL,
+  entity_id     uuid        NOT NULL,
+  actor_id      uuid        REFERENCES participants(id) ON DELETE SET NULL,
+  system_actor  text,
+  actor_context jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  details       jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  -- Prevent typos in action and entity_type (lightweight instead of enums to avoid migrations churn)
+  CONSTRAINT admin_audit_action_ck
+    CHECK (action IN (
+      'create','update','delete','publish','open_next','vote','flag','login','logout','config','rls','rpc'
+    )),
+  CONSTRAINT admin_audit_entity_type_ck
+    CHECK (entity_type IN (
+      'room','round','submission','vote','participant','flag','system'
+    )),
+  -- Exactly one of actor_id or system_actor must be set
+  CONSTRAINT admin_audit_actor_oneof_ck
+    CHECK ((actor_id IS NOT NULL AND system_actor IS NULL)
+        OR (actor_id IS NULL AND system_actor IS NOT NULL))
+)
+PARTITION BY RANGE (created_at);
+
+-- Default catch-all partition (rotate monthly if/when volume warrants)
+CREATE TABLE IF NOT EXISTS admin_audit_log_default PARTITION OF admin_audit_log
+  FOR VALUES FROM (MINVALUE) TO (MAXVALUE);
+
+-- Indexes for common filters and recency access
+CREATE INDEX IF NOT EXISTS idx_admin_audit_entity ON admin_audit_log (entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_created_at_desc ON admin_audit_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_actor_time ON admin_audit_log (actor_id, created_at);
+
+COMMENT ON TABLE admin_audit_log IS 'Administrative audit log; RLS locked down. Writes via privileged service only.';
+COMMENT ON COLUMN admin_audit_log.actor_context IS 'Additional context about actor (e.g., IP, UA), JSON';

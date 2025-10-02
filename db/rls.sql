@@ -5,6 +5,7 @@ alter table if exists participants enable row level security;
 alter table if exists rounds enable row level security;
 alter table if exists submissions enable row level security;
 alter table if exists votes enable row level security;
+alter table if exists admin_audit_log enable row level security;
 
 -- Helper: current participant id from session (set via set_config('db8.participant_id', uuid, false))
 create or replace function db8_current_participant_id()
@@ -39,14 +40,50 @@ with check (false);
 drop policy if exists rooms_read_policy on rooms;
 create policy rooms_read_policy on rooms for select using (true);
 
+-- Allow deletes in test databases for teardown helpers
+drop policy if exists rooms_test_delete_policy on rooms;
+create policy rooms_test_delete_policy on rooms
+for delete to public
+using (
+  current_database() LIKE '%\_test' ESCAPE '\' OR current_database() LIKE 'test\_%' ESCAPE '\'
+);
+
 drop policy if exists participants_read_policy on participants;
 create policy participants_read_policy on participants for select using (true);
 
 drop policy if exists rounds_read_policy on rounds;
 create policy rounds_read_policy on rounds for select using (true);
 
+-- Allow round updates only in clearly test databases to support deterministic test helpers
+drop policy if exists rounds_test_update_policy on rounds;
+create policy rounds_test_update_policy on rounds
+for update to public
+using (
+  current_database() LIKE '%\_test' ESCAPE '\' OR current_database() LIKE 'test\_%' ESCAPE '\'
+)
+with check (
+  current_database() LIKE '%\_test' ESCAPE '\' OR current_database() LIKE 'test\_%' ESCAPE '\'
+);
+
+drop policy if exists rounds_test_delete_policy on rounds;
+create policy rounds_test_delete_policy on rounds
+for delete to public
+using (
+  current_database() LIKE '%\_test' ESCAPE '\' OR current_database() LIKE 'test\_%' ESCAPE '\'
+);
+
 drop policy if exists votes_read_policy on votes;
 create policy votes_read_policy on votes for select using (true);
+
+-- Admin audit log: deny by default; access should occur via privileged roles or service
+drop policy if exists admin_audit_log_read_policy on admin_audit_log;
+create policy admin_audit_log_read_policy on admin_audit_log for select using (false);
+
+drop policy if exists admin_audit_log_no_write_policy on admin_audit_log;
+create policy admin_audit_log_no_write_policy on admin_audit_log
+for all to public
+using (false)
+with check (false);
 
 -- Performance note: submissions_read_policy references rounds(id, phase).
 -- Ensure an index exists on rounds to support this predicate. Consider materializing

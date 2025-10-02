@@ -9,7 +9,8 @@ const shouldRun =
   process.env.RUN_PGTAP === '1' ||
   process.env.DB8_TEST_PG === '1' ||
   process.env.DB8_TEST_DATABASE_URL;
-const dbUrl = process.env.DB8_TEST_DATABASE_URL || 'postgresql://postgres:test@localhost:54329/db8';
+const dbUrl =
+  process.env.DB8_TEST_DATABASE_URL || 'postgresql://postgres:test@localhost:54329/db8_test';
 
 const suite = shouldRun ? describe : describe.skip;
 
