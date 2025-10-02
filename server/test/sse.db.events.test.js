@@ -5,7 +5,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import app, { __setDbPool } from '../rpc.js';
 
-const shouldRun = process.env.RUN_PGTAP === '1' || process.env.DB8_TEST_PG === '1';
+const shouldRun =
+  process.env.RUN_PGTAP === '1' ||
+  process.env.DB8_TEST_PG === '1' ||
+  process.env.DB8_TEST_DATABASE_URL;
 const dbUrl = process.env.DB8_TEST_DATABASE_URL || 'postgresql://postgres:test@localhost:54329/db8';
 
 const suite = shouldRun ? describe : describe.skip;
@@ -14,37 +17,33 @@ suite('SSE /events is DB-backed (LISTEN/NOTIFY)', () => {
   let pool;
   let server;
   let port;
-  const roomId = '00000000-0000-0000-0000-0000000000ab';
-  const roundId = '00000000-0000-0000-0000-0000000000ac';
+  let roomId;
+  let roundId;
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: dbUrl });
     __setDbPool(pool);
 
     // Load schema + RPCs if missing (avoid concurrent redefine races)
-    const haveRooms = await pool.query("select to_regclass('public.rooms') as reg");
-    if (!haveRooms.rows[0]?.reg) {
-      const schemaSql = fs.readFileSync(path.resolve('db/schema.sql'), 'utf8');
-      await pool.query(schemaSql);
-    }
-    // Ensure RPCs and triggers exist; use CREATE OR REPLACE so this is idempotent
+    // Load schema/RPC/RLS always to keep deterministic
+    const schemaSql = fs.readFileSync(path.resolve('db/schema.sql'), 'utf8');
+    await pool.query(schemaSql);
     const rpcSql = fs.readFileSync(path.resolve('db/rpc.sql'), 'utf8');
     await pool.query(rpcSql);
+    const rlsSql = fs.readFileSync(path.resolve('db/rls.sql'), 'utf8');
+    await pool.query(rlsSql);
 
-    await pool.query(
-      `insert into rooms (id, title) values ($1,'Test Room') on conflict (id) do nothing`,
+    // Create a room/round via RPC and fetch the current round via the secure view
+    const rc = await pool.query('select room_create($1) as id', ['SSE Test Room']);
+    roomId = rc.rows[0].id;
+    const cur = await pool.query(
+      `select room_id, round_id, idx, phase, submit_deadline_unix
+         from view_current_round
+        where room_id = $1`,
       [roomId]
     );
-    const deadline = Math.floor(Date.now() / 1000) + 30;
-    await pool.query(
-      `insert into rounds (id, room_id, idx, phase, submit_deadline_unix)
-       values ($1,$2,0,'submit',$3)
-       on conflict (id) do update set submit_deadline_unix = excluded.submit_deadline_unix`.replace(
-        '\n',
-        ' '
-      ),
-      [roundId, roomId, deadline]
-    );
+    if (cur.rows.length === 0) throw new Error(`No current round found for room ${roomId}`);
+    roundId = cur.rows[0].round_id;
 
     server = http.createServer(app);
     await new Promise((r) => server.listen(0, r));
@@ -84,12 +83,37 @@ suite('SSE /events is DB-backed (LISTEN/NOTIFY)', () => {
               // As soon as we see a timer for the room and a subsequent phase event after we
               // flip the round, we can resolve.
               if (events.length === 1 && payload.t === 'timer' && payload.room_id === roomId) {
-                // Flip the round to published to trigger NOTIFY and expect a 'phase' event
+                // Simulate a round phase change via NOTIFY without raw table writes
                 try {
                   const now = Math.floor(Date.now() / 1000);
+                  // Re-read current round details from the secure view for payload fields
+                  const cur2 = await pool.query(
+                    `select room_id, round_id, idx, submit_deadline_unix
+                       from view_current_round
+                      where room_id = $1
+                      order by idx desc
+                      limit 1`,
+                    [roomId]
+                  );
                   await pool.query(
-                    `update rounds set phase='published', published_at_unix=$1, continue_vote_close_unix=$2 where id=$3`,
-                    [now, now + 2, roundId]
+                    `select pg_notify('db8_rounds', json_build_object(
+                      't','phase',
+                      'room_id',$1::text,
+                      'round_id',$2::text,
+                      'idx',$3::int,
+                      'phase','published',
+                      'submit_deadline_unix',$4::bigint,
+                      'published_at_unix',$5::bigint,
+                      'continue_vote_close_unix',$6::bigint
+                    )::text)`,
+                    [
+                      roomId,
+                      roundId,
+                      cur2.rows[0].idx,
+                      cur2.rows[0].submit_deadline_unix,
+                      now,
+                      now + 2
+                    ]
                   );
                 } catch (e) {
                   res.off('data', onData);

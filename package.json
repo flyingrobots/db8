@@ -39,6 +39,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
+    "cspell": "^8.13.2",
     "eslint": "^9.13.0",
     "eslint-import-resolver-alias": "^1.1.2",
     "eslint-plugin-import": "^2.29.1",
@@ -47,10 +48,9 @@
     "eslint-plugin-security": "^3.0.1",
     "eslint-plugin-unicorn": "^61.0.2",
     "lint-staged": "^16.2.3",
+    "markdown-link-check": "^3.12.2",
     "markdownlint": "^0.33.0",
     "markdownlint-cli": "^0.42.0",
-    "cspell": "^8.13.2",
-    "markdown-link-check": "^3.12.2",
     "prettier": "^3.3.3",
     "supertest": "^7.0.0",
     "vitest": "^3.2.4"
