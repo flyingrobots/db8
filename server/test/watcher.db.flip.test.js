@@ -25,6 +25,8 @@ suite('Watcher DB flips', () => {
     await pool.query(rpcSql);
     const rlsSql = fs.readFileSync(path.resolve('db/rls.sql'), 'utf8');
     await pool.query(rlsSql);
+    const helpersSql = fs.readFileSync(path.resolve('db/test/helpers.sql'), 'utf8');
+    await pool.query(helpersSql);
   });
   afterAll(async () => {
     await pool.end();
