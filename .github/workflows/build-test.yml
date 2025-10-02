@@ -1,0 +1,50 @@
+name: build-test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: build-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: ghcr.io/library/postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: db8
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d db8"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Prepare DB schema/RPC
+        env:
+          DATABASE_URL: postgresql://postgres:test@localhost:5432/db8
+          DB8_TEST_OUTPUT: quiet
+        run: npm run test:prepare-db
+
+      - name: Run tests (vitest)
+        env:
+          DATABASE_URL: postgresql://postgres:test@localhost:5432/db8
+          DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/db8
+          CI: true
+        run: npm run test:inner
+
