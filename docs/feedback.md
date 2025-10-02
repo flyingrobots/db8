@@ -16,9 +16,8 @@ message, then git push. Open a new PR.
       integer
 
   > = 1, submit-minutes is an integer >= 0), and if validation fails print the
-  > same
-  > validation error/usage and return EXIT.VALIDATION; only add fields to cfg
-  > when
+  > same validation error/usage and return EXIT.VALIDATION; only add fields to
+  > cfg when
   > validated, and omit the entire cfg block from the payload if it remains
   > empty.
   > Also keep returning EXIT.VALIDATION on bad inputs rather than sending the
@@ -43,21 +42,22 @@ message, then git push. Open a new PR.
 
 - [x] In bin/db8.js around line 535, the code wraps the nonce in an unnecessary
       String() call; remove the defensive String() so the property is assigned
-      directly as client_nonce: args.nonce || randomNonce(), relying on parseArgs to
-      provide a string or undefined and randomNonce() to return a string.
+      directly as client_nonce: args.nonce || randomNonce(), relying on
+      parseArgs to provide a string or undefined and randomNonce() to return a
+      string.
 
 - [x] In server/rpc.js around lines 188 to 235, the DB-fallback logging is
       inconsistent: line ~205 uses console.error while submission.create uses
       console.warn; change the console.error call that logs "room.create DB error;
-      using in-memory fallback" to console.warn (preserving the same message and
-      error object) so all fallback scenarios use the same log level.
+      using in-memory fallback" to console.warn (preserving the same message
+      and error object) so all fallback scenarios use the same log level.
 
 - [x] In server/rpc.js around line 210, remove the String(...) coercion that
       converts non-string values into garbage; instead read the validated field
-      directly (e.g., use input.client_nonce as-is, or use nullish coalescing if you
-      must default to an empty string) so you don't mask type errors — replace the
-      current line with a direct access to input.client_nonce (or input.client_nonce
-      ?? '').
+      directly (e.g., use input.client_nonce as-is, or use nullish coalescing
+      if you must default to an empty string) so you don't mask type errors —
+      replace the current line with a direct access to input.client_nonce (or
+      input.client_nonce ?? '').
 
 - [x] In server/test/cli.room.create.test.js around lines 35 to 37, the
       try-catch that calls child.kill() silently ignores any errors; change the
