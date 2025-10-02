@@ -24,7 +24,7 @@ class FakePool {
       return { rows: [{ id }] };
     }
     if (text.includes('vote_submit')) {
-      const [_roomId, roundId, voterId, _kind, _ballotJson, clientNonce] = params;
+      const [roundId, voterId, _kind, _ballotJson, clientNonce] = params;
       const key = `${roundId}:${voterId}:${clientNonce}`;
       if (!this.votes.has(key)) {
         this.votes.set(key, randomUUID());
@@ -56,7 +56,7 @@ describe('DB-backed RPC integration (stubbed pool)', () => {
       room_id: '00000000-0000-0000-0000-000000000001',
       round_id: '00000000-0000-0000-0000-000000000002',
       author_id: '00000000-0000-0000-0000-000000000003',
-      phase: 'OPENING',
+      phase: 'submit',
       deadline_unix: 0,
       content: 'Hello world',
       claims: [{ id: 'c1', text: 'Claim', support: [{ kind: 'logic', ref: 'a' }] }],

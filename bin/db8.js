@@ -47,14 +47,16 @@ Global options:
   --nonce <id>         client idempotency key
 
 Commands:
-  login                obtain a room-scoped JWT
+  login                obtain a room-scoped JWT (add --device-code for interactive flow)
   whoami               print current identity
   room status          show room snapshot
   room watch           stream events (WS/SSE)
+  room create         create a new room (server RPC)
   draft open           create/open draft.json
   draft validate       validate and print canonical sha
   submit               submit current draft
   resubmit             resubmit with a new nonce
+  flag submission      report a submission to moderators
 `);
 }
 
@@ -78,10 +80,12 @@ async function main() {
       'whoami',
       'room:status',
       'room:watch',
+      'room:create',
       'draft:open',
       'draft:validate',
       'submit',
-      'resubmit'
+      'resubmit',
+      'flag:submission'
     ]);
 
     // Help handling
@@ -127,6 +131,23 @@ async function main() {
       throw new CLIError('--participant must be a string', EXIT.VALIDATION);
     }
 
+    if (key === 'flag:submission') {
+      if (typeof args.submission !== 'string' || args.submission.length === 0) {
+        throw new CLIError('flag submission requires --submission <uuid>', EXIT.VALIDATION);
+      }
+      if (!uuidRe.test(args.submission))
+        printerr('--submission looks non-standard (expecting uuid-like string)');
+      if (args.reason !== undefined && typeof args.reason !== 'string') {
+        throw new CLIError('--reason must be a string', EXIT.VALIDATION);
+      }
+      if (args.role !== undefined && typeof args.role !== 'string') {
+        throw new CLIError('--role must be a string', EXIT.VALIDATION);
+      }
+      if (args.reporter !== undefined && typeof args.reporter !== 'string') {
+        throw new CLIError('--reporter must be a string', EXIT.VALIDATION);
+      }
+    }
+
     return { wantHelp: false };
   }
 
@@ -166,7 +187,7 @@ async function main() {
     prof.participant_id ||
     session.participant_id ||
     '';
-  const jwt = process.env.DB8_JWT || session.jwt || '';
+  const jwt = args.jwt || process.env.DB8_JWT || session.jwt || '';
 
   // Helpers
   function randomNonce() {
@@ -208,7 +229,8 @@ async function main() {
     room_id: z.string().uuid(),
     round_id: z.string().uuid(),
     author_id: z.string().uuid(),
-    phase: z.enum(['OPENING', 'ARGUMENT', 'FINAL']),
+    // Align with DB phases
+    phase: z.enum(['submit', 'published', 'final']),
     deadline_unix: z.number().int(),
     content: z.string().min(1).max(4000),
     claims: z.array(Claim).min(1).max(5),
@@ -233,20 +255,100 @@ async function main() {
   // Router (skeleton + basic whoami/status)
   switch (key) {
     case 'login': {
-      // Minimal login: persist room/participant/jwt to ~/.db8/session.json
-      // Usage: db8 login --room <uuid> --participant <uuid> --jwt <token> [--expires <unix>]
+      // Minimal login: either direct JWT or device-code stub storing session.json
       const uuidRe = /^[0-9a-fA-F-]{8,}$/;
-      const roomId = args.room || process.env.DB8_ROOM_ID || '';
-      const participantId = args.participant || process.env.DB8_PARTICIPANT_ID || '';
-      const token = args.jwt || process.env.DB8_JWT || '';
-      const expiresAt = (() => {
+      const useDeviceCode = Boolean(args['device-code']);
+      const nonInteractive = Boolean(args['non-interactive']);
+
+      const roomFromEnv = room;
+      const participantFromEnv = participant;
+      const tokenFromEnv = jwt;
+
+      const resolveExpires = () => {
         const v = args.expires || '';
         const n = Number(v);
         if (v && Number.isFinite(n) && n > 0) return n;
-        // default to 1 hour from now
         return Math.floor(Date.now() / 1000) + 3600;
-      })();
+      };
 
+      async function persistSession(roomId, participantId, token, expiresAt, extra = {}) {
+        const sess = {
+          room_id: roomId,
+          participant_id: participantId,
+          jwt: token,
+          expires_at: expiresAt,
+          ...extra
+        };
+        await writeJson(sessPath, sess);
+        const payload = {
+          ok: true,
+          room_id: roomId,
+          participant_id: participantId,
+          expires_at: expiresAt
+        };
+        if (extra.device_code) payload.device_code = extra.device_code;
+        if (args.json) print(JSON.stringify(payload));
+        else print('ok');
+        return EXIT.OK;
+      }
+
+      if (useDeviceCode) {
+        const roomId = roomFromEnv;
+        if (!roomId) {
+          printerr('device-code login requires --room or configured room');
+          return EXIT.VALIDATION;
+        }
+        if (!uuidRe.test(roomId))
+          printerr('--room looks non-standard (expecting uuid-like string)');
+
+        let participantId = participantFromEnv;
+        let token = tokenFromEnv;
+
+        if ((!participantId || !token) && nonInteractive) {
+          printerr(
+            'Provide --participant and --jwt when using --device-code with --non-interactive.'
+          );
+          return EXIT.AUTH;
+        }
+
+        const deviceCode = crypto.randomBytes(3).toString('hex').slice(0, 6).toUpperCase();
+        print(`Device code: ${deviceCode}`);
+        print(`Visit ${apiUrl.replace(/\/$/, '')}/activate to continue.`);
+
+        if (!participantId || !token) {
+          const { createInterface } = await import('node:readline/promises');
+          const rl = createInterface({ input: process.stdin, output: process.stdout });
+          try {
+            if (!participantId)
+              participantId = (await rl.question('Participant ID (uuid): ')).trim();
+            if (!token) token = (await rl.question('Paste JWT (Bearer token): ')).trim();
+          } finally {
+            rl.close();
+          }
+        }
+
+        if (!participantId) {
+          printerr('Device-code login cancelled: missing participant id.');
+          return EXIT.VALIDATION;
+        }
+        if (!uuidRe.test(participantId))
+          printerr('--participant looks non-standard (expecting uuid-like string)');
+        if (!token) {
+          printerr('Device-code login cancelled: JWT required to finish.');
+          return EXIT.AUTH;
+        }
+
+        const expiresAt = resolveExpires();
+        return await persistSession(roomId, participantId, token, expiresAt, {
+          login_via: 'device_code',
+          device_code: deviceCode
+        });
+      }
+
+      // direct login path (existing behaviour)
+      const roomId = roomFromEnv;
+      const participantId = participantFromEnv;
+      const token = tokenFromEnv;
       if (!roomId) {
         printerr('login requires --room or DB8_ROOM_ID');
         return EXIT.VALIDATION;
@@ -263,25 +365,8 @@ async function main() {
       if (!uuidRe.test(participantId))
         printerr('--participant looks non-standard (expecting uuid-like string)');
 
-      const sess = {
-        room_id: roomId,
-        participant_id: participantId,
-        jwt: token,
-        expires_at: expiresAt
-      };
-      await writeJson(sessPath, sess);
-      if (args.json)
-        print(
-          JSON.stringify({
-            ok: true,
-            room_id: roomId,
-            participant_id: participantId,
-            expires_at: expiresAt,
-            saved: sessPath
-          })
-        );
-      else print('ok');
-      return EXIT.OK;
+      const expiresAt = resolveExpires();
+      return await persistSession(roomId, participantId, token, expiresAt, { login_via: 'manual' });
     }
     case 'whoami': {
       const out = {
@@ -341,12 +426,27 @@ async function main() {
         printerr('No room configured. Set --room or DB8_ROOM_ID or config profile.');
         return EXIT.AUTH;
       }
-      try {
-        const url = new URL(apiUrl.replace(/\/$/, '') + '/events');
-        url.searchParams.set('room_id', room);
-        const mod =
-          url.protocol === 'https:' ? await import('node:https') : await import('node:http');
-        return await new Promise((resolve) => {
+      const quiet = Boolean(args.quiet);
+      const maxEvents = Number(
+        process.env.DB8_CLI_TEST_MAX_EVENTS || (process.env.DB8_CLI_TEST_ONCE === '1' ? 1 : 0)
+      );
+      const url = new URL(apiUrl.replace(/\/$/, '') + '/events');
+      url.searchParams.set('room_id', room);
+      const mod =
+        url.protocol === 'https:' ? await import('node:https') : await import('node:http');
+      let stopRequested = false;
+      let eventsSeen = 0;
+      let attempt = 0;
+      let lastExit = EXIT.OK;
+
+      const sleep = (ms) => new Promise((resolve) => globalThis.setTimeout(resolve, ms));
+      const onSigint = () => {
+        stopRequested = true;
+      };
+      process.once('SIGINT', onSigint);
+
+      const connect = () =>
+        new Promise((resolve) => {
           const req = mod.request(
             url,
             { method: 'GET', headers: { accept: 'text/event-stream' } },
@@ -364,18 +464,21 @@ async function main() {
                     const json = dataLine.slice(6);
                     try {
                       const evt = JSON.parse(json);
-                      process.stdout.write((args.json ? JSON.stringify(evt) : json) + '\n');
-                      if (process.env.DB8_CLI_TEST_ONCE === '1') {
+                      process.stdout.write(JSON.stringify(evt) + '\n');
+                      eventsSeen += 1;
+                      attempt = 0; // reset backoff on successful event
+                      if (maxEvents && eventsSeen >= maxEvents) {
+                        stopRequested = true;
                         try {
                           req.destroy();
                         } catch {
-                          /* noop */
+                          /* ignore */
                         }
                         resolve(EXIT.OK);
                         return;
                       }
                     } catch {
-                      /* ignore */
+                      /* ignore malformed frames */
                     }
                   }
                 }
@@ -384,11 +487,122 @@ async function main() {
             }
           );
           req.on('error', (e) => {
-            printerr(e.message);
+            if (!quiet) printerr(e.message);
             resolve(EXIT.NETWORK);
           });
           req.end();
         });
+
+      while (!stopRequested) {
+        attempt += 1;
+        lastExit = await connect();
+        if (stopRequested || (maxEvents && eventsSeen >= maxEvents)) break;
+        const delay = Math.min(500 * attempt, 5000);
+        if (!quiet) printerr(`reconnecting in ${delay}ms...`);
+        await sleep(delay);
+      }
+
+      process.removeListener('SIGINT', onSigint);
+      return lastExit;
+    }
+    case 'room:create': {
+      // Create a room via API
+      const topic = args.topic || args.t;
+      if (typeof topic !== 'string' || Array.from(topic).length < 3) {
+        printerr('room create requires --topic <string> (min 3 chars)');
+        return EXIT.VALIDATION;
+      }
+      const cfg = {};
+      if (args.participants !== undefined) {
+        const n = Number(args.participants);
+        if (!Number.isInteger(n) || n < 1 || n > 64) {
+          printerr('--participants must be an integer between 1 and 64');
+          return EXIT.VALIDATION;
+        }
+        cfg.participant_count = n;
+      }
+      if (args['submit-minutes'] !== undefined) {
+        const m = Number(args['submit-minutes']);
+        if (!Number.isInteger(m) || m < 1 || m > 1440) {
+          printerr('--submit-minutes must be an integer between 1 and 1440');
+          return EXIT.VALIDATION;
+        }
+        cfg.submit_minutes = m;
+      }
+      const payload = {
+        topic,
+        ...(Object.keys(cfg).length ? { cfg } : {}),
+        client_nonce: args.nonce || randomNonce()
+      };
+      const url = `${apiUrl.replace(/\/$/, '')}/rpc/room.create`;
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          printerr(body?.error || `Server error ${res.status}`);
+          return EXIT.NETWORK;
+        }
+        if (args.json) print(JSON.stringify(body));
+        else print(`room_id: ${body.room_id}`);
+        return EXIT.OK;
+      } catch (e) {
+        printerr(`Failed to create room: ${e?.message || e}`);
+        return EXIT.NETWORK;
+      }
+    }
+    case 'flag:submission': {
+      const submissionId = String(args.submission || '').trim();
+      const allowedRoles = new Set([
+        'participant',
+        'moderator',
+        'fact_checker',
+        'viewer',
+        'system'
+      ]);
+      const role = String(args.role || 'participant').toLowerCase();
+      if (!allowedRoles.has(role)) {
+        throw new CLIError(`Unknown --role value: ${role}`, EXIT.VALIDATION);
+      }
+      let reporterId = String(args.reporter || '').trim();
+      if (!reporterId && role === 'participant') reporterId = participant;
+      if (!reporterId) {
+        throw new CLIError(
+          'flag submission requires --reporter or configured participant id',
+          EXIT.VALIDATION
+        );
+      }
+      const reason = args.reason ? String(args.reason).trim() : '';
+      const url = `${apiUrl.replace(/\/$/, '')}/rpc/submission.flag`;
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
+          },
+          body: JSON.stringify({
+            submission_id: submissionId,
+            reporter_id: reporterId,
+            reporter_role: role,
+            reason
+          })
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          printerr(body?.error || `Server error ${res.status}`);
+          return EXIT.NETWORK;
+        }
+        if (args.json) {
+          print(JSON.stringify(body));
+        } else {
+          const count = typeof body.flag_count === 'number' ? body.flag_count : null;
+          print(`flag recorded${count !== null ? ` (total: ${count})` : ''}`);
+        }
+        return EXIT.OK;
       } catch (e) {
         printerr(e?.message || String(e));
         return EXIT.NETWORK;
@@ -401,7 +615,7 @@ async function main() {
       const dir = path.join(process.cwd(), 'db8', `round-${idx}`, anon);
       const file = path.join(dir, 'draft.json');
       const template = {
-        phase: 'OPENING',
+        phase: 'submit',
         deadline_unix: 0,
         content: '',
         claims: [{ id: 'c1', text: '', support: [{ kind: 'citation', ref: '' }] }],
@@ -424,7 +638,7 @@ async function main() {
           room_id: room || '00000000-0000-0000-0000-000000000001',
           round_id: '00000000-0000-0000-0000-000000000002',
           author_id: participant || '00000000-0000-0000-0000-000000000003',
-          phase: draft.phase || 'OPENING',
+          phase: draft.phase || 'submit',
           deadline_unix: draft.deadline_unix || 0,
           content: draft.content,
           claims: draft.claims,
@@ -443,8 +657,9 @@ async function main() {
       }
     }
     case 'submit': {
-      if (!room || !participant || !jwt) {
-        printerr('Missing room/participant/JWT. Run db8 login or set env.');
+      const dryRun = Boolean(args['dry-run']);
+      if (!room || !participant || (!dryRun && !jwt)) {
+        printerr('Missing room/participant credentials. Run db8 login or set env.');
         return EXIT.AUTH;
       }
       const anon = process.env.DB8_ANON || 'anon';
@@ -456,7 +671,7 @@ async function main() {
           room_id: room,
           round_id: '00000000-0000-0000-0000-000000000002',
           author_id: participant,
-          phase: draft.phase || 'OPENING',
+          phase: draft.phase || 'submit',
           deadline_unix: draft.deadline_unix || 0,
           content: draft.content,
           claims: draft.claims,
@@ -466,6 +681,20 @@ async function main() {
         SubmissionIn.parse(payload);
         const canon = canonicalize(payload);
         const canonical_sha256 = sha256Hex(canon);
+        if (dryRun) {
+          const info = {
+            ok: true,
+            dry_run: true,
+            canonical_sha256,
+            client_nonce: payload.client_nonce
+          };
+          if (args.json) print(JSON.stringify(info));
+          else
+            print(
+              `canonical_sha256: ${canonical_sha256}\nclient_nonce: ${payload.client_nonce}\n(dry run — not submitted)`
+            );
+          return EXIT.OK;
+        }
         const url = `${apiUrl.replace(/\/$/, '')}/rpc/submission.create`;
         const res = await fetch(url, {
           method: 'POST',
