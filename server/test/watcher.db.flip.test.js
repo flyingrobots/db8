@@ -23,9 +23,6 @@ suite('Watcher DB flips', () => {
     const rpcSql = fs.readFileSync(path.resolve('db/rpc.sql'), 'utf8');
     await pool.query(rpcSql);
   });
-  afterAll(async () => {
-    await pool.end();
-  });
 
   it('flips submit→published when deadline passed', async () => {
     const now = Math.floor(Date.now() / 1000);
@@ -56,5 +53,6 @@ suite('Watcher DB flips', () => {
     } catch {
       // ignore cleanup errors in test teardown
     }
+    await pool.end();
   });
 });

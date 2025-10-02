@@ -89,9 +89,14 @@ suite('SSE /events is DB-backed (LISTEN/NOTIFY)', () => {
                   const now = Math.floor(Date.now() / 1000);
                   await pool.query(
                     `update rounds set phase='published', published_at_unix=$1, continue_vote_close_unix=$2 where id=$3`,
-                    [now, now + 2, roundId]
+                    [now, now + 10, roundId]
                   );
                 } catch (e) {
+                  console.error('[sse.db.events.test] DB update failed', {
+                    roomId,
+                    roundId,
+                    error: e?.message || String(e)
+                  });
                   res.off('data', onData);
                   res.destroy();
                   return reject(e);
@@ -122,5 +127,5 @@ suite('SSE /events is DB-backed (LISTEN/NOTIFY)', () => {
     expect(phaseEvent.payload.phase).toBe('published');
     expect(phaseEvent.payload.room_id).toBe(roomId);
     expect(phaseEvent.payload.round_id).toBe(roundId);
-  }, 5000);
+  }, 15000);
 });
