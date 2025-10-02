@@ -117,42 +117,36 @@ LANGUAGE plpgsql
 AS $$
 DECLARE now_unix bigint := extract(epoch from now())::bigint;
 BEGIN
-  -- advance published rounds whose continue window closed
   WITH due AS (
     SELECT r.* FROM rounds r
-    WHERE r.phase = 'published' AND r.continue_vote_close_unix IS NOT NULL AND r.continue_vote_close_unix < now_unix
-  ), tallied AS (
-    SELECT d.room_id, d.id as round_id,
-           COALESCE(SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='continue' THEN 1 ELSE 0 END), 0) AS yes,
-           COALESCE(SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='end' THEN 1 ELSE 0 END), 0) AS no
+    WHERE r.phase = 'published'
+      AND r.continue_vote_close_unix IS NOT NULL
+      AND r.continue_vote_close_unix < now_unix
+  ), tallied AS MATERIALIZED (
+    SELECT d.room_id,
+           d.id AS round_id,
+           r.idx,
+           COALESCE(SUM(CASE WHEN v.kind = 'continue' AND (v.ballot->>'choice') = 'continue' THEN 1 ELSE 0 END), 0) AS yes,
+           COALESCE(SUM(CASE WHEN v.kind = 'continue' AND (v.ballot->>'choice') = 'end' THEN 1 ELSE 0 END), 0) AS no
     FROM due d
+    JOIN rounds r ON r.id = d.id
     LEFT JOIN votes v ON v.round_id = d.id
-    GROUP BY d.room_id, d.id
-  ), winners AS (
-    SELECT t.*, r.idx FROM tallied t JOIN rounds r ON r.id = t.round_id
-  )
-  UPDATE rounds r SET phase = 'final'
-  FROM winners w
-  WHERE r.id = w.round_id AND w.yes <= w.no;
-
-  -- create next round for winners
-  WITH due AS (
-    SELECT r.* FROM rounds r
-    WHERE r.phase = 'published' AND r.continue_vote_close_unix IS NOT NULL AND r.continue_vote_close_unix < now_unix
-  ), tallied AS (
-    SELECT d.room_id, d.id as round_id,
-           COALESCE(SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='continue' THEN 1 ELSE 0 END), 0) AS yes,
-           COALESCE(SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='end' THEN 1 ELSE 0 END), 0) AS no
-    FROM due d
-    LEFT JOIN votes v ON v.round_id = d.id
-    GROUP BY d.room_id, d.id
-  ), winners AS (
-    SELECT t.*, r.idx FROM tallied t JOIN rounds r ON r.id = t.round_id
+    GROUP BY d.room_id, d.id, r.idx
+  ), losers AS (
+    UPDATE rounds r
+    SET phase = 'final'
+    FROM tallied t
+    WHERE r.id = t.round_id
+      AND t.yes <= t.no
+    RETURNING 1
   )
   INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix)
-  SELECT w.room_id, w.idx + 1, 'submit', now_unix + 300::bigint
-  FROM winners w
-  WHERE w.yes > w.no
+  SELECT t.room_id,
+         t.idx + 1,
+         'submit',
+         now_unix + 300::bigint
+  FROM tallied t
+  WHERE t.yes > t.no
   ON CONFLICT (room_id, idx) DO NOTHING;
 END;
 $$;

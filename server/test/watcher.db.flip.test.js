@@ -15,9 +15,12 @@ suite('Watcher DB flips', () => {
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: dbUrl });
-    const schemaSql = fs.readFileSync(path.resolve('db/schema.sql'), 'utf8');
+    const haveRooms = await pool.query("select to_regclass('public.rooms') as reg");
+    if (!haveRooms.rows[0]?.reg) {
+      const schemaSql = fs.readFileSync(path.resolve('db/schema.sql'), 'utf8');
+      await pool.query(schemaSql);
+    }
     const rpcSql = fs.readFileSync(path.resolve('db/rpc.sql'), 'utf8');
-    await pool.query(schemaSql);
     await pool.query(rpcSql);
   });
   afterAll(async () => {
@@ -44,5 +47,14 @@ suite('Watcher DB flips', () => {
     ]);
     expect(r.rows[0].phase).toBe('published');
     expect(Number(r.rows[0].published_at_unix || 0)).toBeGreaterThan(0);
+  });
+
+  afterAll(async () => {
+    try {
+      await pool.query('delete from rounds where id = $1', [roundId]);
+      await pool.query('delete from rooms where id = $1', [roomId]);
+    } catch {
+      // ignore cleanup errors in test teardown
+    }
   });
 });
