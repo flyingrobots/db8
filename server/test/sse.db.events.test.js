@@ -85,11 +85,17 @@ suite('SSE /events is DB-backed (LISTEN/NOTIFY)', () => {
               // flip the round, we can resolve.
               if (events.length === 1 && payload.t === 'timer' && payload.room_id === roomId) {
                 // Flip the round to published to trigger NOTIFY and expect a 'phase' event
-                const now = Math.floor(Date.now() / 1000);
-                await pool.query(
-                  `update rounds set phase='published', published_at_unix=$1, continue_vote_close_unix=$2 where id=$3`,
-                  [now, now + 25, roundId]
-                );
+                try {
+                  const now = Math.floor(Date.now() / 1000);
+                  await pool.query(
+                    `update rounds set phase='published', published_at_unix=$1, continue_vote_close_unix=$2 where id=$3`,
+                    [now, now + 2, roundId]
+                  );
+                } catch (e) {
+                  res.off('data', onData);
+                  res.destroy();
+                  return reject(e);
+                }
               }
 
               if (type === 'phase' && payload.t === 'phase' && payload.room_id === roomId) {
@@ -116,5 +122,5 @@ suite('SSE /events is DB-backed (LISTEN/NOTIFY)', () => {
     expect(phaseEvent.payload.phase).toBe('published');
     expect(phaseEvent.payload.room_id).toBe(roomId);
     expect(phaseEvent.payload.round_id).toBe(roundId);
-  }, 15000);
+  }, 5000);
 });
