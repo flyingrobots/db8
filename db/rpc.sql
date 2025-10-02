@@ -48,7 +48,8 @@ BEGIN
   END IF;
 
   INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix)
-  VALUES (v_room_id, 0, 'submit', v_submit_deadline);
+  VALUES (v_room_id, 0, 'submit', v_submit_deadline)
+  ON CONFLICT (room_id, idx) DO NOTHING;
 
   INSERT INTO participants (room_id, anon_name, role)
   SELECT v_room_id, format('anon_%s', gs), 'debater'

@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(16);
+SELECT plan(18);
 
 -- RPC existence: room_create(topic, cfg, client_nonce)
 SELECT ok(
@@ -11,8 +11,10 @@ SELECT ok(
 DO $$
 DECLARE
   rid uuid;
+  rid2 uuid;
   participant_count integer;
   round_count integer;
+  dup_count integer;
 BEGIN
   SELECT room_create('Demo room', jsonb_build_object('participant_count', 3, 'submit_minutes', 1), 'nonce-demo-1') INTO rid;
   PERFORM ok(rid IS NOT NULL, 'room_create returned room id');
@@ -26,6 +28,12 @@ BEGIN
 
   SELECT count(*) INTO round_count FROM rounds WHERE room_id = rid AND idx = 0 AND phase = 'submit' AND submit_deadline_unix > 0;
   PERFORM ok(round_count = 1, 'room_create created initial round 0 with valid deadline');
+
+  -- Idempotency: calling room_create again with same nonce returns same id and does not duplicate
+  SELECT room_create('Demo room', jsonb_build_object('participant_count', 3, 'submit_minutes', 1), 'nonce-demo-1') INTO rid2;
+  PERFORM ok(rid2 = rid, 'room_create is idempotent with same client_nonce');
+  SELECT count(*) INTO dup_count FROM rooms WHERE client_nonce = 'nonce-demo-1';
+  PERFORM ok(dup_count = 1, 'room exists only once for given client_nonce');
 END$$;
 
 -- RPC existence: submission_upsert(round_id, author_id, content, claims, citations, canonical_sha256, client_nonce)

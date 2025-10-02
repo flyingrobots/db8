@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS rounds (
 
 CREATE INDEX IF NOT EXISTS idx_rounds_room_idx ON rounds (room_id, idx DESC);
 
--- Participants (seeded per room; referenced by submissions/votes conceptually)
+-- Participants (seeded per room; referenced by submissions and votes)
 CREATE TABLE IF NOT EXISTS participants (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   room_id          uuid        NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
