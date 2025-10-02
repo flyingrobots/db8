@@ -1,3 +1,7 @@
+---
+lastUpdated: 2025-10-02
+---
+
 # User Stories
 
 This document captures roles, user stories, and acceptance criteria. Each story

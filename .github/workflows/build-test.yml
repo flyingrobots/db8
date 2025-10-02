@@ -21,6 +21,10 @@ jobs:
         run: npm ci
       - name: Lint Markdown (strict)
         run: npm run lint:md
+      - name: Check links in Markdown
+        run: npm run lint:links
+      - name: Spelling (cspell)
+        run: npm run lint:spelling
 
   test:
     name: build-test
