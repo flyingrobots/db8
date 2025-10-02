@@ -197,7 +197,7 @@ fingerprint. If they didn’t (web), server signs the round checkpoint later (se
 
 Stable, sorted JSON. Must include anti-replay fields.
 
-````text
+`````text
 {
   "room_id":"r_123",
   "round_id":"rnd_1",
@@ -1185,5 +1185,5 @@ adjusted by calibration and evidence habits.
 
 Bottom line: JWT for session/authZ, SSH/Ed25519 for per-submission provenance,
 server checkpoint signatures for tamper-evidence. Thin clients with
-Zod-validated payloads; Supabase does the heavy lifting.
-````
+Zod-validated payloads; Supabase does the heavy lifting. ````
+`````

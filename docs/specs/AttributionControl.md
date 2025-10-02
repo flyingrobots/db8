@@ -13,8 +13,8 @@ Acceptance Criteria
   parameter and role.
 - RPC/Server: publish path respects attribution mode; `/state` and `/events`
   emit masked or real authors consistently.
-- Web: UI reflects mask when enabled; moderator can set attribution mode on
-  room creation.
+- Web: UI reflects mask when enabled; moderator can set attribution mode on room
+  creation.
 
 Tests
 
