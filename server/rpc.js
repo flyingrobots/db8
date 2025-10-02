@@ -2,7 +2,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
 import { rateLimitStub } from './mw/rate-limit.js';
-import { SubmissionIn, ContinueVote, SubmissionFlag } from './schemas.js';
+import { SubmissionIn, ContinueVote, SubmissionFlag, RoomCreate } from './schemas.js';
 import { canonicalize, sha256Hex } from './utils.js';
 import { loadConfig } from './config/config-builder.js';
 
@@ -175,6 +175,36 @@ app.post('/rpc/vote.continue', (req, res) => {
     memVotes.set(key, { id: vote_id, choice: input.choice });
     addVoteToTotals(input.room_id, input.choice);
     return res.json({ ok: true, vote_id });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// room.create: seeds room + round 0 (DB) or in-memory fallback
+app.post('/rpc/room.create', async (req, res) => {
+  try {
+    const input = RoomCreate.parse(req.body);
+    const cfg = input.cfg || {};
+    if (db) {
+      try {
+        const result = await db.query(
+          'select room_create($1::text,$2::jsonb,$3::text) as room_id',
+          [input.topic, JSON.stringify(cfg), input.client_nonce || null]
+        );
+        const room_id = result.rows?.[0]?.room_id;
+        if (!room_id) throw new Error('room_create_missing_id');
+        return res.json({ ok: true, room_id });
+      } catch {
+        // fall through to memory path only if DB call fails
+      }
+    }
+    // in-memory: generate a room id and initialize round 0
+    const room_id = crypto.randomUUID();
+    const now = Math.floor(Date.now() / 1000);
+    memRooms.set(room_id, {
+      round: { idx: 0, phase: 'submit', submit_deadline_unix: now + SUBMIT_WINDOW_SEC }
+    });
+    return res.json({ ok: true, room_id, note: 'db_fallback' });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
   }
