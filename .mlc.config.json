@@ -1,0 +1,6 @@
+{
+  "retryOn429": true,
+  "aliveStatusCodes": [200, 206, 403, 429],
+  "timeout": "20s",
+  "ignorePatterns": [{ "pattern": "^mailto:" }, { "pattern": "^#" }]
+}

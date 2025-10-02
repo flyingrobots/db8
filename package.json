@@ -10,16 +10,28 @@
     "prepare": "git config core.hooksPath .githooks",
     "postinstall": "node -e \"try{require('@rollup/rollup-linux-x64-gnu');process.exit(0)}catch(e){process.exit(1)}\" || npm i @rollup/rollup-linux-x64-gnu@latest || true",
     "lint": "eslint .",
+    "lint:md": "markdownlint -c .markdownlint.jsonc \"**/*.md\" --ignore node_modules --ignore web/.next --ignore .obsidian",
+    "lint:md:fix": "markdownlint -c .markdownlint.jsonc \"**/*.md\" --ignore node_modules --ignore web/.next --ignore .obsidian --fix",
+    "lint:links": "find . -type f -name '*.md' -not -path '*/node_modules/*' -not -path '*/web/.next/*' -print0 | xargs -0 -n 1 -I {} npx -y markdown-link-check -q -c .mlc.config.json {}",
+    "lint:spelling": "npx -y cspell \"**/*.{md,js,json}\" --no-progress --no-summary --gitignore",
     "format": "prettier -w .",
-    "test": "vitest run",
+    "test": "if [ \"$CI\" = \"true\" ]; then npm run test:inner; else npm run test:docker; fi",
+    "test:docker": "bash ./scripts/test-docker.sh",
+    "test:prepare-db": "node ./scripts/prepare-db.js",
+    "test:inner": "vitest run",
     "typecheck": "echo 'No TypeScript. ✅'",
     "bootstrap": "bash ./scripts/bootstrap.sh",
     "dev:db": "docker compose up -d db && sleep 2 && echo 'DB on :54329'",
-    "stop:db": "docker compose down"
+    "stop:db": "docker compose down",
+    "start:watcher": "node server/watcher.js",
+    "sync:issues": "./scripts/sync-issues.sh"
   },
   "lint-staged": {
     "**/*.{js,jsx,json,md}": [
       "prettier -w"
+    ],
+    "**/*.md": [
+      "markdownlint -c .markdownlint.jsonc --fix"
     ],
     "**/*.{js,jsx}": [
       "eslint --max-warnings=0"
@@ -27,6 +39,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
+    "cspell": "^8.13.2",
     "eslint": "^9.13.0",
     "eslint-import-resolver-alias": "^1.1.2",
     "eslint-plugin-import": "^2.29.1",
@@ -34,7 +47,10 @@
     "eslint-plugin-react": "^7.35.0",
     "eslint-plugin-security": "^3.0.1",
     "eslint-plugin-unicorn": "^61.0.2",
-    "lint-staged": "^16.2.0",
+    "lint-staged": "^16.2.3",
+    "markdown-link-check": "^3.12.2",
+    "markdownlint": "^0.33.0",
+    "markdownlint-cli": "^0.42.0",
     "prettier": "^3.3.3",
     "supertest": "^7.0.0",
     "vitest": "^3.2.4"
@@ -44,11 +60,10 @@
     "zod": "^3.25.76"
   },
   "optionalDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "^4.52.2",
+    "@rollup/rollup-linux-x64-gnu": "^4.52.3",
     "pg": "^8.13.1"
   },
   "bin": {
     "db8": "./bin/db8.js"
-  },
-  "postinstall": "node -e \"try{require('@rollup/rollup-linux-x64-gnu');process.exit(0)}catch(e){process.exit(1)}\" || npm i @rollup/rollup-linux-x64-gnu@latest || true"
+  }
 }

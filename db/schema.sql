@@ -6,10 +6,10 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- Rooms and Rounds (minimal M1)
 CREATE TABLE IF NOT EXISTS rooms (
-  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  title         text,
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title       text,
   client_nonce  text UNIQUE,
-  created_at    timestamptz NOT NULL DEFAULT now()
+  created_at  timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS rounds (
@@ -17,15 +17,17 @@ CREATE TABLE IF NOT EXISTS rounds (
   room_id                   uuid        NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   idx                       integer     NOT NULL DEFAULT 0,
   phase                     text        NOT NULL DEFAULT 'submit' CHECK (phase IN ('submit','published','final')),
-  submit_deadline_unix      integer     NOT NULL DEFAULT 0,
-  published_at_unix         integer,
-  continue_vote_close_unix  integer,
+  submit_deadline_unix      bigint      NOT NULL DEFAULT 0,
+  published_at_unix         bigint,
+  continue_vote_close_unix  bigint,
   UNIQUE (room_id, idx)
 );
 
 CREATE INDEX IF NOT EXISTS idx_rounds_room_idx ON rounds (room_id, idx DESC);
+-- Support RLS policy predicate on rounds(id, phase)
+CREATE INDEX IF NOT EXISTS idx_rounds_id_phase ON rounds (id, phase);
 
--- Participants (seeded per room; referenced by submissions and votes)
+-- Participants: seeded roster for each room / agent configuration
 CREATE TABLE IF NOT EXISTS participants (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   room_id          uuid        NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -37,6 +39,8 @@ CREATE TABLE IF NOT EXISTS participants (
   UNIQUE (room_id, anon_name)
 );
 
+CREATE INDEX IF NOT EXISTS idx_participants_room ON participants (room_id);
+
 -- Submissions: idempotent by (round_id, author_id, client_nonce)
 CREATE TABLE IF NOT EXISTS submissions (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -47,7 +51,7 @@ CREATE TABLE IF NOT EXISTS submissions (
   citations           jsonb       NOT NULL DEFAULT '[]'::jsonb,
   status              text        NOT NULL DEFAULT 'submitted',
   submitted_at        timestamptz NOT NULL DEFAULT now(),
-  canonical_sha256    text        NOT NULL,
+  canonical_sha256    char(64)    NOT NULL CHECK (canonical_sha256 ~ '^[0-9a-f]{64}$'),
   signature_kind      text,
   signature_b64       text,
   signer_fingerprint  text,
@@ -56,12 +60,9 @@ CREATE TABLE IF NOT EXISTS submissions (
   UNIQUE (round_id, author_id, client_nonce)
 );
 
-CREATE INDEX IF NOT EXISTS idx_submissions_round_author ON submissions (round_id, author_id);
-
 -- Votes: idempotent by (round_id, voter_id, kind, client_nonce)
 CREATE TABLE IF NOT EXISTS votes (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  room_id       uuid        NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   round_id      uuid        NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
   voter_id      uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
   kind          text        NOT NULL CHECK (kind IN ('continue')),
@@ -71,6 +72,30 @@ CREATE TABLE IF NOT EXISTS votes (
   UNIQUE (round_id, voter_id, kind, client_nonce)
 );
 
-CREATE INDEX IF NOT EXISTS idx_votes_room_round_kind ON votes (room_id, round_id, kind);
+CREATE INDEX IF NOT EXISTS idx_votes_round_kind ON votes (round_id, kind);
+
+-- Submission flags: allow participants/moderators/viewers to report content
+CREATE TABLE IF NOT EXISTS submission_flags (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  submission_id  uuid        NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+  reporter_id    text        NOT NULL,
+  reporter_role  text        NOT NULL,
+  reason         text        NOT NULL DEFAULT '',
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (submission_id, reporter_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_submission_flags_submission ON submission_flags (submission_id);
 
 -- Future M1/M2: rooms/rounds tables, RLS policies, and RPCs
+
+-- Minimal admin audit log
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  action       text        NOT NULL,
+  entity_type  text        NOT NULL,
+  entity_id    uuid        NOT NULL,
+  actor        text        NOT NULL,
+  details      jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);

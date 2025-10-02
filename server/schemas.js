@@ -19,7 +19,8 @@ export const SubmissionIn = z.object({
   room_id: z.string().uuid(),
   round_id: z.string().uuid(),
   author_id: z.string().uuid(),
-  phase: z.enum(['OPENING', 'ARGUMENT', 'FINAL']),
+  // Align phases with DB: submit|published|final
+  phase: z.enum(['submit', 'published', 'final']),
   deadline_unix: z.number().int(),
   content: z.string().min(1).max(4000),
   claims: z.array(Claim).min(1).max(5),
@@ -36,4 +37,25 @@ export const ContinueVote = z.object({
   voter_id: z.string().uuid(),
   choice: z.enum(['continue', 'end']),
   client_nonce: z.string().min(8)
+});
+
+export const RoomCreate = z.object({
+  topic: z.string().min(3),
+  cfg: z
+    .object({
+      participant_count: z.number().int().min(1).max(64).optional(),
+      submit_minutes: z.number().int().min(1).max(1440).optional()
+    })
+    .optional(),
+  client_nonce: z.string().min(8).optional()
+});
+
+export const SubmissionFlag = z.object({
+  submission_id: z.string().uuid(),
+  reporter_id: z.string().min(1),
+  reporter_role: z
+    .enum(['participant', 'moderator', 'fact_checker', 'viewer', 'system'])
+    .optional()
+    .default('participant'),
+  reason: z.string().max(500).optional().default('')
 });

@@ -44,3 +44,5 @@ coverage/
 supabase/.temp/
 supabase/generated/
 .supabase/
+
+.obsidian/
