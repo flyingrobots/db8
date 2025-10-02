@@ -2,7 +2,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
 import { rateLimitStub } from './mw/rate-limit.js';
-import { SubmissionIn, ContinueVote, SubmissionFlag } from './schemas.js';
+import { SubmissionIn, ContinueVote, SubmissionFlag, RoomCreate } from './schemas.js';
 import { canonicalize, sha256Hex } from './utils.js';
 import { loadConfig } from './config/config-builder.js';
 
@@ -34,6 +34,11 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 const memSubmissions = new Map(); // key -> { id, canonical_sha256, content, author_id, room_id }
 const memSubmissionIndex = new Map(); // submission_id -> { room_id }
 const memFlags = new Map(); // submission_id -> Map(reporter_id -> { role, reason, created_at })
+// In-memory room state and idempotency for room.create fallback
+const memRooms = new Map(); // room_id -> { round: { idx, phase, submit_deadline_unix, published_at_unix?, continue_vote_close_unix? } }
+const memRoomNonces = new Map(); // client_nonce -> room_id
+const SUBMIT_WINDOW_SEC = config.submitWindowSec;
+const CONTINUE_WINDOW_SEC = config.continueWindowSec;
 
 // submission.create
 app.post('/rpc/submission.create', (req, res) => {
@@ -180,6 +185,55 @@ app.post('/rpc/vote.continue', (req, res) => {
   }
 });
 
+// room.create: seeds room + round 0 (DB) or in-memory fallback
+app.post('/rpc/room.create', async (req, res) => {
+  try {
+    const input = RoomCreate.parse(req.body);
+    const cfg = input.cfg || {};
+    let dbError = null;
+    if (db) {
+      try {
+        const result = await db.query(
+          'select room_create($1::text,$2::jsonb,$3::text) as room_id',
+          [input.topic, JSON.stringify(cfg), input.client_nonce || null]
+        );
+        const room_id = result.rows?.[0]?.room_id;
+        if (!room_id) throw new Error('room_create_missing_id');
+        return res.json({ ok: true, room_id });
+      } catch (e) {
+        dbError = e;
+        console.warn('room.create DB error; using in-memory fallback', e);
+        // fall through to memory path only if DB call fails
+      }
+    }
+    // in-memory: generate a room id and initialize round 0
+    const nonce = input.client_nonce ?? '';
+    if (nonce && memRoomNonces.has(nonce)) {
+      const existing = memRoomNonces.get(nonce);
+      return res.json({
+        ok: true,
+        room_id: existing,
+        note: 'db_fallback',
+        db_error: dbError?.message || undefined
+      });
+    }
+    const room_id = crypto.randomUUID();
+    const now = Math.floor(Date.now() / 1000);
+    memRooms.set(room_id, {
+      round: { idx: 0, phase: 'submit', submit_deadline_unix: now + SUBMIT_WINDOW_SEC }
+    });
+    if (nonce) memRoomNonces.set(nonce, room_id);
+    return res.json({
+      ok: true,
+      room_id,
+      note: 'db_fallback',
+      db_error: dbError?.message || undefined
+    });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
 // submission.flag
 app.post('/rpc/submission.flag', async (req, res) => {
   try {
@@ -240,9 +294,6 @@ app.post('/rpc/submission.flag', async (req, res) => {
 });
 
 // In-memory room/round state and simple time-based transitions
-const memRooms = new Map(); // room_id -> { round: { idx, phase, submit_deadline_unix, published_at_unix?, continue_vote_close_unix? } }
-const SUBMIT_WINDOW_SEC = config.submitWindowSec;
-const CONTINUE_WINDOW_SEC = config.continueWindowSec;
 
 function ensureRoom(roomId) {
   let r = memRooms.get(roomId);
