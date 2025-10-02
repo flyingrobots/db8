@@ -3,7 +3,7 @@ services:
     image: postgres:16
     environment:
       POSTGRES_PASSWORD: test
-      POSTGRES_DB: db8
+      POSTGRES_DB: db8_test
     ports: ["54329:5432"]
 
   tests:
@@ -14,8 +14,8 @@ services:
         condition: service_started
     environment:
       NODE_ENV: test
-      DATABASE_URL: postgresql://postgres:test@db:5432/db8
-      DB8_TEST_DATABASE_URL: postgresql://postgres:test@db:5432/db8
+      DATABASE_URL: postgresql://postgres:test@db:5432/db8_test
+      DB8_TEST_DATABASE_URL: postgresql://postgres:test@db:5432/db8_test
     volumes:
       - ./:/app
       - node_modules_linux:/app/node_modules

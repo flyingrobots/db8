@@ -13,7 +13,7 @@ optional pgTAP invariants, and exercise the app end-to-end.
 
 `````text
 docker compose -f docker-compose.test.yml up -d db
-# DB URL: postgresql://postgres:test@localhost:54329/db8
+# DB URL: postgresql://postgres:test@localhost:54329/db8_test
 ```text
 
 If you’re using Supabase locally, use the connection string for your local
@@ -24,8 +24,8 @@ project and substitute it wherever this guide uses the DB URL.
 Load the M1 schema and SQL RPCs into your database:
 
 ```text
-psql postgresql://postgres:test@localhost:54329/db8 -f db/schema.sql
-psql postgresql://postgres:test@localhost:54329/db8 -f db/rpc.sql
+psql postgresql://postgres:test@localhost:54329/db8_test -f db/schema.sql
+psql postgresql://postgres:test@localhost:54329/db8_test -f db/rpc.sql
 ```
 
 ### RLS and Secure Views
@@ -37,6 +37,9 @@ push-down across RLS boundaries.
 - Files
   - `db/rls.sql`: enables RLS and defines policies.
   - `db/rpc.sql`: defines read-only views and sets `security_barrier=true`.
+  - `db/rpc.sql`: also provides a privileged
+    `admin_audit_log_write(...)` RPC for inserting into the locked-down audit
+    log (intended for service/worker use).
 
 The prep script applies schema, RPCs, and RLS:
 
@@ -54,15 +57,18 @@ idempotent.
 Examples:
 
 ```text
--- simplest call
-psql postgresql://postgres:test@localhost:54329/db8 -c "select room_create('Demo
-Topic');"
+# simplest call
+psql postgresql://postgres:test@localhost:54329/db8_test \
+  -c "select room_create('Demo Topic');"
 
--- override participant count and submit window, plus a client nonce for
-idempotency
-psql postgresql://postgres:test@localhost:54329/db8 -c "select room_create('Demo
-Topic', '{\"participant_count\":4,\"submit_minutes\":2}'::jsonb,
-'demo-room-nonce');"
+# override participant count and submit window, plus a client nonce for idempotency
+psql postgresql://postgres:test@localhost:54329/db8_test <<'SQL'
+select room_create(
+  'Demo Topic',
+  '{"participant_count":4,"submit_minutes":2}'::jsonb,
+  'demo-room-nonce'
+);
+SQL
 ```text
 
 The function returns the `room_id` you can plug into API calls or the CLI.
@@ -81,14 +87,14 @@ existence, idempotency). These are optional and default to off in CI.
 # docker exec -it <container> bash -lc "apt-get update && apt-get install -y
 postgresql-16-pgtap"
 
-psql postgresql://postgres:test@localhost:54329/db8 -c 'CREATE EXTENSION IF NOT
-EXISTS pgtap;'
+psql postgresql://postgres:test@localhost:54329/db8_test \
+  -c 'CREATE EXTENSION IF NOT EXISTS pgtap;'
 ```text
 
 1. Run all pgTAP files:
 
 ```text
-PGURL=postgresql://postgres:test@localhost:54329/db8 ./db/test/run.sh
+PGURL=postgresql://postgres:test@localhost:54329/db8_test ./db/test/run.sh
 ```text
 
 ## Run Node Tests with DB Backed Path
@@ -102,7 +108,7 @@ npm test
 
 The command brings up the `db` container (if needed), applies `db/schema.sql`
 and `db/rpc.sql`, executes tests from the `tests` service against
-`postgresql://postgres:test@db:5432/db8`, and then tears the stack down
+`postgresql://postgres:test@db:5432/db8_test`, and then tears the stack down
 automatically when the run finishes.
 
 Need to bypass Docker for debugging? Set `CI=true` or call the inner script
@@ -119,7 +125,7 @@ Config is read via a safe builder (no direct `process.env` in the app). Set
 these variables as needed and start the server:
 
 ```text
-export DATABASE_URL=postgresql://postgres:test@localhost:54329/db8
+export DATABASE_URL=postgresql://postgres:test@localhost:54329/db8_test
 export PORT=3000
 # Optional knobs
 # export SUBMIT_WINDOW_SEC=300
@@ -130,6 +136,21 @@ node server/rpc.js
 # healthcheck
 curl <http://localhost:3000/health>
 ```text
+
+## Test-only SQL helpers (do not deploy)
+
+- File: `db/test/helpers.sql`
+- Purpose: utilities to make tests deterministic (e.g., set a round’s
+  `submit_deadline_unix`).
+- Safety: functions refuse to run unless the database name clearly indicates a
+  test database.
+  - Allowed patterns: names ending with `_test`, or starting with `test_`.
+  - The helpers run with `SECURITY INVOKER` (default) and validate inputs.
+- Policy: never load `db/test/helpers.sql` in production. Only apply it in local
+  development or CI environments.
+
+The repo’s compose files already use `db8_test` to make the test/non‑test split
+unambiguous.
 
 ## Web App (Next.js)
 

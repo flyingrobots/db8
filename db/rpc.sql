@@ -74,9 +74,7 @@ BEGIN
 END;
 $$;
 
--- Admin/Service helper: set submit_deadline_unix for a round
--- Used by tests and admin operations to drive deterministic flips without
--- violating RLS or writing tables directly from application code.
+-- Note: test-only deadline helpers now live in db/test/helpers.sql.
 
 CREATE OR REPLACE FUNCTION vote_submit(
   p_round_id uuid,
@@ -87,16 +85,57 @@ CREATE OR REPLACE FUNCTION vote_submit(
 ) RETURNS uuid
 LANGUAGE plpgsql
 AS $$
-DECLARE v_id uuid;
+DECLARE
+  v_id uuid;
+  v_phase text;
+  v_is_participant boolean;
+  now_unix bigint := extract(epoch from now())::bigint;
 BEGIN
   IF p_kind <> 'continue' THEN
     RAISE EXCEPTION 'unsupported vote kind: %', p_kind USING ERRCODE = '22023';
   END IF;
 
+  -- Verify round exists and is in a voteable phase
+  SELECT phase INTO v_phase
+    FROM rounds
+   WHERE id = p_round_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'round not found: %', p_round_id USING ERRCODE = '22023';
+  END IF;
+
+  IF v_phase NOT IN ('published') THEN
+    RAISE EXCEPTION 'round not in voteable phase: %', v_phase USING ERRCODE = '22023';
+  END IF;
+
+  -- Ensure the continue-vote window is still open, if present
+  IF EXISTS (
+       SELECT 1 FROM rounds r
+        WHERE r.id = p_round_id
+          AND r.continue_vote_close_unix IS NOT NULL
+          AND r.continue_vote_close_unix < now_unix
+     ) THEN
+    RAISE EXCEPTION 'voting window closed for round: %', p_round_id USING ERRCODE = '22023';
+  END IF;
+
+  -- Verify voter is a participant in the round's room
+  SELECT EXISTS (
+           SELECT 1
+             FROM participants p
+             JOIN rounds r ON r.room_id = p.room_id
+            WHERE p.id = p_voter_id
+              AND r.id = p_round_id
+         )
+    INTO v_is_participant;
+
+  IF NOT v_is_participant THEN
+    RAISE EXCEPTION 'voter not a participant in round: %', p_voter_id USING ERRCODE = '42501';
+  END IF;
+
   INSERT INTO votes (round_id, voter_id, kind, ballot, client_nonce)
   VALUES (p_round_id, p_voter_id, p_kind, p_ballot, p_client_nonce)
   ON CONFLICT (round_id, voter_id, kind, client_nonce)
-  DO UPDATE SET ballot = votes.ballot
+  DO UPDATE SET ballot = EXCLUDED.ballot
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
@@ -113,6 +152,46 @@ BEGIN
     published_at_unix = now_unix,
     continue_vote_close_unix = now_unix + 30::bigint
   WHERE phase = 'submit' AND submit_deadline_unix > 0 AND submit_deadline_unix < now_unix;
+END;
+$$;
+
+-- Admin audit log write path (privileged). Inserts a constrained row and returns its id.
+-- Intended for service/worker use; relies on table CHECK constraints for action/entity_type.
+-- SECURITY DEFINER so it can write despite RLS lockdown on admin_audit_log.
+CREATE OR REPLACE FUNCTION admin_audit_log_write(
+  p_action text,
+  p_entity_type text,
+  p_entity_id uuid,
+  p_actor_id uuid DEFAULT NULL,
+  p_system_actor text DEFAULT NULL,
+  p_actor_context jsonb DEFAULT '{}'::jsonb,
+  p_details jsonb DEFAULT '{}'::jsonb
+) RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_id uuid;
+BEGIN
+  -- Exactly one of actor_id or system_actor
+  IF (p_actor_id IS NULL AND (p_system_actor IS NULL OR p_system_actor = '')) OR
+     (p_actor_id IS NOT NULL AND p_system_actor IS NOT NULL) THEN
+    RAISE EXCEPTION 'exactly one of actor_id or system_actor must be set' USING ERRCODE = '22023';
+  END IF;
+
+  -- Validate enums early (also enforced by table CHECKs)
+  IF p_action NOT IN ('create','update','delete','publish','open_next','vote','flag','login','logout','config','rls','rpc') THEN
+    RAISE EXCEPTION 'invalid action: %', p_action USING ERRCODE = '22023';
+  END IF;
+  IF p_entity_type NOT IN ('room','round','submission','vote','participant','flag','system') THEN
+    RAISE EXCEPTION 'invalid entity_type: %', p_entity_type USING ERRCODE = '22023';
+  END IF;
+
+  INSERT INTO admin_audit_log(action, entity_type, entity_id, actor_id, system_actor, actor_context, details)
+  VALUES (p_action, p_entity_type, p_entity_id, p_actor_id, NULLIF(p_system_actor, ''), COALESCE(p_actor_context, '{}'::jsonb), COALESCE(p_details, '{}'::jsonb))
+  RETURNING id INTO v_id;
+
+  RETURN v_id;
 END;
 $$;
 
