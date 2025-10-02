@@ -44,8 +44,9 @@ suite('Watcher DB flips', () => {
     );
     if (cur.rows.length === 0) throw new Error(`no current round found for roomId ${roomId}`);
     roundId = cur.rows[0].round_id;
-    // Move deadline to the past via service RPC
+    // Mark this session as test-only for helper and move deadline to the past via service RPC
     const now = Math.floor(Date.now() / 1000);
+    await pool.query("select set_config('app.env','test', false)");
     await pool.query('select round_set_submit_deadline($1,$2)', [roundId, now - 5]);
 
     await runTick(pool);
