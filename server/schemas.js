@@ -39,6 +39,17 @@ export const ContinueVote = z.object({
   client_nonce: z.string().min(8)
 });
 
+export const RoomCreate = z.object({
+  topic: z.string().min(3),
+  cfg: z
+    .object({
+      participant_count: z.number().int().min(1).max(64).optional(),
+      submit_minutes: z.number().int().min(1).max(1440).optional()
+    })
+    .optional(),
+  client_nonce: z.string().min(8).optional()
+});
+
 export const SubmissionFlag = z.object({
   submission_id: z.string().uuid(),
   reporter_id: z.string().min(1),
