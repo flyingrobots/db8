@@ -1,3 +1,9 @@
+---
+lastUpdated: 2025-10-02
+tags: [spec]
+milestone: M7: Hardening & Ops
+---
+
 # Orchestrator Heartbeat & Recovery (Hardening)
 
 Scope

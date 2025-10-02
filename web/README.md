@@ -1,3 +1,7 @@
+---
+lastUpdated: 2025-10-02
+---
+
 # DB8 Web (Next.js + shadcn/ui, JS-only)
 
 This is a lightweight Next.js app using Tailwind + shadcn‑style components

@@ -1,3 +1,9 @@
+---
+lastUpdated: 2025-10-02
+tags: [spec]
+milestone: M5: Scoring & Elo
+---
+
 # Scoring & Reputation (M5)
 
 Scope

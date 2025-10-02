@@ -12,6 +12,8 @@
     "lint": "eslint .",
     "lint:md": "markdownlint -c .markdownlint.jsonc \"**/*.md\" --ignore node_modules --ignore web/.next --ignore .obsidian",
     "lint:md:fix": "markdownlint -c .markdownlint.jsonc \"**/*.md\" --ignore node_modules --ignore web/.next --ignore .obsidian --fix",
+    "lint:links": "find . -type f -name '*.md' -not -path '*/node_modules/*' -not -path '*/web/.next/*' -print0 | xargs -0 -n 1 -I {} markdown-link-check -q -c .mlc.config.json {}",
+    "lint:spelling": "cspell \"**/*.{md,js,json}\" --no-progress --no-summary --gitignore",
     "format": "prettier -w .",
     "test": "if [ \"$CI\" = \"true\" ]; then npm run test:inner; else npm run test:docker; fi",
     "test:docker": "bash ./scripts/test-docker.sh",
@@ -47,6 +49,8 @@
     "lint-staged": "^16.2.3",
     "markdownlint": "^0.33.0",
     "markdownlint-cli": "^0.42.0",
+    "cspell": "^8.13.2",
+    "markdown-link-check": "^3.12.2",
     "prettier": "^3.3.3",
     "supertest": "^7.0.0",
     "vitest": "^3.2.4"

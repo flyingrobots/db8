@@ -1,3 +1,7 @@
+---
+lastUpdated: 2025-10-02
+---
+
 # AGENTS.md
 
 This file gives the coding agent (you) conventions and checkpoints for working
@@ -19,7 +23,8 @@ Pull requests
 
 - Use Markdown in PR bodies (no HTML). Lead with a short Summary and bullet
   points for Changes, Tests, and Next.
-- Always include issue auto-closures when applicable: “Fixes #<n>”, “Closes #<n>”, or “Partially addresses #<n>”.
+- Always include issue auto-closures when applicable: “Fixes <n>”, “Closes
+  <n>”, or “Partially addresses <n>”.
 - Set the correct milestone and labels on the PR.
 
 Board hygiene

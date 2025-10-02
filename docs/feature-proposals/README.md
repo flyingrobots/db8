@@ -1,3 +1,7 @@
+---
+lastUpdated: 2025-10-02
+---
+
 # Feature Proposal Process
 
 This directory captures feature proposals (FPs) and their lifecycle. Every

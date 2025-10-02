@@ -1,3 +1,7 @@
+---
+lastUpdated: 2025-10-02
+---
+
 # Local Database Setup (Postgres / Supabase)
 
 This guide shows how to run the local Postgres, apply schema and RPCs, run

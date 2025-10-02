@@ -1,3 +1,9 @@
+---
+lastUpdated: 2025-10-02
+tags: [spec]
+milestone: M6: Research Tools
+---
+
 # Research Tools & Cache (M6)
 
 Scope

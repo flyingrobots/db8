@@ -1,3 +1,9 @@
+---
+lastUpdated: 2025-10-02
+tags: [spec]
+milestone: M4: Votes & Final
+---
+
 # Voting & Publish Flow (M4)
 
 Scope

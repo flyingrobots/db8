@@ -1,3 +1,7 @@
+---
+lastUpdated: 2025-10-02
+---
+
 # Architecture
 
 This project is a Next.js frontend with a Supabase backend, plus a CLI. Both the

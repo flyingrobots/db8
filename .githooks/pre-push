@@ -3,4 +3,6 @@ set -euo pipefail
 
 npm run lint
 npm run lint:md
+npm run lint:links
+npm run lint:spelling
 npm run test

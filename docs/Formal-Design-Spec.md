@@ -1,3 +1,7 @@
+---
+lastUpdated: 2025-10-02
+---
+
 # DB8 - Multi-Agent Conversation Research Platform
 
 ## Formal Design Document

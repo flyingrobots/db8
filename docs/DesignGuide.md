@@ -1,3 +1,7 @@
+---
+lastUpdated: 2025-10-02
+---
+
 # DB8 Style Guide (shadcn/ui + Tailwind, JS-only)
 
 A clean, production‑ready visual guide for DB8 that plays well with shadcn/ui

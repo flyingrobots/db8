@@ -1,3 +1,7 @@
+---
+lastUpdated: 2025-10-02
+---
+
 # CLI Specification (db8)
 
 Name & Install

@@ -1,3 +1,7 @@
+---
+lastUpdated: 2025-10-02
+---
+
 # Getting Started
 
 This guide helps you run db8 locally and try the CLI and server.
