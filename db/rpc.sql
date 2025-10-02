@@ -2,7 +2,8 @@
 
 CREATE OR REPLACE FUNCTION room_create(
   p_topic text,
-  p_cfg jsonb DEFAULT '{}'::jsonb
+  p_cfg jsonb DEFAULT '{}'::jsonb,
+  p_client_nonce text DEFAULT NULL
 ) RETURNS uuid
 LANGUAGE plpgsql
 AS $$
@@ -11,18 +12,48 @@ DECLARE
   v_participants integer := COALESCE((p_cfg->>'participant_count')::int, 5);
   v_submit_minutes integer := COALESCE((p_cfg->>'submit_minutes')::int, 5);
   v_now integer := extract(epoch from now())::int;
-  v_submit_deadline integer := v_now + GREATEST(v_submit_minutes, 1) * 60;
+  v_submit_deadline integer;
+  v_nonce text := NULLIF(p_client_nonce, '');
+  v_title text := btrim(p_topic);
 BEGIN
-  INSERT INTO rooms (title)
-  VALUES (p_topic)
-  RETURNING id INTO v_room_id;
+  -- Validate inputs loudly (no silent coercion)
+  IF v_title IS NULL OR v_title = '' THEN
+    RAISE EXCEPTION 'room_create: topic is required' USING ERRCODE = '22023';
+  END IF;
+  IF v_participants < 1 THEN
+    RAISE EXCEPTION 'room_create: participant_count out of range [1..64]: %', v_participants USING ERRCODE = '22023';
+  END IF;
+  IF v_submit_minutes < 1 THEN
+    RAISE EXCEPTION 'room_create: submit_minutes out of range [1..1440]: %', v_submit_minutes USING ERRCODE = '22023';
+  END IF;
+  IF v_participants > 64 THEN
+    RAISE EXCEPTION 'room_create: participant_count out of range [1..64]: %', v_participants USING ERRCODE = '22023';
+  END IF;
+  IF v_submit_minutes > 1440 THEN
+    RAISE EXCEPTION 'room_create: submit_minutes out of range [1..1440]: %', v_submit_minutes USING ERRCODE = '22023';
+  END IF;
+
+  v_submit_deadline := v_now + (v_submit_minutes * 60);
+
+  -- Idempotency by client_nonce: reuse existing room if provided
+  IF v_nonce IS NOT NULL THEN
+    SELECT id INTO v_room_id FROM rooms WHERE client_nonce = v_nonce;
+  END IF;
+  IF v_room_id IS NULL THEN
+    INSERT INTO rooms (title, client_nonce)
+    VALUES (v_title, v_nonce)
+    ON CONFLICT (client_nonce)
+      DO UPDATE SET title = COALESCE(rooms.title, EXCLUDED.title)
+    RETURNING id INTO v_room_id;
+  END IF;
 
   INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix)
   VALUES (v_room_id, 0, 'submit', v_submit_deadline);
 
   INSERT INTO participants (room_id, anon_name, role)
   SELECT v_room_id, format('anon_%s', gs), 'debater'
-  FROM generate_series(1, GREATEST(v_participants, 1)) AS gs;
+  FROM generate_series(1, v_participants) AS gs
+  ON CONFLICT (room_id, anon_name) DO NOTHING;
 
   RETURN v_room_id;
 END;
