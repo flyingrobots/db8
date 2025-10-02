@@ -12,6 +12,11 @@ cleanup() {
 
 trap cleanup EXIT
 
-# In non-interactive environments (like git hooks), the input device may not be a TTY.
-# Use -T to disable TTY allocation to avoid "the input device is not a TTY" errors.
-docker compose -f "$COMPOSE_FILE" run -T --rm tests bash -lc 'npm ci && npm run test:prepare-db && npm run test:inner'
+# Detect TTY: disable TTY only when stdin is not a TTY.
+# This keeps interactive runs attached while CI/hooks avoid the "not a TTY" error.
+DOCKER_TTY=""
+if [ ! -t 0 ]; then
+  DOCKER_TTY="-T"
+fi
+
+docker compose -f "$COMPOSE_FILE" run $DOCKER_TTY --rm tests bash -lc 'npm ci && npm run test:prepare-db && npm run test:inner'
