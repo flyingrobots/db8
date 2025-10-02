@@ -1,0 +1,52 @@
+-- 42_view_rls_submit_publish.pgtap — RLS behavior through secure views
+BEGIN;
+SELECT plan(3);
+
+-- Seed data for a new room/round with two participants
+DO $$
+DECLARE rid uuid := '30000000-0000-0000-0000-000000000001';
+        r0  uuid := '30000000-0000-0000-0000-000000000002';
+        p1  uuid := '30000000-0000-0000-0000-000000000003';
+        p2  uuid := '30000000-0000-0000-0000-000000000004';
+BEGIN
+  INSERT INTO rooms(id,title) VALUES (rid,'View RLS Room') ON CONFLICT DO NOTHING;
+  INSERT INTO rounds(id,room_id,idx,phase,submit_deadline_unix)
+    VALUES (r0,rid,0,'submit', extract(epoch from now())::bigint + 300)
+    ON CONFLICT DO NOTHING;
+  INSERT INTO participants(id,room_id,anon_name,role)
+    VALUES (p1,rid,'anon_1','debater'),(p2,rid,'anon_2','debater')
+    ON CONFLICT DO NOTHING;
+  INSERT INTO submissions(round_id, author_id, content, canonical_sha256, client_nonce)
+    VALUES (r0,p1,'A','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','n1')
+    ON CONFLICT DO NOTHING;
+  INSERT INTO submissions(round_id, author_id, content, canonical_sha256, client_nonce)
+    VALUES (r0,p2,'B','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','n2')
+    ON CONFLICT DO NOTHING;
+END $$;
+
+-- During submit: each author sees only their row via submissions_with_flags_view
+SELECT set_config('db8.participant_id','30000000-0000-0000-0000-000000000003', false);
+SELECT results_eq(
+  $$ SELECT count(*)::int FROM submissions_with_flags_view v JOIN rounds r ON r.id=v.round_id WHERE r.phase='submit' $$,
+  ARRAY[1::int],
+  'During submit: author p1 sees only 1 row via view'
+);
+
+SELECT set_config('db8.participant_id','30000000-0000-0000-0000-000000000004', false);
+SELECT results_eq(
+  $$ SELECT count(*)::int FROM submissions_with_flags_view v JOIN rounds r ON r.id=v.round_id WHERE r.phase='submit' $$,
+  ARRAY[1::int],
+  'During submit: author p2 sees only 1 row via view'
+);
+
+-- After publish: anyone sees both
+UPDATE rounds SET phase='published', published_at_unix = extract(epoch from now())::bigint WHERE id='30000000-0000-0000-0000-000000000002';
+SELECT set_config('db8.participant_id','00000000-0000-0000-0000-000000000000', false);
+SELECT results_eq(
+  $$ SELECT count(*)::int FROM submissions_with_flags_view v JOIN rounds r ON r.id=v.round_id WHERE r.phase='published' $$,
+  ARRAY[2::int],
+  'After publish: both rows visible via view'
+);
+
+SELECT finish();
+ROLLBACK;

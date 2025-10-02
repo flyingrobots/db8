@@ -26,7 +26,23 @@ Load the M1 schema and SQL RPCs into your database:
 ```text
 psql postgresql://postgres:test@localhost:54329/db8 -f db/schema.sql
 psql postgresql://postgres:test@localhost:54329/db8 -f db/rpc.sql
+```
+
+### RLS and Secure Views
+
+Row-Level Security (RLS) is enabled for core tables, and the server reads via
+secure views only. Views are marked as `security_barrier` to prevent predicate
+push-down across RLS boundaries.
+
+- Files
+  - `db/rls.sql`: enables RLS and defines policies.
+  - `db/rpc.sql`: defines read-only views and sets `security_barrier=true`.
+
+The prep script applies schema, RPCs, and RLS:
+
 ```text
+npm run test:prepare-db
+```
 
 ### Create a Room + Seed Participants
 

@@ -118,8 +118,9 @@ Operational notes (for future‑you)
 - Merge methods
   - Repo allows Merge and Rebase; Squash is disabled. Use Merge in gh/PR UI
     unless Rulesets require linear history (then use Rebase).
-  - Auto‑merge: enable per‑PR (UI or `gh pr merge <n> --merge --auto`) after
-    required checks/approvals are green.
+  - Do not enable auto‑merge. Wait for CodeRabbit (or designated reviewer)
+    feedback before merging. Merge manually via the GitHub UI once required
+    checks and reviews are complete.
   - Rulesets vs legacy protection: REST `branches/*/protection` 404 is normal if
     using Rulesets. Ensure required checks match names exactly (`build-test`,
     `conventional-commits`).
