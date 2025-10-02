@@ -220,6 +220,11 @@ CREATE OR REPLACE VIEW submissions_with_flags_view AS
      GROUP BY submission_id
   ) f ON f.submission_id = s.id;
 
+-- Harden views to avoid qual pushdown across RLS boundaries
+ALTER VIEW submissions_view SET (security_barrier = true);
+ALTER VIEW votes_view SET (security_barrier = true);
+ALTER VIEW submissions_with_flags_view SET (security_barrier = true);
+
 -- Notify function
 CREATE OR REPLACE FUNCTION notify_rounds_change() RETURNS trigger AS $fn$
 DECLARE
