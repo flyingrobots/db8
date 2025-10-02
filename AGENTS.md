@@ -58,6 +58,11 @@ Workflow loop (daily driver)
    - If docs exist: update them.
    - If docs don’t exist: write them and link them from the nearest MoC (e.g.,
      README or docs/GettingStarted.md).
+   - Follow the Frontmatter Policy (see `docs/DesignGuide.md#frontmatter-policy`):
+     every Markdown file must include YAML frontmatter with `lastUpdated` (ISO
+     date). Spec docs also include `tags: [spec]` and the exact `milestone`
+     string. Do not include `title` in frontmatter; the first body line must be
+     a single H1.
 
 4. PR and issue updates
    - Update the issue (notes, links), set Workflow=In Review.

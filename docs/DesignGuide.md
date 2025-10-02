@@ -59,6 +59,39 @@ drop‑in pages you can wire to realtime later. JavaScript only (no TypeScript).
 
 ## Tailwind + Theme Setup
 
+## Frontmatter Policy
+
+Every Markdown document must include a minimal YAML frontmatter block at the
+top of the file. This enables consistent metadata and automation without
+conflicting with markdownlint rules.
+
+- Required
+  - `lastUpdated`: ISO date (YYYY-MM-DD). Update on substantive edits.
+
+- Optional (for spec docs)
+  - `tags: [spec]`
+  - `milestone: <exact milestone name>` (e.g., `M4: Votes & Final`).
+
+- Excluded
+  - Do not add `title` in frontmatter. Use a single H1 in the body to satisfy
+    MD025 (single H1 per file).
+
+- Related lint rules to observe
+  - H1 required as the first non-frontmatter line (MD041 + MD025).
+  - Wrap prose and list items to 80 columns (MD013).
+  - Surround lists with blank lines (MD032).
+  - Add language to all fenced code blocks (MD040).
+
+Example
+
+```yaml
+---
+lastUpdated: 2025-10-02
+tags: [spec]
+milestone: M4: Votes & Final
+---
+```
+
 Add Tailwind and shadcn/ui per your app conventions, then extend with these
 settings.
 
