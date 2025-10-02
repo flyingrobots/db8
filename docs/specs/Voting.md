@@ -13,11 +13,10 @@ Acceptance Criteria
   `(round_id)`.
 - Views: `view_final_tally`, `view_continue_tally` (existing) expose minimal,
   role-safe aggregates.
-- RPC: `vote_final_submit(round_id, voter_id, approval, ranking_json)`
-  validates inputs and enforces one vote per voter.
-- Server: SSE emits `event: vote` with
-  `{ kind: 'continue' | 'final', tally }` updates; window open and close
-  signals are derived from DB deadlines.
+- RPC: `vote_final_submit(round_id, voter_id, approval, ranking_json)` validates
+  inputs and enforces one vote per voter.
+- Server: SSE emits `event: vote` with `{ kind: 'continue' | 'final', tally }`
+  updates; window open and close signals are derived from DB deadlines.
 - Web: UI for continue and final votes; disable or respect window timing;
   optimistic UX guarded by server truth.
 - Tests: pgTAP for constraints and RLS; Vitest for RPCs, SSE events, and UI

@@ -11,19 +11,18 @@ Acceptance Criteria
 
 - DB: `scores` (per-judge inputs), `score_aggregates` (materialized or view),
   `reputation`, `reputation_tag` with indexes and pgTAP coverage.
-- Worker: deterministic Elo job producing deltas; idempotent by `(room,
-round)`.
-- RPC: write and read endpoints for judge inputs; aggregate reads via views
-  only under RLS.
-- Server/UI: scoreboards render per-dimension and composite; show movement
-  bonus separately.
+- Worker: deterministic Elo job producing deltas; idempotent by `(room, round)`.
+- RPC: write and read endpoints for judge inputs; aggregate reads via views only
+  under RLS.
+- Server/UI: scoreboards render per-dimension and composite; show movement bonus
+  separately.
 - Tests: unit tests for Elo math; pgTAP for constraints; Vitest for RPC and
   aggregates.
 
 Data Model (sketch)
 
-- `scores(id, round_id, judge_id, participant_id, e int, r int, c int, v int,
-y int, created_at)`
+- `scores(id, round_id, judge_id, participant_id, e int, r int, c int, v int, y
+int, created_at)`
 - `reputation(participant_id, elo float, updated_at)`
 - `reputation_tag(participant_id, tag text, elo float, updated_at)`
 

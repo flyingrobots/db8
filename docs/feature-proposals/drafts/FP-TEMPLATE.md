@@ -1,7 +1,8 @@
 ---
 id: FP-YYYYMMDD-short-title
-status: Draft
-authors: Your Name <email>
+status: draft
+authors:
+  - Your Name <email>
 date: YYYY-MM-DD
 related-issues: []
 ---
@@ -23,7 +24,8 @@ Describe the current limitation, supported by data or user stories.
 
 ## Proposed Solution
 
-Outline the architecture or product changes. Mention APIs, data models, UI/CLI impacts, operational concerns, testing strategy, and rollout plan.
+Outline the architecture or product changes. Mention APIs, data models, UI/CLI
+impacts, operational concerns, testing strategy, and rollout plan.
 
 ## Alternatives Considered
 

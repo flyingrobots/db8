@@ -9,7 +9,7 @@ This guide helps you run db8 locally and try the CLI and server.
 
 ## Clone & bootstrap
 
-````text
+`````text
 git clone <https://github.com/flyingrobots/db8.git>
 cd db8
 npm install
@@ -148,5 +148,5 @@ when deadlines are crossed.
 
 - Read the architecture: docs/Architecture.md
 - Explore features & user stories: docs/Features.md, docs/UserStories.md
-- CLI reference/spec: docs/CLI.md
-````
+- CLI reference/spec: docs/CLI.md ````
+`````

@@ -7,7 +7,7 @@ optional pgTAP invariants, and exercise the app end-to-end.
 
 - Using the repo’s docker compose:
 
-````text
+`````text
 docker compose -f docker-compose.test.yml up -d db
 # DB URL: postgresql://postgres:test@localhost:54329/db8
 ```text
@@ -139,5 +139,5 @@ DB8_API_URL=<http://localhost:3000> db8 room watch  --room
 - The server falls back to in-memory idempotent storage if `DATABASE_URL` is not
   set.
 - Configuration uses `SecretSource` + `ConfigBuilder`; only the EnvSecretSource
-  module reads environment variables.
-````
+  module reads environment variables. ````
+`````

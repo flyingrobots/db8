@@ -131,17 +131,20 @@ CLI UX Rules
 
 Sample Flows
 
-- Fresh user: login → room status → draft open → validate → submit → watch → vote continue
+- Fresh user: login → room status → draft open → validate → submit → watch →
+  vote continue
 - Agent with SSH: login → draft → submit --sign → watch --json
 - Journal verify: pull → verify (print OK summary)
 
 Zod Contracts (client mirror)
 
-- SubmissionIn includes client_nonce and optional signature fields and matches server contracts
+- SubmissionIn includes client_nonce and optional signature fields and matches
+  server contracts
 
 Config (~/.db8/config.json)
 
-- Contains api_url, default profile, profiles with room/participant and SSH key paths
+- Contains api_url, default profile, profiles with room/participant and SSH key
+  paths
 
 Non-goals (for now)
 

@@ -1,6 +1,8 @@
 # Features
 
-This document outlines the feature set for db8, grouped by epics and slices you can ship incrementally. It mirrors the architecture in docs/Architecture.md and stays technology-agnostic where possible.
+This document outlines the feature set for db8, grouped by epics and slices you
+can ship incrementally. It mirrors the architecture in docs/Architecture.md and
+stays technology-agnostic where possible.
 
 ## Milestones
 
@@ -15,21 +17,26 @@ M1 — Room Skeleton (deterministic loop)
 - Verify stub (accept-all) to make barrier flip deterministic.
 - Web auth (Supabase) for humans; JWT on requests.
 - CLI auth (room-scoped JWT) and basic submit flow.
-- Idempotency: `client_nonce` on submissions; unique (round_id, author_id, client_nonce).
+- Idempotency: `client_nonce` on submissions; unique (round_id, author_id,
+  client_nonce).
 - Backpressure: simple rate limits per (room_id, participant).
 - Authoritative timers via a small Watcher that broadcasts `ends_unix`.
 - GET `/state?room_id` for reconnect replay of authoritative state.
-- Zod-validated RPCs; Postgres schema; reads via RLS views; writes via service-role RPC with checks.
+- Zod-validated RPCs; Postgres schema; reads via RLS views; writes via
+  service-role RPC with checks.
 - Realtime updates (round phase, submissions, timers) via Supabase Realtime.
 - Pre-publish stubs: FORFEIT/REJECTED render as stub cards with reasons.
-- Minimal admin: create room, open next round, force publish (logged to journal).
+- Minimal admin: create room, open next round, force publish (logged to
+  journal).
 - Journals: write a per-round journal manifest on publish.
 
 M2 — Provenance & Journaling
 
 - Canonical JSON hashing (sha256) for every submission (already in M1).
-- Optional client signatures (SSH or Ed25519) for CLI/agents; server verifies and stores detached sigs.
-- Server round checkpoint hash, signed with server key (minisign/KMS), journaled to ShipLog refs per round.
+- Optional client signatures (SSH or Ed25519) for CLI/agents; server verifies
+  and stores detached sigs.
+- Server round checkpoint hash, signed with server key (minisign/KMS), journaled
+  to ShipLog refs per round.
 - Allowed signers from SSH CA; challenge/verify endpoints for agents.
 - Presence (cosmetic) via Supabase Realtime.
 - Research cache with quotas (per round): `max_unique_domains`, `max_fetches`.
@@ -42,7 +49,8 @@ M3 — Fact-Checking & Verify Phase
   - Per-checker fact_check_verdicts with RLS and indexes (#86)
   - RPCs for verdict submit and quorum finalize rules (#87, #88)
   - Confidence heuristic exposed via research view (#89)
-- UI affordances to show verification status and quorum confidence before publish.
+- UI affordances to show verification status and quorum confidence before
+  publish.
 - Realtime verify status changes.
 
 M4 — Votes, Continue/Final, and Publish Flow
@@ -76,10 +84,13 @@ M7 — Hardening & Ops
 ### Epic: Identity & Authorization
 
 - Supabase Auth for web (magic links/passkeys).
-- JWT middleware on server; pass `jwt_sub` to RPC or rely on auth.jwt() in Supabase.
-- Participants mapping: (room_id, anon_name) with optional `jwt_sub` and `ssh_fingerprint`.
+- JWT middleware on server; pass `jwt_sub` to RPC or rely on auth.jwt() in
+  Supabase.
+- Participants mapping: (room_id, anon_name) with optional `jwt_sub` and
+  `ssh_fingerprint`.
 - CLI/Agents: SSH Ed25519 key support; optional short-lived SSH certs via CA.
-- Challenge/response endpoint for agents using `ssh-keygen -Y sign/verify` (land in M2).
+- Challenge/response endpoint for agents using `ssh-keygen -Y sign/verify` (land
+  in M2).
 
 Slices
 
@@ -91,7 +102,8 @@ Slices
 ### Epic: Rooms, Rounds, and Barriers
 
 - Room lifecycle: create → active → closed.
-- Round lifecycle: research → submit → verify → published → (continue?) → final → results.
+- Round lifecycle: research → submit → verify → published → (continue?) → final
+  → results.
 - Deadlines and timers with authoritative server broadcasts.
 - Advisory lock to flip phases atomically per room.
 
@@ -105,20 +117,24 @@ Slices
 
 - Draft edit UI (private); submit within deadline; resubmit bumps version.
 - Canonical JSON build + sha256.
-- Optional client signature capture: `signature_kind`, `signature_b64`, `signer_fingerprint`.
+- Optional client signature capture: `signature_kind`, `signature_b64`,
+  `signer_fingerprint`.
 - Server verify (SSH/Ed25519) and store results.
 
 Slices
 
 - Zod schemas for payloads; canonicalization util; `dry_run=true` path.
-- RPC `submission_upsert(...)` with versioning, idempotency (`client_nonce`), and RLS-guarded reads.
-- SSH verify helper (exec `ssh-keygen -Y verify`) or libsodium verify for Ed25519.
+- RPC `submission_upsert(...)` with versioning, idempotency (`client_nonce`),
+  and RLS-guarded reads.
+- SSH verify helper (exec `ssh-keygen -Y verify`) or libsodium verify for
+  Ed25519.
 - Store canonical_sha256 and signature fields on row.
 
 ### Epic: Realtime & Presence
 
 - One Supabase Realtime channel per room.
-- DB-backed changefeeds via secure views (rounds_view, submissions_view, votes_view).
+- DB-backed changefeeds via secure views (rounds_view, submissions_view,
+  votes_view).
 - Broadcast-only timers from server for countdowns.
 - Presence for “who’s here” (from M2).
 
@@ -152,7 +168,8 @@ Slices
 - Votes table + RLS.
 - RPC `vote_submit(round, voter, kind, ballot)`.
 - Aggregates for continue pass/fail and final placements.
-- Simple majority of cast ballots; soft quorum (≥3 votes) to avoid zombie rounds.
+- Simple majority of cast ballots; soft quorum (≥3 votes) to avoid zombie
+  rounds.
 
 ### Epic: Scoring & Reputation
 
@@ -169,7 +186,8 @@ Slices
 
 ### Epic: Journaling & Provenance Publishing
 
-- Shiplog refs `_db8/journal/<room>/round-*` with payloads, sigs, and chain signatures.
+- Shiplog refs `_db8/journal/<room>/round-*` with payloads, sigs, and chain
+  signatures.
 - Server KMS/minisign key; publish public key.
 - CLI command to verify journals locally.
 
@@ -209,7 +227,8 @@ Slices
 - Global configuration and session handling (config.json, session.json).
 - Auth: device-code/magic-link login; whoami.
 - Room: status (snapshot) and watch (WS/SSE).
-- Draft: open (template), validate (Zod with canonical SHA), submit/resubmit (idempotent nonce).
+- Draft: open (template), validate (Zod with canonical SHA), submit/resubmit
+  (idempotent nonce).
 - Optional provenance: SSH signing of canonical JSON + detached sig attach.
 - Voting: continue; final (approval + optional ranking).
 - Journals: pull and verify.
@@ -230,7 +249,8 @@ Slices
 Security
 
 - JWT verification on all RPC; RLS as primary isolation.
-- SSH/Ed25519 signature verification for agents; short-lived certs to avoid revocation.
+- SSH/Ed25519 signature verification for agents; short-lived certs to avoid
+  revocation.
 - Anti-replay fields in signed payloads, small clock skew allowed.
 - Basic abuse controls (profanity filter) at submission entry.
 

@@ -47,12 +47,12 @@ Story: CLI login
 
 Story: SSH provenance setup (later)
 
-- As an agent user, I can use my SSH key (and optional short-lived cert) to
-  sign submission payloads so the server can verify provenance.
+- As an agent user, I can use my SSH key (and optional short-lived cert) to sign
+  submission payloads so the server can verify provenance.
 - Acceptance:
   - `ssh-keygen -Y sign` produces a detached signature.
-  - Server verifies the signature and stores `signature_kind`,
-    `signature_b64`, and `signer_fingerprint`.
+  - Server verifies the signature and stores `signature_kind`, `signature_b64`,
+    and `signer_fingerprint`.
 
 ---
 
@@ -173,8 +173,8 @@ Story: Continue vote
 
 Story: Final vote
 
-- As a voter, I can cast an approval vote and ranked tie break so winners can
-  be determined.
+- As a voter, I can cast an approval vote and ranked tie break so winners can be
+  determined.
 - Acceptance:
   - Approval set and optional ranking submitted and stored once.
   - Results computed deterministically; ties resolved by ranking if present.
@@ -330,8 +330,8 @@ Story: Provenance (opt-in)
 - As an agent user, I can sign canonical JSON with SSH and attach the detached
   signature to the submission.
 - Acceptance:
-  - `db8 submit --sign` finds `DB8_SSH_KEY`, produces a signature, and
-    attaches it.
+  - `db8 submit --sign` finds `DB8_SSH_KEY`, produces a signature, and attaches
+    it.
   - Failures produce exit code 6; success stores signature fields.
 
 Story: Journals
