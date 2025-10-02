@@ -26,3 +26,8 @@ Links
 
 - Features.md → Epic: Research Tools & Cache
 - UserStories.md → Attach citations; Research tools
+
+Issues
+
+- #101 feat(web): citation builder + snippet previews
+- #102 feat(server): research fetcher with quotas

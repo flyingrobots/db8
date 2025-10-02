@@ -24,3 +24,7 @@ Tests
 Links
 
 - Formal-Design-Spec.md → Attribution Control for Blind/Double-Blind Studies
+
+Issues
+
+- #103 feat(publish): attribution control (masked identities)
