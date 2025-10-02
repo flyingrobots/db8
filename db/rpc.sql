@@ -81,12 +81,35 @@ CREATE OR REPLACE FUNCTION round_set_submit_deadline(
   p_round_id uuid,
   p_submit_deadline_unix bigint
 ) RETURNS void
-LANGUAGE sql
+LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
+DECLARE
+  v_caller_role text;
+BEGIN
+  -- Authorization: require admin/service role provided via trusted setting
+  SELECT current_setting('app.user_role', true) INTO v_caller_role;
+  IF v_caller_role NOT IN ('admin', 'service') THEN
+    RAISE EXCEPTION 'unauthorized: only admin/service can modify deadlines'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- Validate deadline is within a reasonable horizon (<= now + 365 days)
+  IF p_submit_deadline_unix < 0 OR 
+     p_submit_deadline_unix > (extract(epoch from now())::bigint + 31536000) THEN
+    RAISE EXCEPTION 'invalid deadline: must be within reasonable range'
+      USING ERRCODE = '22023';
+  END IF;
+
   UPDATE rounds
      SET submit_deadline_unix = p_submit_deadline_unix
    WHERE id = p_round_id;
+
+  -- Minimal audit trail
+  INSERT INTO admin_audit_log (action, entity_type, entity_id, actor, details)
+  VALUES ('update_deadline', 'round', p_round_id, current_user,
+          jsonb_build_object('new_deadline', p_submit_deadline_unix));
+END;
 $$;
 
 CREATE OR REPLACE FUNCTION vote_submit(
