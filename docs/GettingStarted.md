@@ -26,12 +26,17 @@ npm install
 npm run dev:db      # starts Postgres 16 on localhost:54329
 ```text
 
-Set `DATABASE_URL=postgresql://postgres:test@localhost:54329/db8` in your shell
+Set `DATABASE_URL=postgresql://postgres:test@localhost:54329/db8_test`
+in your shell
 if you want the server to persist submissions/votes. Without it, the server uses
 in‑memory storage with idempotency.
 
 To apply the M1 schema and SQL RPCs to your local DB and optionally run pgTAP
 invariants, see docs/LocalDB.md.
+
+Note: test-only SQL helpers live in `db/test/helpers.sql` and refuse to run
+unless the database name is clearly a test database (e.g., `db8_test`). Do not
+load them in production.
 
 ## Start the server
 
@@ -94,7 +99,8 @@ first and pass the Postgres environment variables:
 
 ```text
 npm run dev:db
-RUN_PGTAP=1 DB8_TEST_DATABASE_URL=postgresql://postgres:test@localhost:54329/db8
+RUN_PGTAP=1 \
+DB8_TEST_DATABASE_URL=postgresql://postgres:test@localhost:54329/db8_test
 npm test
 ```text
 
@@ -141,7 +147,7 @@ The watcher flips rounds at deadlines using SQL RPCs and relies on DB triggers
 to fan out changes via SSE.
 
 ```text
-export DATABASE_URL=postgresql://postgres:test@localhost:54329/db8
+export DATABASE_URL=postgresql://postgres:test@localhost:54329/db8_test
 node server/watcher.js
 ```text
 

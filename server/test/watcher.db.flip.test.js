@@ -8,7 +8,8 @@ const shouldRun =
   process.env.DB8_TEST_PG === '1' ||
   process.env.RUN_PGTAP === '1' ||
   process.env.DB8_TEST_DATABASE_URL;
-const dbUrl = process.env.DB8_TEST_DATABASE_URL || 'postgresql://postgres:test@localhost:54329/db8';
+const dbUrl =
+  process.env.DB8_TEST_DATABASE_URL || 'postgresql://postgres:test@localhost:54329/db8_test';
 const suite = shouldRun ? describe : describe.skip;
 
 suite('Watcher DB flips', () => {
@@ -44,9 +45,8 @@ suite('Watcher DB flips', () => {
     );
     if (cur.rows.length === 0) throw new Error(`no current round found for roomId ${roomId}`);
     roundId = cur.rows[0].round_id;
-    // Mark this session as test-only for helper and move deadline to the past via service RPC
+    // Move deadline to the past via test-only helper RPC
     const now = Math.floor(Date.now() / 1000);
-    await pool.query("select set_config('app.env','test', false)");
     await pool.query('select round_set_submit_deadline($1,$2)', [roundId, now - 5]);
 
     await runTick(pool);
@@ -63,8 +63,9 @@ suite('Watcher DB flips', () => {
 
   afterAll(async () => {
     try {
-      await pool.query('delete from rounds where id = $1', [roundId]);
-      await pool.query('delete from rooms where id = $1', [roomId]);
+      // Use test-only RPCs for teardown to avoid direct table writes
+      await pool.query('select round_delete($1)', [roundId]);
+      await pool.query('select room_delete($1)', [roomId]);
     } catch {
       // ignore cleanup errors in test teardown
     }

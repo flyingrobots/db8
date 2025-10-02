@@ -3,11 +3,10 @@ services:
     image: postgres:16
     environment:
       POSTGRES_PASSWORD: test
-      POSTGRES_DB: db8
+      POSTGRES_DB: db8_test
     ports: ["54329:5432"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d db8"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d db8_test"]
       interval: 5s
       timeout: 3s
       retries: 10
-
