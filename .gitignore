@@ -38,6 +38,7 @@ coverage/
 # Editors / IDEs
 .vscode/
 .idea/
+.obsidian/
 
 # Supabase (CLI scratch + generated)
 supabase/.temp/
