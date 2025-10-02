@@ -214,7 +214,7 @@ app.post('/rpc/room.create', async (req, res) => {
         ok: true,
         room_id: existing,
         note: 'db_fallback',
-        db_error: dbError?.message || String(dbError || '')
+        db_error: dbError?.message || undefined
       });
     }
     const room_id = crypto.randomUUID();
