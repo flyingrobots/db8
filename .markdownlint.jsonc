@@ -1,0 +1,22 @@
+{
+  // Use consistent ATX headings and increment levels by one
+  "MD001": true,
+  // First heading should be H1
+  "MD041": true,
+  // No trailing spaces
+  "MD009": true,
+  // No multiple consecutive blank lines
+  "MD012": { "maximum": 2 },
+  // Unordered list style: dash
+  "MD004": { "style": "dash" },
+  // Lists should be surrounded by blank lines
+  "MD032": true,
+  // Fenced code blocks, prefer backticks
+  "MD048": { "style": "backtick" },
+  // Line length (allow long lines for links/urls)
+  // Enforce default line length rule (no overrides)
+  // MD013 uses the markdownlint defaults when not specified
+  // Enforce duplicate heading and fenced code language rules (defaults)
+  // Permit inline HTML off
+  "MD033": false
+}
