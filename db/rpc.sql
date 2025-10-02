@@ -190,6 +190,36 @@ CREATE OR REPLACE VIEW votes_view AS
   FROM votes v
   JOIN rounds r ON r.id = v.round_id;
 
+-- Aggregated submissions with flags for secure consumption
+CREATE OR REPLACE VIEW submissions_with_flags_view AS
+  SELECT
+    s.id,
+    r.room_id,
+    s.round_id,
+    s.author_id,
+    s.content,
+    s.canonical_sha256,
+    s.submitted_at,
+    COALESCE(f.flag_count, 0) AS flag_count,
+    COALESCE(f.flag_details, '[]'::jsonb) AS flag_details
+  FROM submissions s
+  JOIN rounds r ON r.id = s.round_id
+  LEFT JOIN (
+    SELECT submission_id,
+           COUNT(*) AS flag_count,
+           jsonb_agg(
+             jsonb_build_object(
+               'reporter_id', reporter_id,
+               'reporter_role', reporter_role,
+               'reason', reason,
+               'created_at', extract(epoch from created_at)::bigint
+             )
+             ORDER BY created_at DESC
+           ) AS flag_details
+      FROM submission_flags
+     GROUP BY submission_id
+  ) f ON f.submission_id = s.id;
+
 -- Notify function
 CREATE OR REPLACE FUNCTION notify_rounds_change() RETURNS trigger AS $fn$
 DECLARE
