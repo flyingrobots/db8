@@ -22,7 +22,7 @@ describe('Watcher transitions (authoritative timers)', () => {
     delete process.env.CONTINUE_WINDOW_SEC;
   });
 
-  test.skip('submit -> published, then to next round when continue=yes wins', async () => {
+  test('submit -> published, then to next round when continue=yes wins', async () => {
     const nowSec = Math.floor(Date.now() / 1000);
     // Ensure room exists; initial phase may already be submit or (edge) published if window lapsed in same tick
     await request(app).get(`/state?room_id=${ROOM}`).expect(200);

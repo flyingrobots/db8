@@ -35,7 +35,38 @@ node server/rpc.js   # listens on :3000
 Endpoints (canonical realtime = SSE):
 
 - `GET /state` — returns the active round snapshot, continue tally, and transcript
-- `GET /events?room_id=<uuid>` — SSE stream of `event: timer` (authoritative countdown) and `event: phase` (DB-driven)
+- `GET /events?room_id=<uuid>` — SSE stream of realtime events
+  - event: timer
+    - Payload shape:
+      - t: "timer"
+      - room_id: string (uuid)
+      - ends_unix: number (unix seconds)
+      - round_idx: number
+      - phase: "submit" | "published" | "final"
+    - Example frame:
+
+      event: timer
+      data: {"t":"timer","room_id":"00000000-0000-0000-0000-0000000000ab","ends_unix":1730505600,"round_idx":0,"phase":"submit"}
+
+  - event: phase (emitted on DB NOTIFY when `rounds` change)
+    - Payload shape:
+      - t: "phase"
+      - room_id: string (uuid)
+      - round_id: string (uuid)
+      - idx: number
+      - phase: "submit" | "published" | "final"
+      - submit_deadline_unix?: number
+      - published_at_unix?: number
+      - continue_vote_close_unix?: number
+    - Example frame:
+
+      event: phase
+      data: {"t":"phase","room_id":"00000000-0000-0000-0000-0000000000ab","round_id":"00000000-0000-0000-0000-0000000000ac","idx":0,"phase":"published","published_at_unix":1730505601,"continue_vote_close_unix":1730505631}
+
+  - Errors
+    - HTTP error responses: 4xx/5xx with JSON body `{ ok:false, error:string }`
+    - SSE connection guidance: use EventSource with default retry; if disconnected, reconnect and also fetch `GET /state` to resync authoritative state.
+
 - `POST /rpc/submission.create` — accepts a validated submission and returns `{ ok, submission_id, canonical_sha256 }`
 - `POST /rpc/vote.continue` — idempotent continue vote; returns `{ ok, vote_id }`
 

@@ -34,3 +34,20 @@ create policy submissions_no_write_policy on submissions
 for all to public
 using (false)
 with check (false);
+
+-- Read-only policies for rooms, participants, rounds, votes (M1 minimal): allow SELECT to public
+drop policy if exists rooms_read_policy on rooms;
+create policy rooms_read_policy on rooms for select using (true);
+
+drop policy if exists participants_read_policy on participants;
+create policy participants_read_policy on participants for select using (true);
+
+drop policy if exists rounds_read_policy on rounds;
+create policy rounds_read_policy on rounds for select using (true);
+
+drop policy if exists votes_read_policy on votes;
+create policy votes_read_policy on votes for select using (true);
+
+-- Performance note: submissions_read_policy references rounds(id, phase).
+-- Ensure an index exists on rounds to support this predicate. Consider materializing
+-- round phase on submissions or exposing read via a view for larger datasets.
