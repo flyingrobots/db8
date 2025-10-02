@@ -21,3 +21,7 @@ Links
 
 - Formal-Design-Spec.md → Orchestrator Heartbeat and Recovery Mechanism
 - Milestone: M7 Hardening & Ops
+
+Issues
+
+- #104 feat(worker): orchestrator heartbeat & recovery

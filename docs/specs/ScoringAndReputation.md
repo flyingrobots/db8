@@ -35,6 +35,13 @@ Links
 - Features.md → Epic: Scoring & Reputation
 - UserStories.md → Scoring section
 
+Issues
+
+- #97 feat(db): scoring & reputation schema + pgTAP
+- #98 feat(worker): Elo update job (deterministic)
+- #99 feat(rpc): judge scoring inputs + aggregates
+- #100 feat(web): scoring UI (per-dimension + composite)
+
 ---
 
 Implementation Notes

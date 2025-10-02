@@ -37,6 +37,13 @@ Links
 - Features.md → Epic: Voting
 - UserStories.md → Voting stories
 
+Issues
+
+- #93 feat(db): final vote schema + RLS + views
+- #94 feat(rpc): vote.final submit + results publish
+- #95 feat(server): SSE signals for vote windows and tallies
+- #96 feat(web): final vote UI and results view
+
 ---
 
 Implementation Notes
