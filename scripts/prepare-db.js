@@ -26,12 +26,14 @@ async function main() {
   const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const schemaPath = path.join(rootDir, 'db', 'schema.sql');
   const rpcPath = path.join(rootDir, 'db', 'rpc.sql');
+  const rlsPath = path.join(rootDir, 'db', 'rls.sql');
 
   const client = new Client({ connectionString: dbUrl });
   await client.connect();
   try {
     if (await fileExists(schemaPath)) await applyFile(client, schemaPath);
     if (await fileExists(rpcPath)) await applyFile(client, rpcPath);
+    if (await fileExists(rlsPath)) await applyFile(client, rlsPath);
   } finally {
     await client.end();
   }
