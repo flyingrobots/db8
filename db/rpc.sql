@@ -74,6 +74,21 @@ BEGIN
 END;
 $$;
 
+-- Admin/Service helper: set submit_deadline_unix for a round
+-- Used by tests and admin operations to drive deterministic flips without
+-- violating RLS or writing tables directly from application code.
+CREATE OR REPLACE FUNCTION round_set_submit_deadline(
+  p_round_id uuid,
+  p_submit_deadline_unix bigint
+) RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+AS $$
+  UPDATE rounds
+     SET submit_deadline_unix = p_submit_deadline_unix
+   WHERE id = p_round_id;
+$$;
+
 CREATE OR REPLACE FUNCTION vote_submit(
   p_round_id uuid,
   p_voter_id uuid,
