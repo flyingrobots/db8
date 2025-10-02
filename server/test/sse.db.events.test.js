@@ -5,7 +5,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import app, { __setDbPool } from '../rpc.js';
 
-const shouldRun = process.env.RUN_PGTAP === '1' || process.env.DB8_TEST_PG === '1';
+const shouldRun =
+  process.env.RUN_PGTAP === '1' ||
+  process.env.DB8_TEST_PG === '1' ||
+  Boolean(process.env.DB8_TEST_DATABASE_URL);
 const dbUrl = process.env.DB8_TEST_DATABASE_URL || 'postgresql://postgres:test@localhost:54329/db8';
 
 const suite = shouldRun ? describe : describe.skip;
