@@ -32,8 +32,9 @@ describe('CLI room create', () => {
       const to = setTimeout(() => {
         try {
           child.kill();
-        } catch {
-          // ignore kill errors
+        } catch (killErr) {
+          // surface kill errors for visibility but do not fail the test immediately
+          console.warn('cli.room.create: failed to kill child on timeout', killErr);
         }
         reject(new Error(`timeout. stderr=${err}`));
       }, TIMEOUT);
