@@ -1,6 +1,6 @@
 -- 42_view_rls_submit_publish.pgtap — RLS behavior through secure views
 BEGIN;
-SELECT plan(4);
+SELECT plan(3);
 
 -- Seed data for a new room/round with two participants
 DO $$
@@ -50,4 +50,3 @@ SELECT results_eq(
 
 SELECT finish();
 ROLLBACK;
-
