@@ -4,7 +4,7 @@ Please complete every item in this list. When you finish an item, update this do
 
 # checklist
 
-- [ ] In bin/db8.js around lines 509 to 537, the payload currently includes
+- [x] In bin/db8.js around lines 509 to 537, the payload currently includes
       participant and submit-minutes values without validating them (which allows
       NaN/null/0 into the request). Validate args.participants and
       args['submit-minutes'] before adding to cfg: parse them to numbers, ensure they
@@ -16,61 +16,42 @@ Please complete every item in this list. When you finish an item, update this do
   > Also keep returning EXIT.VALIDATION on bad inputs rather than sending the
   > request.
 
-- [ ] In server/rpc.js around lines 184 to 211, the room.create handler falls back to
-      an in-memory path on DB error but does not expose the DB error message like
-      submission.create does; declare let dbError = null before the DB call, capture
-      the caught DB error into dbError inside the inner catch block, and then include
-      db_error: dbError?.message || String(dbError) in the fallback JSON response
-      (e.g., res.json({ ok: true, room_id, note: 'db_fallback', db_error: ... })) so
-      the pattern matches submission.create.
+- [x] In bin/db8.js around lines 508 to 556, the CLI currently allows --submit-minutes
+      of 0 while the server schema requires a minimum of 1; change the validation to
+      reject values less than 1 (use m < 1) and update the error message to state
+      '--submit-minutes must be an integer between 1 and 1440' so the CLI matches the
+      server schema; keep the rest of the logic that assigns cfg.submit_minutes when
+      valid.
 
-- [ ] In server/rpc.js around lines 197-199, the empty catch block currently swallows
-      all database errors; update it to catch the error into a variable and log the
-      error before falling back to the in-memory path. Use the module's existing
-      logger (or console.error if none) to log a clear contextual message and the
-      error object (stack) so DB failures are observable in production, then let the
-      code continue to the memory fallback as intended.
+- [x] In bin/db8.js around lines 510 to 513, the topic validation is fragile and
+      inconsistent with the server schema: ensure you first check that topic is a
+      string, and then count Unicode code points rather than JS .length to align with
+      the schema’s character counting; replace the existing condition (and remove the
+      redundant !topic) with a check like "typeof topic !== 'string' ||
+      Array.from(topic).length < 3" (or use the spread operator) so non-string values
+      are rejected before measuring length and multibyte characters (e.g. emoji) are
+      counted correctly, then leave the existing error message and return
+      EXIT.VALIDATION.
 
-- [ ] In server/rpc.js around lines 201 to 207, the in-memory fallback ignores
-      client_nonce causing non-idempotent room creation; add a memRoomNonces map
-      (declare it at the top with other in-memory stores) and change this block to:
-      check if client_nonce exists in memRoomNonces and if so return the existing
-      room_id and same response; if not, generate the room_id, initialize memRooms as
-      before, then set memRoomNonces.set(client_nonce, room_id) before returning,
-      ensuring repeated requests with the same nonce return the original room.
+- [x] In bin/db8.js around line 535, the code wraps the nonce in an unnecessary
+      String() call; remove the defensive String() so the property is assigned
+      directly as client_nonce: args.nonce || randomNonce(), relying on parseArgs to
+      provide a string or undefined and randomNonce() to return a string.
 
-- [ ] In server/rpc.js around lines 204–206, memRooms and SUBMIT_WINDOW_SEC are
-      referenced before their later declarations (lines ~273–275); move the
-      declarations for memRooms and SUBMIT_WINDOW_SEC up to the top of the file
-      immediately after the DB initialization block so they are defined before any
-      use, and then remove the duplicate declarations at lines 273–275 to avoid
-      confusion and reliance on hoisting.
+- [x] In server/rpc.js around lines 188 to 235, the DB-fallback logging is
+      inconsistent: line ~205 uses console.error while submission.create uses
+      console.warn; change the console.error call that logs "room.create DB error;
+      using in-memory fallback" to console.warn (preserving the same message and error
+      object) so all fallback scenarios use the same log level.
 
-- [ ] In server/test/cli.room.create.test.js around lines 23–41, the in-promise
-      timeout (8000ms) does not match the Jest test timeout (15000ms), which is
-      confusing and can cause misleading failures; update the code so both timeouts
-      are the same (e.g., change the setTimeout duration from 8000 to 15000) or
-      introduce a shared TIMEOUT constant and use it for both the promise and the test
-      timeout, or if there is a deliberate reason for differing values, add a one-line
-      comment explaining why they differ.
+- [x] In server/rpc.js around line 210, remove the String(...) coercion that converts
+      non-string values into garbage; instead read the validated field directly (e.g.,
+      use input.client_nonce as-is, or use nullish coalescing if you must default to
+      an empty string) so you don't mask type errors — replace the current line with a
+      direct access to input.client_nonce (or input.client_nonce ?? '').
 
-- [ ] In server/test/cli.room.create.test.js around lines 28 to 37, the Promise
-      waiting for the child process only reads stdout, never collects stderr, and on
-      timeout it rejects without killing the child or checking the child's exit code;
-      update the logic to (1) accumulate both stdout and stderr into separate buffers,
-      (2) use a single timeout constant (match the test timeout, e.g. 15000ms) and on
-      timeout clear listeners, kill the child (child.kill()), and reject with a
-      timeout error that includes stderr, (3) on 'close' resolve with an object
-      containing stdout, stderr and the numeric exit code (or at least reject if
-      exitCode !== 0, including stderr), and (4) attach 'error' handling as before;
-      ensure the test then asserts on exit code zero and uses stderr in failure
-      messages so errors are visible.
-
-- [ ] In server/test/rpc.room_create.test.js around lines 15 to 18, the test claims
-      idempotency but only checks that the second response is a valid string instead
-      of asserting it matches the first response; update the code so the nonce-to-room
-      mapping is honored in all execution paths (including the in-memory fallback) by
-      storing/looking-up the nonce and returning the same room_id for duplicate
-      nonces, and change the test to assert
-      expect(r2.body.room_id).toBe(r1.body.room_id) (and keep the existing ok/type
-      checks).
+- [x] In server/test/cli.room.create.test.js around lines 35 to 37, the try-catch that
+      calls child.kill() silently ignores any errors; change the catch to log the
+      error (e.g., console.warn with a clear message and the caught error) so failures
+      to kill the child are visible in test output, but keep swallowing the error
+      afterward to preserve existing timeout behavior.

@@ -508,7 +508,7 @@ async function main() {
     case 'room:create': {
       // Create a room via API
       const topic = args.topic || args.t;
-      if (!topic || typeof topic !== 'string' || topic.length < 3) {
+      if (typeof topic !== 'string' || Array.from(topic).length < 3) {
         printerr('room create requires --topic <string> (min 3 chars)');
         return EXIT.VALIDATION;
       }
@@ -523,8 +523,8 @@ async function main() {
       }
       if (args['submit-minutes'] !== undefined) {
         const m = Number(args['submit-minutes']);
-        if (!Number.isInteger(m) || m < 0 || m > 1440) {
-          printerr('--submit-minutes must be an integer between 0 and 1440');
+        if (!Number.isInteger(m) || m < 1 || m > 1440) {
+          printerr('--submit-minutes must be an integer between 1 and 1440');
           return EXIT.VALIDATION;
         }
         cfg.submit_minutes = m;
@@ -532,7 +532,7 @@ async function main() {
       const payload = {
         topic,
         ...(Object.keys(cfg).length ? { cfg } : {}),
-        client_nonce: String(args.nonce || randomNonce())
+        client_nonce: args.nonce || randomNonce()
       };
       const url = `${apiUrl.replace(/\/$/, '')}/rpc/room.create`;
       try {

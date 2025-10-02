@@ -202,12 +202,12 @@ app.post('/rpc/room.create', async (req, res) => {
         return res.json({ ok: true, room_id });
       } catch (e) {
         dbError = e;
-        console.error('room.create DB error; using in-memory fallback', e);
+        console.warn('room.create DB error; using in-memory fallback', e);
         // fall through to memory path only if DB call fails
       }
     }
     // in-memory: generate a room id and initialize round 0
-    const nonce = String(input.client_nonce || '');
+    const nonce = input.client_nonce ?? '';
     if (nonce && memRoomNonces.has(nonce)) {
       const existing = memRoomNonces.get(nonce);
       return res.json({
