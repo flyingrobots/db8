@@ -1,0 +1,8 @@
+node_modules/
+web/node_modules/
+web/.next/
+.obsidian/
+.npm-cache/
+
+# generated assets or external
+public/
