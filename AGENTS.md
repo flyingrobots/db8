@@ -283,3 +283,19 @@ Operational/CI:
   - Phase contract alignment (done).
 - M2 will deliver:
   - JCS canonicalization (RFC 8785), server-issued nonces, SSH/Ed25519 provenance, server checkpoint signatures, journals, CLI verify.
+
+## Agent Log — 2025-10-02
+
+Summary
+
+- Resolved conflicts and merged DB-backed SSE `/events` (LISTEN/NOTIFY) after review on #83.
+- Addressed feedback sprint (#84): removed duplicate postinstall, collapsed duplicated SQL CTEs, improved SSE test timing/logging, consolidated watcher teardown, expanded SSE docs, and marked checklist complete.
+- Implemented secure read path for submissions+flags under RLS via `submissions_with_flags_view`; `/state` now consumes views only. Opened and merged #85.
+- Enabled RLS for `submission_flags` and added read-only policy (visible only post-publish). Marked the view as `SECURITY BARRIER`.
+- Opened/updated roadmap issues and synced the Project board.
+
+Next (M1 wrap)
+
+- Ensure all server DB reads are via views under RLS.
+- Wire watcher usage/documentation as a first-class dev/prod component.
+- Begin M2 preparation (JCS + nonces) once M1 is green.
