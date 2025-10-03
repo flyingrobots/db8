@@ -1,10 +1,15 @@
+name: db8-test
+
 services:
   db:
     image: postgres:16
     environment:
       POSTGRES_PASSWORD: test
       POSTGRES_DB: db8_test
+    container_name: db8-test-db
     ports: ["54329:5432"]
+    volumes:
+      - db8_test_pgdata:/var/lib/postgresql/data
 
   tests:
     image: node:20-bookworm
@@ -16,6 +21,7 @@ services:
       NODE_ENV: test
       DATABASE_URL: postgresql://postgres:test@db:5432/db8_test
       DB8_TEST_DATABASE_URL: postgresql://postgres:test@db:5432/db8_test
+    container_name: db8-test-tests
     volumes:
       - ./:/app
       - node_modules_linux:/app/node_modules
@@ -23,5 +29,6 @@ services:
     command: ["tail", "-f", "/dev/null"]
 
 volumes:
+  db8_test_pgdata:
   node_modules_linux:
   node_modules_web_linux:
