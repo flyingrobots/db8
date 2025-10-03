@@ -36,16 +36,60 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 const memSubmissions = new Map(); // key -> { id, canonical_sha256, content, author_id, room_id }
 const memSubmissionIndex = new Map(); // submission_id -> { room_id }
 const memFlags = new Map(); // submission_id -> Map(reporter_id -> { role, reason, created_at })
+// In-memory server-issued nonce stores (when DB is unavailable)
+const memIssuedNonces = new Map(); // key "round:author" -> Set(nonce)
+const memConsumedNonces = new Set(); // key "round:author:nonce"
 // In-memory room state and idempotency for room.create fallback
 const memRooms = new Map(); // room_id -> { round: { idx, phase, submit_deadline_unix, published_at_unix?, continue_vote_close_unix? } }
 const memRoomNonces = new Map(); // client_nonce -> room_id
 const SUBMIT_WINDOW_SEC = config.submitWindowSec;
 const CONTINUE_WINDOW_SEC = config.continueWindowSec;
 
+// Server-issued nonce API (DB preferred)
+app.post('/rpc/nonce.issue', async (req, res) => {
+  try {
+    const { round_id, author_id, ttl_sec } = req.body || {};
+    if (!round_id || !author_id)
+      return res.status(400).json({ ok: false, error: 'missing_round_or_author' });
+    if (db) {
+      try {
+        const r = await db.query(
+          'select submission_nonce_issue($1::uuid,$2::uuid,$3::int) as nonce',
+          [round_id, author_id, Number(ttl_sec ?? 600) | 0]
+        );
+        const nonce = r.rows?.[0]?.nonce;
+        if (!nonce) throw new Error('nonce_issue_no_value');
+        return res.json({ ok: true, nonce });
+      } catch {
+        // Fall back to in-memory issuance if DB is unavailable
+      }
+    }
+    const key = `${round_id}:${author_id}`;
+    const s = memIssuedNonces.get(key) || new Set();
+    const nonce = crypto.randomUUID();
+    s.add(nonce);
+    memIssuedNonces.set(key, s);
+    return res.json({ ok: true, nonce, note: 'db_fallback' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
 // submission.create
 app.post('/rpc/submission.create', (req, res) => {
   try {
     const input = SubmissionIn.parse(req.body);
+    // Optional server nonce enforcement when enabled
+    if (!db && config.enforceServerNonces) {
+      const issuedKey = `${input.round_id}:${input.author_id}`;
+      const consumeKey = `${input.round_id}:${input.author_id}:${input.client_nonce}`;
+      const issued = memIssuedNonces.get(issuedKey);
+      if (!issued || !issued.has(input.client_nonce) || memConsumedNonces.has(consumeKey)) {
+        return res.status(400).json({ ok: false, error: 'invalid_nonce' });
+      }
+      issued.delete(input.client_nonce);
+      memConsumedNonces.add(consumeKey);
+    }
     const canon = canonicalizer({
       room_id: input.room_id,
       round_id: input.round_id,
@@ -66,18 +110,27 @@ app.post('/rpc/submission.create', (req, res) => {
 
     const key = `${input.room_id}:${input.round_id}:${input.author_id}:${input.client_nonce}`;
     if (db) {
-      return db
-        .query(
-          'select submission_upsert($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id',
-          [
+      const pre = config.enforceServerNonces
+        ? db.query('select submission_nonce_consume($1::uuid,$2::uuid,$3::text) as ok', [
             input.round_id,
             input.author_id,
-            input.content,
-            JSON.stringify(input.claims),
-            JSON.stringify(input.citations),
-            canonical_sha256,
             input.client_nonce
-          ]
+          ])
+        : Promise.resolve();
+      return pre
+        .then(() =>
+          db.query(
+            'select submission_upsert($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id',
+            [
+              input.round_id,
+              input.author_id,
+              input.content,
+              JSON.stringify(input.claims),
+              JSON.stringify(input.citations),
+              canonical_sha256,
+              input.client_nonce
+            ]
+          )
         )
         .then((r) => {
           const submission_id = r.rows?.[0]?.id;
@@ -87,6 +140,17 @@ app.post('/rpc/submission.create', (req, res) => {
           throw new Error('submission_upsert_missing_id');
         })
         .catch((e) => {
+          if (config.enforceServerNonces) {
+            // If DB path failed, attempt memory enforcement before falling back
+            const issuedKey = `${input.round_id}:${input.author_id}`;
+            const consumeKey = `${input.round_id}:${input.author_id}:${input.client_nonce}`;
+            const issued = memIssuedNonces.get(issuedKey);
+            if (!issued || !issued.has(input.client_nonce) || memConsumedNonces.has(consumeKey)) {
+              return res.status(400).json({ ok: false, error: 'invalid_nonce' });
+            }
+            issued.delete(input.client_nonce);
+            memConsumedNonces.add(consumeKey);
+          }
           let submission_id;
           if (memSubmissions.has(key)) {
             submission_id = memSubmissions.get(key).id;
