@@ -241,22 +241,26 @@ app.post('/rpc/submission.flag', async (req, res) => {
     const cleanReason = (input.reason || '').trim();
     if (db) {
       try {
-        const result = await db.query(
-          `with upsert as (
-             insert into submission_flags (submission_id, reporter_id, reporter_role, reason)
-             values ($1, $2, $3, $4)
-             on conflict (submission_id, reporter_id)
-             do update set reporter_role = excluded.reporter_role,
-                           reason = excluded.reason,
-                           created_at = now()
-             returning submission_id
-           )
-           select submission_id,
-                  (select count(*) from submission_flags where submission_id = $1) as flag_count
-             from upsert`,
+        // Upsert the flag row
+        const upsert = await db.query(
+          `insert into submission_flags (submission_id, reporter_id, reporter_role, reason)
+           values ($1, $2, $3, $4)
+           on conflict (submission_id, reporter_id)
+           do update set reporter_role = excluded.reporter_role,
+                         reason = excluded.reason,
+                         created_at = now()
+           returning submission_id as id`,
           [input.submission_id, input.reporter_id, input.reporter_role, cleanReason]
         );
-        const count = Number(result.rows?.[0]?.flag_count || 0);
+        // When RLS hides the inserted/updated row, RETURNING may yield 0 rows.
+        // Fallback to the known submission_id so the view lookup still works.
+        const sid = upsert.rows?.[0]?.id || input.submission_id;
+        // Read counts via the RLS-safe view (not the base table)
+        const { rows } = await db.query(
+          'select flag_count from submissions_with_flags_view where id = $1',
+          [sid]
+        );
+        const count = Number(rows?.[0]?.flag_count || 0);
         return res.json({ ok: true, flag_count: count });
       } catch (e) {
         if (e?.code === '23503') {

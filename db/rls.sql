@@ -6,6 +6,7 @@ alter table if exists rounds enable row level security;
 alter table if exists submissions enable row level security;
 alter table if exists votes enable row level security;
 alter table if exists admin_audit_log enable row level security;
+alter table if exists submission_flags enable row level security;
 
 -- Helper: current participant id from session (set via set_config('db8.participant_id', uuid, false))
 create or replace function db8_current_participant_id()
@@ -81,6 +82,26 @@ create policy admin_audit_log_read_policy on admin_audit_log for select using (f
 
 drop policy if exists admin_audit_log_no_write_policy on admin_audit_log;
 create policy admin_audit_log_no_write_policy on admin_audit_log
+for all to public
+using (false)
+with check (false);
+
+-- Submission flags: visible for submissions only after publish; writes denied by default
+drop policy if exists submission_flags_read_policy on submission_flags;
+create policy submission_flags_read_policy on submission_flags
+for select to public
+using (
+  exists (
+    select 1
+      from submissions s
+      join rounds r on r.id = s.round_id
+     where s.id = submission_flags.submission_id
+       and r.phase = 'published'
+  )
+);
+
+drop policy if exists submission_flags_no_write_policy on submission_flags;
+create policy submission_flags_no_write_policy on submission_flags
 for all to public
 using (false)
 with check (false);
