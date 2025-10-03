@@ -3,11 +3,13 @@ import crypto from 'node:crypto';
 import pg from 'pg';
 import { rateLimitStub } from './mw/rate-limit.js';
 import { SubmissionIn, ContinueVote, SubmissionFlag, RoomCreate } from './schemas.js';
-import { canonicalize, sha256Hex } from './utils.js';
+import { canonicalizeSorted, canonicalizeJCS, sha256Hex } from './utils.js';
 import { loadConfig } from './config/config-builder.js';
 
 const app = express();
 const config = loadConfig();
+const canonicalizer =
+  config.canonMode?.toLowerCase?.() === 'jcs' ? canonicalizeJCS : canonicalizeSorted;
 app.use(express.json());
 app.use(rateLimitStub({ enforce: config.enforceRateLimit }));
 // Serve static demo files (public/*) so you can preview UI in a browser
@@ -44,7 +46,7 @@ const CONTINUE_WINDOW_SEC = config.continueWindowSec;
 app.post('/rpc/submission.create', (req, res) => {
   try {
     const input = SubmissionIn.parse(req.body);
-    const canon = canonicalize({
+    const canon = canonicalizer({
       room_id: input.room_id,
       round_id: input.round_id,
       author_id: input.author_id,

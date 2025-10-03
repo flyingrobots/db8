@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
+import canonicalizeJcsLib from 'canonicalize';
 
-export function canonicalize(value) {
+// Deterministic sorted-key canonicalization (legacy M1 default)
+export function canonicalizeSorted(value) {
   const seen = new WeakSet();
   const walk = (v) => {
     if (v === null || typeof v !== 'object') return v;
@@ -13,6 +15,14 @@ export function canonicalize(value) {
   };
   return JSON.stringify(walk(value));
 }
+
+// RFC 8785 JCS canonicalization
+export function canonicalizeJCS(value) {
+  return canonicalizeJcsLib(value);
+}
+
+// Back-compat export used in tests and callers
+export const canonicalize = canonicalizeSorted;
 
 export function sha256Hex(s) {
   return crypto.createHash('sha256').update(s).digest('hex');
