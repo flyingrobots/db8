@@ -7,7 +7,6 @@ alter table if exists submissions enable row level security;
 alter table if exists votes enable row level security;
 alter table if exists admin_audit_log enable row level security;
 alter table if exists submission_flags enable row level security;
-alter table if exists submission_nonces enable row level security;
 
 -- Helper: current participant id from session (set via set_config('db8.participant_id', uuid, false))
 create or replace function db8_current_participant_id()
@@ -87,7 +86,7 @@ for all to public
 using (false)
 with check (false);
 
--- Submission flags & nonces defaults
+-- Submission flags: visible for submissions only after publish; writes denied by default
 drop policy if exists submission_flags_read_policy on submission_flags;
 create policy submission_flags_read_policy on submission_flags
 for select to public
@@ -106,17 +105,6 @@ create policy submission_flags_no_write_policy on submission_flags
 for all to public
 using (false)
 with check (false);
-
-drop policy if exists submission_nonces_no_access on submission_nonces;
-create policy submission_nonces_no_access on submission_nonces
-for all to public
-using (false)
-with check (false);
-
--- Journals: allow public read; writes via SECURITY DEFINER RPC
-alter table if exists journals enable row level security;
-drop policy if exists journals_read_policy on journals;
-create policy journals_read_policy on journals for select using (true);
 
 -- Performance note: submissions_read_policy references rounds(id, phase).
 -- Ensure an index exists on rounds to support this predicate. Consider materializing
