@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import request from 'supertest';
 import app from '../rpc.js';
-import { canonicalize, sha256Hex } from '../utils.js';
+import { canonicalizeSorted as canonicalize, sha256Hex } from '../utils.js';
 
 describe('POST /rpc/submission.create', () => {
   it('validates, canonicalizes, and is idempotent by client_nonce', async () => {

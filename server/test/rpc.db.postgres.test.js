@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Pool } from 'pg';
 import app, { __setDbPool } from '../rpc.js';
-import { canonicalize, sha256Hex } from '../utils.js';
+import { canonicalizeSorted as canonicalize, sha256Hex } from '../utils.js';
 
 const shouldRun = process.env.RUN_PGTAP === '1' || process.env.DB8_TEST_PG === '1';
 const dbUrl =
