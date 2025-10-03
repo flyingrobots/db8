@@ -51,6 +51,7 @@ Acceptance Criteria:
 Notes/Links:
 
 - db/rpc.sql, server/test/rpc.room_create.test.js
+- Promoted to Issue #113
 
 ## RLS coverage: server reads via views only
 
@@ -70,7 +71,8 @@ Acceptance Criteria:
 
 Notes/Links:
 
-- db/rls.sql, submissions_view, submissions_with_flags_view
+- db/rls.sql, submissions_with_flags_view
+- Promoted to Issue #112
 
 ## pgTAP expansion for RLS, triggers, nonces
 
@@ -91,6 +93,7 @@ Acceptance Criteria:
 Notes/Links:
 
 - .github/workflows/ci.yml (#82/#72)
+- Duplicate of existing Issue #82 — remove from backlog when you start work.
 
 ## Audit trail wiring (submission, vote, watcher)
 
@@ -112,6 +115,7 @@ Acceptance Criteria:
 Notes/Links:
 
 - db/rpc.sql (admin_audit_log_write)
+- Promoted to Issue #114
 
 ## RFC 8785 JCS canonicalization
 
@@ -131,3 +135,4 @@ Acceptance Criteria:
 Notes/Links:
 
 - docs/Architecture.md, server/utils.js
+- Existing Issue #67 — remove from backlog when you start work.
