@@ -6,6 +6,13 @@ COMPOSE_FILE=${COMPOSE_FILE:-docker-compose.test.yml}
 # Ensure stable, named resources even if compose doesn't read 'name:'
 export COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-db8-test}
 
+cleanup() {
+  docker compose -f "$COMPOSE_FILE" down --remove-orphans --volumes >/dev/null
+}
+
+# Register traps BEFORE starting any containers or readiness polling
+trap cleanup EXIT ERR
+
 docker compose -f "$COMPOSE_FILE" up -d db >/dev/null
 
 # Wait for Postgres to be ready before running tests
@@ -21,12 +28,6 @@ for i in $(seq 1 60); do
     exit 1
   fi
 done
-
-cleanup() {
-  docker compose -f "$COMPOSE_FILE" down --remove-orphans --volumes >/dev/null
-}
-
-trap cleanup EXIT
 
 # Detect TTY: disable TTY only when stdin is not a TTY.
 # This keeps interactive runs attached while CI/hooks avoid the "not a TTY" error.
