@@ -1,6 +1,6 @@
 -- 43_flags_rls.pgtap — RLS visibility for submission_flags pre/post publish
 BEGIN;
-SELECT plan(6);
+SELECT plan(5);
 
 -- Seed: room, round (submit), author, submission, and a flag
 DO $$
@@ -80,4 +80,3 @@ SELECT ok(
 
 SELECT finish();
 ROLLBACK;
-
