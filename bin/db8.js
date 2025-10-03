@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import canonicalizePkg from 'canonicalize';
+
 const EXIT = {
   OK: 0,
   VALIDATION: 2,
@@ -195,6 +197,10 @@ async function main() {
   }
 
   function canonicalize(value) {
+    const mode = String(
+      process.env.DB8_CANON_MODE || process.env.CANON_MODE || 'sorted'
+    ).toLowerCase();
+    if (mode === 'jcs') return canonicalizePkg(value);
     const seen = new WeakSet();
     const walk = (v) => {
       if (v === null || typeof v !== 'object') return v;

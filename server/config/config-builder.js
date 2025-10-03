@@ -36,6 +36,7 @@ export class ConfigBuilder {
       nodeEnv: this._str('NODE_ENV', 'development'),
       port: this._int('PORT', 3000),
       databaseUrl: this._str('DATABASE_URL', ''),
+      canonMode: this._str('CANON_MODE', 'sorted'),
       enforceRateLimit: this._bool('ENFORCE_RATELIMIT', false),
       submitWindowSec: this._int('SUBMIT_WINDOW_SEC', 300),
       continueWindowSec: this._int('CONTINUE_WINDOW_SEC', 30)

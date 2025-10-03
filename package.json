@@ -57,11 +57,12 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "canonicalize": "^2.1.0",
     "express": "^5.1.0",
     "zod": "^3.25.76"
   },
   "optionalDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "^4.52.3",
+    "@rollup/rollup-linux-x64-gnu": "^4.52.4",
     "pg": "^8.13.1"
   },
   "bin": {
