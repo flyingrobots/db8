@@ -446,3 +446,205 @@ Next (M1 wrap)
 - Ensure all server DB reads are via views under RLS.
 - Wire watcher usage/documentation as a first-class dev/prod component.
 - Begin M2 preparation (JCS + nonces) once M1 is green.
+
+## 2025-10-02 | 19:03 Summary
+
+Tightened docs and git hygiene, fixed project discipline, created a reusable
+`gh` project wrapper, and aligned Issues/Milestones/Board for M1; cleaned up
+noisy PRs and verified vote path is already correct on main.
+
+## Event Log
+
+### PR #108 cleanup and .obsidian noise
+
+Removed accidentally committed `.obsidian/`, added it to `.gitignore`, and
+resolved PR #108’s merge conflicts by taking `main` for SQL/tests (no work
+lost), then merged the minimal change.
+
+#### Summary — PR #108
+
+| Context     | Outcome                                                        |
+| ----------- | -------------------------------------------------------------- |
+| Summary     | PR #108 reduced to necessary gitignore fix; conflicts resolved |
+| Problem     | PR carried editor files and had SQL/test conflicts with main   |
+| Status      | Resolved                                                       |
+| Resolution  | Removed `.obsidian`; added ignore; merged main SQL/tests       |
+| Future Work | None                                                           |
+| Weight      | 0.20                                                           |
+
+#### References — PR #108
+
+- Commit 5e9ac23 (merge), `.gitignore` update
+
+#### Key Decisions — PR #108
+
+- Prefer `main` for conflicted SQL/tests to avoid divergence.
+
+#### Action Items — PR #108
+
+- None.
+
+#### Notes — PR #108
+
+- Preserved history (no force‑push); forward‑only merge.
+
+### docs/GettingStarted markdownlint and fences
+
+Fixed broken code fences, list indentation, and multi‑line env example; CI
+markdownlint passes.
+
+#### Summary — GettingStarted
+
+| Context     | Outcome                                                   |
+| ----------- | --------------------------------------------------------- |
+| Summary     | Normalized fences/lists; added missing trailing backslash |
+| Problem     | MD007/MD005/MD013 failures and broken rendering           |
+| Status      | Resolved                                                  |
+| Resolution  | Edited fences, nested lists, and wrapped long lines       |
+| Future Work | None                                                      |
+| Weight      | 0.20                                                      |
+
+#### References — GettingStarted
+
+- Commits d2636cd, 61483cb
+- Issue #110 (created and closed)
+
+#### Key Decisions — GettingStarted
+
+- Keep examples short; use `bash`/`json` fences for clarity.
+
+#### Action Items — GettingStarted
+
+- None.
+
+#### Notes — Room Create
+
+- Verified locally and via CI jobs.
+
+### Room create + tests alignment
+
+Ensured `room_create(topic,cfg,client_nonce)` idempotency and round‑0
+`ON CONFLICT` are present; tests on `main` already cover idempotency and
+bounds—branch work folded into `main` path.
+
+#### Summary — Room Create
+
+| Context     | Outcome                                                  |
+| ----------- | -------------------------------------------------------- |
+| Summary     | Confirmed `main` already includes desired RPC + tests    |
+| Problem     | Branch diffs overlapped with upstream state              |
+| Status      | Resolved                                                 |
+| Resolution  | Took `main` during conflict; added only missing comments |
+| Future Work | Docs parity tracked in #113                              |
+| Weight      | 0.10                                                     |
+
+#### References — Room Create
+
+- Issue #113 (docs parity)
+
+#### Key Decisions — Room Create
+
+- Avoid duplicate work; track parity as a docs task.
+
+#### Action Items — Room Create
+
+- Complete #113.
+
+#### Notes (Event)
+
+- Maintains a single source of truth.
+
+### Strict Issues/Backlog/Board discipline
+
+Codified process in AGENTS.md; added backlog template; created Issues and set
+Milestones; ensured Project board usage is explicit.
+
+#### Summary — Process Discipline
+
+| Context     | Outcome                                               |
+| ----------- | ----------------------------------------------------- |
+| Summary     | Process is airtight and documented in‑repo            |
+| Problem     | Ad‑hoc linking and backlog duplication risks          |
+| Status      | Resolved                                              |
+| Resolution  | Wrote rules; added backlog doc; created/linked Issues |
+| Future Work | Enforce during reviews; keep board accurate           |
+| Weight      | 0.20                                                  |
+
+#### References — Process Discipline
+
+- AGENTS.md (process section)
+- docs/tasks/backlog.md (template)
+- Issues #112, #113, #114
+
+#### Key Decisions — Process Discipline
+
+- Backlog is staging only; no duplicates with open Issues.
+
+#### Action Items — Process Discipline
+
+- Use the wrapper to set Status/Workflow/Milestone every time.
+
+#### Notes — Project Wrapper
+
+- M1 is the default focus after any side task.
+
+### gh project wrapper tool
+
+Added `scripts/gh-project.js` and `npm run project` to add items to the board
+and set Status/Workflow/Milestone without raw GraphQL.
+
+#### Summary — Project Wrapper
+
+| Context     | Outcome                                                 |
+| ----------- | ------------------------------------------------------- |
+| Summary     | One‑shot CLI for project updates; linted and documented |
+| Problem     | Repeated GraphQL wrangling per session                  |
+| Status      | Resolved                                                |
+| Resolution  | Implemented Node wrapper over gh subcommands            |
+| Future Work | Optional: assign owners in the tool; auto‑detect repo   |
+| Weight      | 0.20                                                    |
+
+#### References — Project Wrapper
+
+- scripts/gh-project.js; AGENTS.md “Project tooling” usage
+
+#### Key Decisions — Project Wrapper
+
+- Prefer wrapper + gh CLI over custom GraphQL queries.
+
+#### Action Items — Project Wrapper
+
+- Consider adding `--assignees` support.
+
+#### Notes
+
+- Linted to repo standards; added to package.json as `project` script.
+
+### vote_submit validation status
+
+Created a branch for vote validation work; confirmed `main` already enforces
+`EXCLUDED.ballot`, phase/window checks, and participant membership—no changes
+required.
+
+#### Summary — vote_submit
+
+| Context     | Outcome                                       |
+| ----------- | --------------------------------------------- |
+| Summary     | Verified main already has fix; no‑op branch   |
+| Problem     | Potentially missing validation in DB function |
+| Status      | Resolved                                      |
+| Resolution  | Audited db/rpc.sql; matched prior fix on main |
+| Future Work | Add tests if coverage gaps appear             |
+| Weight      | 0.10                                          |
+
+#### References — vote_submit
+
+- db/rpc.sql (vote_submit)
+
+#### Key Decisions — vote_submit
+
+- Do not duplicate fixes; focus on tests if needed.
+
+#### Action Items — vote_submit
+
+- None.
