@@ -32,11 +32,17 @@ export class ConfigBuilder {
   }
 
   build() {
+    const canonRaw = this._str('CANON_MODE', 'sorted');
+    const canon = String(canonRaw || 'sorted').toLowerCase();
+    const allowed = new Set(['sorted', 'jcs']);
+    if (!allowed.has(canon)) {
+      throw new Error(`Invalid CANON_MODE: '${canonRaw}'. Allowed: sorted|jcs`);
+    }
     const cfg = {
       nodeEnv: this._str('NODE_ENV', 'development'),
       port: this._int('PORT', 3000),
       databaseUrl: this._str('DATABASE_URL', ''),
-      canonMode: this._str('CANON_MODE', 'sorted'),
+      canonMode: canon,
       enforceServerNonces: this._bool('ENFORCE_SERVER_NONCES', false),
       enforceRateLimit: this._bool('ENFORCE_RATELIMIT', false),
       submitWindowSec: this._int('SUBMIT_WINDOW_SEC', 300),

@@ -18,4 +18,16 @@ describe('canonical JSON hashing', () => {
     };
     expect(canonicalizeJCS(obj)).toEqual(canonicalizeJcsLib(obj));
   });
+
+  it('JCS handles edge cases (unicode keys, numbers, -0, null chars)', () => {
+    const cases = [
+      { '\uD834\uDD1E': 'G-Clef', normal: 'value' },
+      { numSci: 1e-3, numInt: 1, numFloat: 3.14159 },
+      { negZero: -0, zero: 0 },
+      { nullChar: 'a\u0000b', s: 'plain' }
+    ];
+    for (const obj of cases) {
+      expect(canonicalizeJCS(obj)).toEqual(canonicalizeJcsLib(obj));
+    }
+  });
 });
