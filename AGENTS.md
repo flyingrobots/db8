@@ -679,3 +679,115 @@ required.
 #### Action Items
 
 - None.
+
+## 2025-10-02 | 20:19 Summary
+
+Stabilized process and project hygiene (Issues/Milestones/Board), disabled
+overzealous markdownlint rules, added HRs to debriefs, and shipped a small
+`gh` project wrapper so we stop wrangling GraphQL.
+
+## Event Log
+
+### Project helper CLI
+
+Added `scripts/gh-project.js` and `npm run project` to add Issues to the
+Project and set Status/Workflow/Milestone without raw GraphQL/gh api calls.
+
+#### Summary
+
+| Context     | Outcome                                                   |
+| ----------- | --------------------------------------------------------- |
+| Summary     | One-shot CLI for board updates, documented in AGENTS.md   |
+| Problem     | Repeated manual/GraphQL steps to add/update project items |
+| Status      | Resolved                                                  |
+| Resolution  | Implemented Node wrapper over gh project subcommands      |
+| Future Work | Optional: `--assignees` flag and repo auto-detect         |
+| Weight      | 0.30                                                      |
+
+#### References
+
+- scripts/gh-project.js
+- AGENTS.md Project tooling section
+
+#### Key Decisions
+
+- Prefer the wrapper for project updates; avoid GraphQL wrangling.
+
+#### Action Items
+
+- Consider owner assignment support in the tool.
+
+#### Notes
+
+- Linted to repo standards; exposed via `npm run project`.
+
+---
+
+### Issues, milestones, and board updates (M1 focus)
+
+Created Issues and set Milestone/Status; added to the Project board with
+`Todo`/`Workflow: Todo` and left instructions to maintain accuracy.
+
+#### Summary
+
+| Context     | Outcome                                                       |
+| ----------- | ------------------------------------------------------------- |
+| Summary     | #112/#113 created and set to “M1: MVP Loop”; added to Project |
+| Problem     | Missing/implicit tracking for fresh tasks                     |
+| Status      | Resolved                                                      |
+| Resolution  | Used gh CLI to create and add items; set milestone/status     |
+| Future Work | Keep board fields accurate during execution                   |
+| Weight      | 0.20                                                          |
+
+#### References
+
+- Issues [#112](https://github.com/flyingrobots/db8/issues/112),
+  [#113](https://github.com/flyingrobots/db8/issues/113),
+  [#114](https://github.com/flyingrobots/db8/issues/114)
+
+#### Key Decisions
+
+- M1 remains the priority after side tasks.
+
+#### Action Items
+
+- Start #112 (RLS reads via views only) next.
+
+#### Notes
+
+- Project owner: `flyingrobots`, Project: “db8 Roadmap”.
+
+---
+
+### Markdownlint policy and debrief readability
+
+Disabled MD013 (line-length) and MD024 (duplicate headings); documented
+rationale and added a rule to separate event blocks with HRs in debriefs.
+
+#### Summary
+
+| Context     | Outcome                                                           |
+| ----------- | ----------------------------------------------------------------- |
+| Summary     | Authoring is frictionless; debriefs scan cleanly                  |
+| Problem     | Wrapping and duplicate-heading warnings muddied authoring         |
+| Status      | Resolved                                                          |
+| Resolution  | Toggled rules in .markdownlint.jsonc; added guidance to AGENTS.md |
+| Future Work | None                                                              |
+| Weight      | 0.20                                                              |
+
+#### References
+
+- .markdownlint.jsonc
+- AGENTS.md Docs/Markdown conventions
+
+#### Key Decisions
+
+- Prefer soft-wrap and repeatable template headings for modern docs.
+
+#### Action Items
+
+- None.
+
+#### Notes
+
+- HR (`---`) between Event Log entries is now the norm.
