@@ -75,9 +75,16 @@ Docs/Markdown conventions
   - MD024 (duplicate headings): disabled. The session debrief template repeats
     headings (Summary/References/Key Decisions/Action Items) per event by
     design.
-  - Keep headings, links, and tables readable; don’t force line breaks for
-    aesthetics. Prefer explicit links to Issues/PRs/Commits (e.g.,
-    [#112](https://github.com/flyingrobots/db8/issues/112)) in long‑lived docs.
+- Keep headings, links, and tables readable; don’t force line breaks for
+  aesthetics. Prefer explicit links to Issues/PRs/Commits (e.g.,
+  [#112](https://github.com/flyingrobots/db8/issues/112)) in long‑lived docs.
+
+Session debriefs
+
+- When appending a new debrief under “Agent Log,” separate each event block in
+  the Event Log with a horizontal rule (`---`) for readability.
+- Use the exact headings in the template (Summary, References, Key Decisions,
+  Action Items, Notes) for each event so logs stay consistent.
 
 Pull requests
 
@@ -500,6 +507,8 @@ lost), then merged the minimal change.
 
 - Preserved history (no force‑push); forward‑only merge.
 
+---
+
 ### docs/GettingStarted markdownlint and fences
 
 Fixed broken code fences, list indentation, and multi‑line env example; CI
@@ -533,6 +542,8 @@ markdownlint passes.
 
 - Verified locally and via CI jobs.
 
+---
+
 ### Room create + tests alignment
 
 Ensured `room_create(topic,cfg,client_nonce)` idempotency and round‑0
@@ -565,6 +576,8 @@ bounds—branch work folded into `main` path.
 #### Notes
 
 - Maintains a single source of truth.
+
+---
 
 ### Strict Issues/Backlog/Board discipline
 
@@ -602,6 +615,8 @@ Milestones; ensured Project board usage is explicit.
 
 - M1 is the default focus after any side task.
 
+---
+
 ### gh project wrapper tool
 
 Added `scripts/gh-project.js` and `npm run project` to add items to the board
@@ -633,6 +648,8 @@ and set Status/Workflow/Milestone without raw GraphQL.
 #### Notes
 
 - Linted to repo standards; added to package.json as `project` script.
+
+---
 
 ### vote_submit validation status
 
