@@ -252,7 +252,9 @@ app.post('/rpc/submission.flag', async (req, res) => {
            returning submission_id as id`,
           [input.submission_id, input.reporter_id, input.reporter_role, cleanReason]
         );
-        const sid = upsert.rows?.[0]?.id;
+        // When RLS hides the inserted/updated row, RETURNING may yield 0 rows.
+        // Fallback to the known submission_id so the view lookup still works.
+        const sid = upsert.rows?.[0]?.id || input.submission_id;
         // Read counts via the RLS-safe view (not the base table)
         const { rows } = await db.query(
           'select flag_count from submissions_with_flags_view where id = $1',
