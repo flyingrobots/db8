@@ -6,6 +6,20 @@ COMPOSE_FILE=${COMPOSE_FILE:-docker-compose.test.yml}
 
 docker compose -f "$COMPOSE_FILE" up -d db >/dev/null
 
+# Wait for Postgres to be ready before running tests
+echo "Waiting for Postgres to accept connections..."
+for i in $(seq 1 60); do
+  if docker compose -f "$COMPOSE_FILE" exec -T db pg_isready -U postgres -d db8_test >/dev/null 2>&1; then
+    echo "Postgres is ready."
+    break
+  fi
+  sleep 1
+  if [ "$i" -eq 60 ]; then
+    echo "Postgres did not become ready in time." >&2
+    exit 1
+  fi
+done
+
 cleanup() {
   docker compose -f "$COMPOSE_FILE" down --remove-orphans >/dev/null
 }
