@@ -337,3 +337,47 @@ CREATE TRIGGER trg_rounds_notify_change
 AFTER INSERT OR UPDATE ON rounds
 FOR EACH ROW
 EXECUTE PROCEDURE notify_rounds_change();
+
+-- M2: server-issued submission nonces
+CREATE OR REPLACE FUNCTION submission_nonce_issue(
+  p_round_id uuid,
+  p_author_id uuid,
+  p_ttl_seconds int DEFAULT 600
+) RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_nonce text := gen_random_uuid()::text;
+BEGIN
+  INSERT INTO submission_nonces(round_id, author_id, nonce, issued_at, expires_at)
+  VALUES (p_round_id, p_author_id, v_nonce, now(), CASE WHEN p_ttl_seconds > 0 THEN now() + make_interval(secs => p_ttl_seconds) ELSE NULL END);
+  RETURN v_nonce;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION submission_nonce_consume(
+  p_round_id uuid,
+  p_author_id uuid,
+  p_nonce text
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_ok boolean := false;
+BEGIN
+  UPDATE submission_nonces
+     SET consumed_at = now()
+   WHERE round_id = p_round_id
+     AND author_id = p_author_id
+     AND nonce = p_nonce
+     AND (expires_at IS NULL OR expires_at > now())
+     AND consumed_at IS NULL;
+  GET DIAGNOSTICS v_ok = ROW_COUNT > 0;
+  IF NOT v_ok THEN
+    RAISE EXCEPTION 'invalid_nonce' USING ERRCODE = '22023';
+  END IF;
+  RETURN true;
+END;
+$$;
