@@ -13,14 +13,9 @@
   "MD032": true,
   // Fenced code blocks, prefer backticks
   "MD048": { "style": "backtick" },
-  // Line length — allow longer prose lines; keep code/table exemptions
-  "MD013": {
-    "line_length": 120,
-    "code_blocks": false,
-    "tables": false,
-    "headings": false
-  },
-  // Duplicate headings — disabled to permit repeated section headings in logs
+  // Line length — disabled (prefer natural prose; links can be long)
+  "MD013": false,
+  // Duplicate headings — disabled (debrief template repeats headings per event)
   "MD024": false,
   // Enforce duplicate heading and fenced code language rules (defaults)
   // Permit inline HTML off
