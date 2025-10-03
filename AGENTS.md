@@ -67,6 +67,18 @@ Project tooling
 - Prereq: authenticated `gh` (run `gh auth status`). The tool resolves the
   project id and Status/Workflow option ids and updates items accordingly.
 
+Docs/Markdown conventions
+
+- We deliberately disable certain markdownlint rules (see ./.markdownlint.jsonc):
+  - MD013 (line-length): disabled. Rationale: tables, Mermaid, and modern URLs
+    don’t fit hard wrapping; editors/terminals in 2025 soft-wrap Markdown.
+  - MD024 (duplicate headings): disabled. The session debrief template repeats
+    headings (Summary/References/Key Decisions/Action Items) per event by
+    design.
+  - Keep headings, links, and tables readable; don’t force line breaks for
+    aesthetics. Prefer explicit links to Issues/PRs/Commits (e.g.,
+    [#112](https://github.com/flyingrobots/db8/issues/112)) in long‑lived docs.
+
 Pull requests
 
 - Use Markdown in PR bodies (no HTML). Lead with a short Summary and bullet
