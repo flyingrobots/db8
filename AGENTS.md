@@ -135,7 +135,7 @@ Workflow loop (daily driver)
    - Update the issue (notes, links), set Workflow=In Review.
    - Open a PR with a Markdown body (Summary / Changes / Tests / Next) and
      include “Fixes #<n>”.
-   - Enable auto‑merge (Merge method) when checks/approvals are green.
+   - Wait for reviewer feedback and allow the user to merge when they're satisfied.
    - On merge: close the issue (auto via Fixes), set Status/Workflow=Done, and
      delete the branch.
 
@@ -185,9 +185,7 @@ Operational notes (for future‑you)
 - Merge methods
   - Repo allows Merge and Rebase; Squash is disabled. Use Merge in gh/PR UI
     unless Rulesets require linear history (then use Rebase).
-  - Do not enable auto‑merge. Wait for CodeRabbit (or designated reviewer)
-    feedback before merging. Merge manually via the GitHub UI once required
-    checks and reviews are complete.
+  - Wait for reviewer feedback and allow the user to merge when they're satisfied.
   - Rulesets vs legacy protection: REST `branches/*/protection` 404 is normal if
     using Rulesets. Ensure required checks match names exactly (`build-test`,
     `conventional-commits`).
@@ -285,7 +283,7 @@ Summary of work completed end-to-end today:
   - Synced the “db8 Roadmap” project items; set active issues to In Progress and
     PRs to In Review where applicable.
 
-PRs (labels/milestone set, auto-merge enabled where appropriate):
+PRs (labels/milestone set; merged after reviewer approval):
 
 - #43 feat(cli): login stores session; whoami reads it — merged
 - #44 feat(cli): room status formatter and watch lifecycle — merged (Closes #26)

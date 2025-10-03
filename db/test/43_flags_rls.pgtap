@@ -1,0 +1,82 @@
+-- 43_flags_rls.pgtap — RLS visibility for submission_flags pre/post publish
+BEGIN;
+SELECT plan(5);
+
+-- Seed: room, round (submit), author, submission, and a flag
+DO $$
+DECLARE rid uuid := '40000000-0000-0000-0000-000000000001';
+        r0  uuid := '40000000-0000-0000-0000-000000000002';
+        p1  uuid := '40000000-0000-0000-0000-000000000003';
+        sid uuid;
+BEGIN
+  INSERT INTO rooms(id,title) VALUES (rid,'Flags RLS Room') ON CONFLICT DO NOTHING;
+  INSERT INTO rounds(id,room_id,idx,phase,submit_deadline_unix)
+    VALUES (r0,rid,0,'submit', extract(epoch from now())::bigint + 300)
+    ON CONFLICT DO NOTHING;
+  INSERT INTO participants(id,room_id,anon_name,role)
+    VALUES (p1,rid,'author_1','debater')
+    ON CONFLICT DO NOTHING;
+  INSERT INTO submissions(round_id, author_id, content, canonical_sha256, client_nonce)
+    VALUES (r0,p1,'FLAGME','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','nflag')
+    RETURNING id INTO sid;
+  -- Add a flag row (should be hidden before publish by RLS)
+  INSERT INTO submission_flags(submission_id, reporter_id, reporter_role, reason)
+    VALUES (sid,'reporter_1','viewer','pre-publish flag')
+    ON CONFLICT DO NOTHING;
+END $$;
+
+-- Pre-publish: direct table read should be denied by policy (0 visible rows)
+SELECT results_eq(
+  $$ SELECT count(*)::int
+       FROM submission_flags sf
+       JOIN submissions s ON s.id = sf.submission_id
+       JOIN rounds r ON r.id = s.round_id
+      WHERE r.id = '40000000-0000-0000-0000-000000000002' $$,
+  ARRAY[0::int],
+  'Pre-publish: submission_flags returns 0 rows due to RLS'
+);
+
+-- Pre-publish: aggregated view should report flag_count = 0
+SELECT results_eq(
+  $$ SELECT COALESCE(SUM(flag_count),0)::int
+       FROM submissions_with_flags_view v
+      WHERE v.round_id = '40000000-0000-0000-0000-000000000002' $$,
+  ARRAY[0::int],
+  'Pre-publish: submissions_with_flags_view reports zero flags'
+);
+
+-- Flip to published
+UPDATE rounds
+   SET phase='published', published_at_unix = extract(epoch from now())::bigint
+ WHERE id = '40000000-0000-0000-0000-000000000002';
+
+-- Post-publish: direct table read now visible (1 row)
+SELECT results_eq(
+  $$ SELECT count(*)::int
+       FROM submission_flags sf
+       JOIN submissions s ON s.id = sf.submission_id
+       JOIN rounds r ON r.id = s.round_id
+      WHERE r.id = '40000000-0000-0000-0000-000000000002' $$,
+  ARRAY[1::int],
+  'Post-publish: submission_flags row visible'
+);
+
+-- Post-publish: aggregated view should report flag_count = 1
+SELECT results_eq(
+  $$ SELECT COALESCE(SUM(flag_count),0)::int
+       FROM submissions_with_flags_view v
+      WHERE v.round_id = '40000000-0000-0000-0000-000000000002' $$,
+  ARRAY[1::int],
+  'Post-publish: submissions_with_flags_view aggregates one flag'
+);
+
+-- And flag_details contains at least one element
+SELECT ok(
+  (SELECT jsonb_array_length(COALESCE(flag_details,'[]'::jsonb))
+     FROM submissions_with_flags_view v
+    WHERE v.round_id = '40000000-0000-0000-0000-000000000002') >= 1,
+  'Post-publish: view includes flag details'
+);
+
+SELECT finish();
+ROLLBACK;
