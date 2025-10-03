@@ -23,7 +23,7 @@ for i in $(seq 1 60); do
 done
 
 cleanup() {
-  docker compose -f "$COMPOSE_FILE" down --remove-orphans >/dev/null
+  docker compose -f "$COMPOSE_FILE" down --remove-orphans --volumes >/dev/null
 }
 
 trap cleanup EXIT
