@@ -21,10 +21,10 @@ Progress tracking
 
 Issue & Backlog Discipline (must follow)
 
-- Source of truth: GitHub Issues + Project “db8 Roadmap”. Backlog file is
-  staging only.
-- No PRs without a linked issue, except trivial changes (docs typos, ignore
-  entries ≤ 5 changed lines). For trivial changes, either:
+- Source of truth: GitHub Issues + Project “db8 Roadmap”.
+  Backlog file is staging only.
+- No PRs without a linked issue, except trivial changes (docs typos, ignore entries ≤ 5 lines).
+  For trivial changes, either:
   - Create a retro issue and close it with links, or
   - Log the item in `docs/tasks/backlog.md` if truly non-urgent (but promote to
     an issue before any follow-up work).
@@ -472,19 +472,19 @@ lost), then merged the minimal change.
 | Future Work | None                                                           |
 | Weight      | 0.20                                                           |
 
-#### References — PR #108
+#### References
 
 - Commit 5e9ac23 (merge), `.gitignore` update
 
-#### Key Decisions — PR #108
+#### Key Decisions
 
 - Prefer `main` for conflicted SQL/tests to avoid divergence.
 
-#### Action Items — PR #108
+#### Action Items
 
 - None.
 
-#### Notes — PR #108
+#### Notes
 
 - Preserved history (no force‑push); forward‑only merge.
 
@@ -504,20 +504,20 @@ markdownlint passes.
 | Future Work | None                                                      |
 | Weight      | 0.20                                                      |
 
-#### References — GettingStarted
+#### References
 
 - Commits d2636cd, 61483cb
 - Issue #110 (created and closed)
 
-#### Key Decisions — GettingStarted
+#### Key Decisions
 
 - Keep examples short; use `bash`/`json` fences for clarity.
 
-#### Action Items — GettingStarted
+#### Action Items
 
 - None.
 
-#### Notes — Room Create
+#### Notes
 
 - Verified locally and via CI jobs.
 
@@ -538,19 +538,19 @@ bounds—branch work folded into `main` path.
 | Future Work | Docs parity tracked in #113                              |
 | Weight      | 0.10                                                     |
 
-#### References — Room Create
+#### References
 
-- Issue #113 (docs parity)
+- Issue [#113](https://github.com/flyingrobots/db8/issues/113) (docs parity)
 
-#### Key Decisions — Room Create
+#### Key Decisions
 
 - Avoid duplicate work; track parity as a docs task.
 
-#### Action Items — Room Create
+#### Action Items
 
 - Complete #113.
 
-#### Notes (Event)
+#### Notes
 
 - Maintains a single source of truth.
 
@@ -570,21 +570,23 @@ Milestones; ensured Project board usage is explicit.
 | Future Work | Enforce during reviews; keep board accurate           |
 | Weight      | 0.20                                                  |
 
-#### References — Process Discipline
+#### References
 
 - AGENTS.md (process section)
 - docs/tasks/backlog.md (template)
-- Issues #112, #113, #114
+- Issues [#112](https://github.com/flyingrobots/db8/issues/112),
+  [#113](https://github.com/flyingrobots/db8/issues/113),
+  [#114](https://github.com/flyingrobots/db8/issues/114)
 
-#### Key Decisions — Process Discipline
+#### Key Decisions
 
 - Backlog is staging only; no duplicates with open Issues.
 
-#### Action Items — Process Discipline
+#### Action Items
 
 - Use the wrapper to set Status/Workflow/Milestone every time.
 
-#### Notes — Project Wrapper
+#### Notes
 
 - M1 is the default focus after any side task.
 
@@ -604,15 +606,15 @@ and set Status/Workflow/Milestone without raw GraphQL.
 | Future Work | Optional: assign owners in the tool; auto‑detect repo   |
 | Weight      | 0.20                                                    |
 
-#### References — Project Wrapper
+#### References
 
 - scripts/gh-project.js; AGENTS.md “Project tooling” usage
 
-#### Key Decisions — Project Wrapper
+#### Key Decisions
 
 - Prefer wrapper + gh CLI over custom GraphQL queries.
 
-#### Action Items — Project Wrapper
+#### Action Items
 
 - Consider adding `--assignees` support.
 
@@ -637,14 +639,14 @@ required.
 | Future Work | Add tests if coverage gaps appear             |
 | Weight      | 0.10                                          |
 
-#### References — vote_submit
+#### References
 
 - db/rpc.sql (vote_submit)
 
-#### Key Decisions — vote_submit
+#### Key Decisions
 
 - Do not duplicate fixes; focus on tests if needed.
 
-#### Action Items — vote_submit
+#### Action Items
 
 - None.

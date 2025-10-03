@@ -13,9 +13,15 @@
   "MD032": true,
   // Fenced code blocks, prefer backticks
   "MD048": { "style": "backtick" },
-  // Line length (allow long lines for links/urls)
-  // Enforce default line length rule (no overrides)
-  // MD013 uses the markdownlint defaults when not specified
+  // Line length — allow longer prose lines; keep code/table exemptions
+  "MD013": {
+    "line_length": 120,
+    "code_blocks": false,
+    "tables": false,
+    "headings": false
+  },
+  // Duplicate headings — disabled to permit repeated section headings in logs
+  "MD024": false,
   // Enforce duplicate heading and fenced code language rules (defaults)
   // Permit inline HTML off
   "MD033": false
