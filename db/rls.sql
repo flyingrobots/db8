@@ -113,6 +113,11 @@ for all to public
 using (false)
 with check (false);
 
+-- Journals: allow public read; writes via SECURITY DEFINER RPC
+alter table if exists journals enable row level security;
+drop policy if exists journals_read_policy on journals;
+create policy journals_read_policy on journals for select using (true);
+
 -- Performance note: submissions_read_policy references rounds(id, phase).
 -- Ensure an index exists on rounds to support this predicate. Consider materializing
 -- round phase on submissions or exposing read via a view for larger datasets.
