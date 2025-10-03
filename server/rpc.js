@@ -5,6 +5,7 @@ import { rateLimitStub } from './mw/rate-limit.js';
 import { SubmissionIn, ContinueVote, SubmissionFlag, RoomCreate } from './schemas.js';
 import { canonicalizeSorted, canonicalizeJCS, sha256Hex } from './utils.js';
 import { loadConfig } from './config/config-builder.js';
+import { createSigner, buildJournalCore, finalizeJournal } from './journal.js';
 
 const app = express();
 const config = loadConfig();
@@ -44,6 +45,12 @@ const memRooms = new Map(); // room_id -> { round: { idx, phase, submit_deadline
 const memRoomNonces = new Map(); // client_nonce -> room_id
 const SUBMIT_WINDOW_SEC = config.submitWindowSec;
 const CONTINUE_WINDOW_SEC = config.continueWindowSec;
+const signer = createSigner({
+  privateKeyPem: process.env.SIGNING_PRIVATE_KEY || '',
+  publicKeyPem: process.env.SIGNING_PUBLIC_KEY || '',
+  canonMode: config.canonMode
+});
+const memJournalHashes = new Map();
 
 // Server-issued nonce API (DB preferred)
 app.post('/rpc/nonce.issue', async (req, res) => {
@@ -624,6 +631,115 @@ app.get('/events', async (req, res) => {
     res.end();
   });
   sendTimer();
+});
+
+app.get('/journal', async (req, res) => {
+  const roomId = String(req.query.room_id || 'local');
+  try {
+    let roundRow = null;
+    let transcriptHashes = [];
+    let tally = { yes: 0, no: 0 };
+    if (db) {
+      try {
+        const r = await db.query(
+          `select room_id, round_id, idx, phase, submit_deadline_unix,
+                  published_at_unix, continue_vote_close_unix
+             from view_current_round
+            where room_id = $1
+            order by idx desc
+            limit 1`,
+          [roomId]
+        );
+        roundRow = r.rows?.[0] || null;
+        if (roundRow) {
+          const [tallyResult, submissionsResult] = await Promise.all([
+            db.query(
+              'select yes, no from view_continue_tally where room_id = $1 and round_id = $2 limit 1',
+              [roomId, roundRow.round_id]
+            ),
+            db.query(
+              `select canonical_sha256 from submissions_with_flags_view where round_id = $1 order by submitted_at asc nulls last, id asc`,
+              [roundRow.round_id]
+            )
+          ]);
+          tally = tallyResult.rows?.[0] || { yes: 0, no: 0 };
+          transcriptHashes = submissionsResult.rows.map((r) => String(r.canonical_sha256));
+          // Load previous journal hash for chain linking
+          const prevRow = await db
+            .query('select hash from journals where room_id = $1 and round_idx = $2', [
+              roomId,
+              Number(roundRow.idx || 0) - 1
+            ])
+            .then((x) => x.rows?.[0]?.hash || null)
+            .catch(() => null);
+          // stash in locals
+          roundRow._prev_hash = prevRow;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!roundRow) {
+      const state = ensureRoom(roomId);
+      const r = state.round;
+      roundRow = {
+        room_id: roomId,
+        round_id: `mem-${roomId}-${r.idx}`,
+        idx: r.idx,
+        phase: r.phase,
+        submit_deadline_unix: r.submit_deadline_unix,
+        published_at_unix: r.published_at_unix,
+        continue_vote_close_unix: r.continue_vote_close_unix
+      };
+      tally = memVoteTotals.get(roomId) || { yes: 0, no: 0 };
+      transcriptHashes = Array.from(memSubmissions.entries())
+        .filter(([key]) => key.startsWith(`${roomId}:`))
+        .map(([, v]) => v.canonical_sha256);
+    }
+    const prev =
+      roundRow._prev_hash || memJournalHashes.get(`${roomId}:${Number(roundRow.idx) - 1}`) || null;
+    const core = buildJournalCore({
+      room_id: roundRow.room_id,
+      round_id: roundRow.round_id,
+      idx: Number(roundRow.idx || 0),
+      phase: roundRow.phase,
+      submit_deadline_unix: roundRow.submit_deadline_unix,
+      published_at_unix: roundRow.published_at_unix,
+      continue_vote_close_unix: roundRow.continue_vote_close_unix,
+      continue_tally: tally,
+      transcript_hashes: transcriptHashes,
+      prev_hash: prev
+    });
+    const journal = finalizeJournal({ core, signer });
+    memJournalHashes.set(`${roomId}:${core.idx}`, journal.hash);
+    return res.json({ ok: true, journal });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// Journal history — returns stored journals (DB). Memory path returns latest only.
+app.get('/journal/history', async (req, res) => {
+  const roomId = String(req.query.room_id || 'local');
+  try {
+    if (db) {
+      const r = await db.query(
+        'select room_id, round_idx, hash, signature, core, created_at from journals where room_id = $1 order by round_idx asc',
+        [roomId]
+      );
+      return res.json({ ok: true, journals: r.rows });
+    }
+    // Memory: synthesize latest from /journal
+    const latest = await fetch(
+      `http://localhost:${config.port}/journal?room_id=${encodeURIComponent(roomId)}`
+    )
+      .then((r) => r.json())
+      .catch(() => null);
+    if (latest?.ok) return res.json({ ok: true, journals: [latest.journal] });
+    return res.json({ ok: true, journals: [] });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
 });
 
 export default app;

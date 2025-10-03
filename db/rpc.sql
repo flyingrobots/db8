@@ -381,3 +381,23 @@ BEGIN
   RETURN true;
 END;
 $$;
+
+-- Journal upsert
+CREATE OR REPLACE FUNCTION journal_upsert(
+  p_room_id uuid,
+  p_round_idx int,
+  p_hash text,
+  p_signature jsonb,
+  p_core jsonb
+) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO journals(room_id, round_idx, hash, signature, core)
+  VALUES (p_room_id, p_round_idx, p_hash, COALESCE(p_signature, '{}'::jsonb), COALESCE(p_core, '{}'::jsonb))
+  ON CONFLICT (room_id, round_idx)
+  DO UPDATE SET hash = EXCLUDED.hash, signature = EXCLUDED.signature, core = EXCLUDED.core;
+END;
+$$;

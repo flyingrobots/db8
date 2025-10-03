@@ -102,6 +102,19 @@ CREATE TABLE IF NOT EXISTS submission_nonces (
 
 CREATE INDEX IF NOT EXISTS idx_submission_nonces_author ON submission_nonces (author_id);
 
+-- Journals: per-round chain hash + signature + core (JSON)
+CREATE TABLE IF NOT EXISTS journals (
+  room_id    uuid        NOT NULL,
+  round_idx  integer     NOT NULL,
+  hash       char(64)    NOT NULL CHECK (hash ~ '^[0-9a-f]{64}$'),
+  signature  jsonb       NOT NULL,
+  core       jsonb       NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (room_id, round_idx)
+);
+
+CREATE INDEX IF NOT EXISTS idx_journals_room_time ON journals(room_id, round_idx DESC);
+
 -- Admin audit log: partitioned by time, constrained values, and secure by default
 -- Note: recreated here to add constraints, indexes, and partitioning. Safe in dev/CI.
 DROP TABLE IF EXISTS admin_audit_log CASCADE;
