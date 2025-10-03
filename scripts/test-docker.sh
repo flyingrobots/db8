@@ -3,6 +3,8 @@
 set -euo pipefail
 
 COMPOSE_FILE=${COMPOSE_FILE:-docker-compose.test.yml}
+# Ensure stable, named resources even if compose doesn't read 'name:'
+export COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-db8-test}
 
 docker compose -f "$COMPOSE_FILE" up -d db >/dev/null
 
