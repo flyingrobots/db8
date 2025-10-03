@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-02
+lastUpdated: 2025-10-03
 ---
 
 # AGENTS.md
@@ -52,6 +52,20 @@ Issue & Backlog Discipline (must follow)
   - If a PR must merge without an issue (exceptional trivial change), add a
     short “Why no issue” note in the PR body and open a retro issue that closes
     immediately with links.
+
+Project tooling
+
+- Use the helper instead of raw GraphQL/gh plumbing:
+  - `npm run project -- add --owner flyingrobots --project-title "db8 Roadmap" \\
+--issues 112,113 --status "Todo" --workflow "Todo" \\
+--milestone "M1: MVP Loop"`
+  - `npm run project -- status --owner flyingrobots \\
+--project-title "db8 Roadmap" --issues 112 \\
+--status "In Progress" --workflow "In Progress"`
+  - `npm run project -- milestone --issues 112,113 \\
+--milestone "M1: MVP Loop"`
+- Prereq: authenticated `gh` (run `gh auth status`). The tool resolves the
+  project id and Status/Workflow option ids and updates items accordingly.
 
 Pull requests
 

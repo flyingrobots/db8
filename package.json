@@ -24,7 +24,8 @@
     "dev:db": "docker compose up -d db && sleep 2 && echo 'DB on :54329'",
     "stop:db": "docker compose down",
     "start:watcher": "node server/watcher.js",
-    "sync:issues": "./scripts/sync-issues.sh"
+    "sync:issues": "./scripts/sync-issues.sh",
+    "project": "node scripts/gh-project.js"
   },
   "lint-staged": {
     "**/*.{js,jsx,json,md}": [
