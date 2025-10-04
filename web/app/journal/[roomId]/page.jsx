@@ -112,8 +112,8 @@ export default function JournalPage({ params }) {
                           ver[j.hash] === 'ok'
                             ? 'success'
                             : ver[j.hash] === 'unsupported'
-                              ? 'outline'
-                              : 'destructive'
+                              ? 'secondary'
+                              : 'default'
                         }
                       >
                         {ver[j.hash] === 'ok'

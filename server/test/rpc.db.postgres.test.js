@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Pool } from 'pg';
 import app, { __setDbPool } from '../rpc.js';
-import { canonicalizeSorted as canonicalize, sha256Hex } from '../utils.js';
+import { canonicalizeSorted, canonicalizeJCS, sha256Hex } from '../utils.js';
 
 const shouldRun = process.env.RUN_PGTAP === '1' || process.env.DB8_TEST_PG === '1';
 const dbUrl =
@@ -72,7 +72,11 @@ suite('Postgres-backed RPC integration', () => {
       citations: [{ url: 'https://example.com/a' }, { url: 'https://example.com/b' }],
       client_nonce: 'pg-nonce-1234'
     };
-    const canon = canonicalize(body);
+    const canonicalizer =
+      String(process.env.CANON_MODE || 'sorted').toLowerCase() === 'jcs'
+        ? canonicalizeJCS
+        : canonicalizeSorted;
+    const canon = canonicalizer(body);
     const expectedHash = sha256Hex(canon);
 
     const first = await request(app).post('/rpc/submission.create').send(body).expect(200);

@@ -65,7 +65,7 @@ suite('GET /journal?room_id&idx', () => {
   });
 
   it('404s for a missing index', async () => {
-    const room = globalThis.__TEST_ROOM_ID || crypto.randomUUID();
+    const room = crypto.randomUUID();
     const r = await fetch(`${url}/journal?room_id=${encodeURIComponent(room)}&idx=999`);
     expect(r.status).toBe(404);
   });

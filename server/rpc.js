@@ -96,8 +96,11 @@ app.post('/rpc/nonce.issue', async (req, res) => {
         if (!nonce) throw new Error('nonce_issue_no_value');
         return res.json({ ok: true, nonce });
       } catch (e) {
-        // Fall back to in-memory issuance if DB is unavailable
-        console.error('[nonce.issue] DB error, falling back to memory:', e?.message || e);
+        const code = e?.code;
+        const msg = String(e?.message || '');
+        if (code === '23503' || code === '23505' || /invalid_/i.test(msg))
+          return res.status(400).json({ ok: false, error: msg || 'nonce_issue_failed' });
+        console.error('[nonce.issue] DB error, falling back to memory:', msg || e);
       }
     }
     const key = `${round_id}:${author_id}`;
@@ -132,8 +135,23 @@ app.post('/rpc/nonce.issue', async (req, res) => {
     }
     if (issued.size >= PER_AUTHOR_MAX)
       return res.status(429).json({ ok: false, error: 'rate_limited' });
-    if (memIssuedTotal >= GLOBAL_NONCE_MAX)
-      return res.status(429).json({ ok: false, error: 'memory_limit_exceeded' });
+    // Global sweep for expired nonces before enforcing global cap
+    if (memIssuedTotal >= GLOBAL_NONCE_MAX) {
+      let reduced = 0;
+      for (const [, map] of memIssuedNonces.entries()) {
+        for (const [n, exp] of map.entries()) {
+          if (!Number.isFinite(exp) || exp <= nowSec()) {
+            map.delete(n);
+            memIssuedTotal = Math.max(0, memIssuedTotal - 1);
+            reduced++;
+            if (reduced >= 200) break;
+          }
+        }
+        if (reduced >= 200) break;
+      }
+      if (memIssuedTotal >= GLOBAL_NONCE_MAX)
+        return res.status(429).json({ ok: false, error: 'memory_limit_exceeded' });
+    }
     const nonce = crypto.randomUUID();
     issued.set(nonce, nowSec() + ttl);
     memIssuedTotal++;
@@ -173,11 +191,12 @@ app.post('/rpc/submission.create', (req, res) => {
 
     const key = `${input.room_id}:${input.round_id}:${input.author_id}:${input.client_nonce}`;
     if (db) {
-      const sql = config.enforceServerNonces
+      // Use atomic RPC when enforcing server nonces; otherwise plain upsert
+      const upsertSql = config.enforceServerNonces
         ? 'select submission_upsert_with_nonce($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id'
         : 'select submission_upsert($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id';
       return db
-        .query(sql, [
+        .query(upsertSql, [
           input.round_id,
           input.author_id,
           input.content,
@@ -188,20 +207,22 @@ app.post('/rpc/submission.create', (req, res) => {
         ])
         .then((r) => {
           const submission_id = r.rows?.[0]?.id;
-          if (submission_id) {
-            return res.json({ ok: true, submission_id, canonical_sha256 });
-          }
+          if (submission_id) return res.json({ ok: true, submission_id, canonical_sha256 });
           throw new Error('submission_upsert_missing_id');
         })
         .catch((e) => {
-          // Only fall back to memory for infrastructure errors, not nonce validation failures
           const msg = String(e?.message || '');
-          if (/invalid_nonce/i.test(msg)) {
+          if (/invalid_nonce/i.test(msg))
             return res.status(400).json({ ok: false, error: 'invalid_nonce' });
+          const isConnectionError =
+            e?.code === 'ECONNREFUSED' || e?.code === 'ETIMEDOUT' || /connect/i.test(msg);
+          if (!isConnectionError) {
+            // DB reachable but op failed; do not fall back to memory
+            return res.status(500).json({ ok: false, error: e.message || 'db_operation_failed' });
           }
-          if (config.enforceServerNonces && !validateAndConsumeNonceMemory(input)) {
+          // DB unavailable: fall back to memory enforcement and storage
+          if (config.enforceServerNonces && !validateAndConsumeNonceMemory(input))
             return res.status(400).json({ ok: false, error: 'invalid_nonce' });
-          }
           let submission_id;
           if (memSubmissions.has(key)) {
             submission_id = memSubmissions.get(key).id;
