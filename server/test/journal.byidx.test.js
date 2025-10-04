@@ -3,10 +3,17 @@ import http from 'node:http';
 import pg from 'pg';
 import crypto from 'node:crypto';
 
-// Use DB-backed path for this test (setup file already sets DATABASE_URL)
+// Only run when DB-backed tests are enabled
+const shouldRun = process.env.RUN_PGTAP === '1' || process.env.DB8_TEST_PG === '1';
+const dbUrl =
+  process.env.DB8_TEST_DATABASE_URL || 'postgresql://postgres:test@localhost:54329/db8_test';
 const app = (await import('../rpc.js')).default;
 
-describe('GET /journal?room_id&idx', () => {
+let testRoomId = '';
+
+const suite = shouldRun ? describe : describe.skip;
+
+suite('GET /journal?room_id&idx', () => {
   let server;
   let url;
   let pool;
@@ -16,13 +23,14 @@ describe('GET /journal?room_id&idx', () => {
     await new Promise((r) => server.listen(0, r));
     const port = server.address().port;
     url = `http://127.0.0.1:${port}`;
-    pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+    pool = new pg.Pool({ connectionString: dbUrl });
   });
 
   afterAll(async () => {
     try {
-      if (pool && globalThis.__TEST_ROOM_ID) {
-        await pool.query('delete from journals where room_id = $1', [globalThis.__TEST_ROOM_ID]);
+      if (pool && testRoomId) {
+        await pool.query('delete from journals where room_id = $1', [testRoomId]);
+        testRoomId = '';
       }
     } catch (e) {
       void e; // ignore cleanup errors
@@ -36,7 +44,7 @@ describe('GET /journal?room_id&idx', () => {
     const idx = 5;
     const hash = 'a'.repeat(64);
     // Seed a row via SQL RPC
-    globalThis.__TEST_ROOM_ID = room;
+    testRoomId = room;
     await pool.query('select journal_upsert($1::uuid,$2::int,$3::text,$4::jsonb,$5::jsonb)', [
       room,
       idx,

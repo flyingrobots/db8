@@ -47,14 +47,20 @@ export default function JournalPage({ params }) {
         // async verify with stable keys (prefer hash)
         Promise.all(journals.map(verifySig)).then((vals) => {
           const map = {};
+          const HEX64 = /^[0-9a-fA-F]{64}$/;
           for (let i = 0; i < journals.length; i++) {
             const jn = journals[i];
-            const key = typeof jn?.hash === 'string' && jn.hash.length === 64 ? jn.hash : null;
-            if (!key) {
-              console.warn('[journal] missing stable key for verification result', jn);
+            const h = typeof jn?.hash === 'string' ? jn.hash : '';
+            if (!HEX64.test(h)) {
+              console.warn('[journal] invalid or missing hash; skipping entry', {
+                roomId,
+                index: i,
+                round_idx: jn?.round_idx,
+                hash: jn?.hash
+              });
               continue;
             }
-            map[key] = vals[i];
+            map[h] = vals[i];
           }
           if (!cancelled) setVer(map);
         });

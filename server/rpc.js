@@ -42,8 +42,14 @@ const memFlags = new Map(); // submission_id -> Map(reporter_id -> { role, reaso
 const memIssuedNonces = new Map();
 const memConsumedNonces = new Set(); // key "round:author:nonce"
 // Simple per-author issuance rate limiter for fallback path
-// key "round:author" -> { count, window_start_unix }
+// key "round:author" -> { count, window_start_unix, last_cleanup_unix }
 const memNonceIssueRate = new Map();
+let memIssuedTotal = 0;
+const NONCE_WINDOW_SEC = 60;
+const NONCE_RATE_LIMIT = 30; // per (round,author) per window
+const PER_AUTHOR_MAX = 200;
+const GLOBAL_NONCE_MAX = 5000;
+const CLEANUP_INTERVAL_SEC = 10;
 // In-memory room state and idempotency for room.create fallback
 const memRooms = new Map(); // room_id -> { round: { idx, phase, submit_deadline_unix, published_at_unix?, continue_vote_close_unix? } }
 const memRoomNonces = new Map(); // client_nonce -> room_id
@@ -64,11 +70,12 @@ function validateAndConsumeNonceMemory({ round_id, author_id, client_nonce }) {
   const issuedKey = `${round_id}:${author_id}`;
   const consumeKey = `${round_id}:${author_id}:${client_nonce}`;
   const issued = memIssuedNonces.get(issuedKey);
-  if (!issued || typeof client_nonce !== 'string' || client_nonce.length < 8) return false;
+  const UUIDv4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!issued || typeof client_nonce !== 'string' || !UUIDv4.test(client_nonce)) return false;
   const exp = issued.get(client_nonce);
   if (!Number.isFinite(exp) || exp <= nowSec()) return false;
   if (memConsumedNonces.has(consumeKey)) return false;
-  issued.delete(client_nonce);
+  if (issued.delete(client_nonce)) memIssuedTotal = Math.max(0, memIssuedTotal - 1);
   memConsumedNonces.add(consumeKey);
   return true;
 }
@@ -94,24 +101,42 @@ app.post('/rpc/nonce.issue', async (req, res) => {
       }
     }
     const key = `${round_id}:${author_id}`;
-    // naive per-author windowed rate limit for fallback path
-    const rl = memNonceIssueRate.get(key) || { count: 0, window: nowSec() };
-    const windowLen = 60; // seconds
-    if (nowSec() - rl.window >= windowLen) {
+    const rl = memNonceIssueRate.get(key) || { count: 0, window: nowSec(), last_cleanup_unix: 0 };
+    if (nowSec() - rl.window >= NONCE_WINDOW_SEC) {
       rl.count = 0;
       rl.window = nowSec();
     }
     rl.count += 1;
     memNonceIssueRate.set(key, rl);
-    if (rl.count > 30) return res.status(429).json({ ok: false, error: 'rate_limited' });
+    if (rl.count > NONCE_RATE_LIMIT)
+      return res.status(429).json({ ok: false, error: 'rate_limited' });
 
     const ttl = Math.max(1, Math.floor(Number(ttl_sec ?? 600) || 600));
     const issued = memIssuedNonces.get(key) || new Map();
-    // prune expired
-    for (const [n, exp] of issued.entries())
-      if (!Number.isFinite(exp) || exp <= nowSec()) issued.delete(n);
+    // Lazy prune occasionally or when large
+    if (
+      nowSec() - (rl.last_cleanup_unix || 0) >= CLEANUP_INTERVAL_SEC ||
+      issued.size > PER_AUTHOR_MAX
+    ) {
+      let pruned = 0;
+      for (const [n, exp] of issued.entries()) {
+        if (!Number.isFinite(exp) || exp <= nowSec()) {
+          issued.delete(n);
+          memIssuedTotal = Math.max(0, memIssuedTotal - 1);
+          pruned++;
+          if (pruned >= 50) break;
+        }
+      }
+      rl.last_cleanup_unix = nowSec();
+      memNonceIssueRate.set(key, rl);
+    }
+    if (issued.size >= PER_AUTHOR_MAX)
+      return res.status(429).json({ ok: false, error: 'rate_limited' });
+    if (memIssuedTotal >= GLOBAL_NONCE_MAX)
+      return res.status(429).json({ ok: false, error: 'memory_limit_exceeded' });
     const nonce = crypto.randomUUID();
     issued.set(nonce, nowSec() + ttl);
+    memIssuedTotal++;
     memIssuedNonces.set(key, issued);
     return res.json({ ok: true, nonce, note: 'db_fallback' });
   } catch (err) {
@@ -171,8 +196,7 @@ app.post('/rpc/submission.create', (req, res) => {
         .catch((e) => {
           // Only fall back to memory for infrastructure errors, not nonce validation failures
           const msg = String(e?.message || '');
-          const code = e?.code;
-          if (/invalid_nonce/i.test(msg) || code === '22023') {
+          if (/invalid_nonce/i.test(msg)) {
             return res.status(400).json({ ok: false, error: 'invalid_nonce' });
           }
           if (config.enforceServerNonces && !validateAndConsumeNonceMemory(input)) {
@@ -661,6 +685,7 @@ async function buildLatestJournal(roomId) {
   let roundRow = null;
   let transcriptHashes = [];
   let tally = { yes: 0, no: 0 };
+  let prevHash = null;
   if (db) {
     try {
       const r = await db.query(
@@ -686,15 +711,14 @@ async function buildLatestJournal(roomId) {
         ]);
         tally = tallyResult.rows?.[0] || { yes: 0, no: 0 };
         transcriptHashes = submissionsResult.rows.map((r) => String(r.canonical_sha256));
-        // Load previous journal hash for chain linking
-        const prevRow = await db
+        // Load previous journal hash for chain linking without mutating DB row object
+        prevHash = await db
           .query('select hash from journals where room_id = $1 and round_idx = $2', [
             roomId,
             Number(roundRow.idx || 0) - 1
           ])
           .then((x) => x.rows?.[0]?.hash || null)
           .catch(() => null);
-        roundRow._prev_hash = prevRow;
       }
     } catch {
       /* ignore */
@@ -717,8 +741,7 @@ async function buildLatestJournal(roomId) {
       .filter(([key]) => key.startsWith(`${roomId}:`))
       .map(([, v]) => v.canonical_sha256);
   }
-  const prev =
-    roundRow._prev_hash || memJournalHashes.get(`${roomId}:${Number(roundRow.idx) - 1}`) || null;
+  const prev = prevHash || memJournalHashes.get(`${roomId}:${Number(roundRow.idx) - 1}`) || null;
   const core = buildJournalCore({
     room_id: roundRow.room_id,
     round_id: roundRow.round_id,
