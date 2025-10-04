@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import request from 'supertest';
 import app from '../rpc.js';
-import { canonicalizeSorted as canonicalize, sha256Hex } from '../utils.js';
+import { canonicalizeSorted, canonicalizeJCS, sha256Hex } from '../utils.js';
 
 describe('POST /rpc/submission.create', () => {
   it('validates, canonicalizes, and is idempotent by client_nonce', async () => {
@@ -16,7 +16,11 @@ describe('POST /rpc/submission.create', () => {
       citations: [{ url: 'https://example.com' }, { url: 'https://example.org' }],
       client_nonce: 'abc123456'
     };
-    const canon = canonicalize(body);
+    const canonicalizer =
+      String(process.env.CANON_MODE || 'sorted').toLowerCase() === 'jcs'
+        ? canonicalizeJCS
+        : canonicalizeSorted;
+    const canon = canonicalizer(body);
     const expected = sha256Hex(canon);
     const r1 = await request(app).post('/rpc/submission.create').send(body).expect(200);
     const r2 = await request(app).post('/rpc/submission.create').send(body).expect(200);

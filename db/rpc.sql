@@ -50,6 +50,29 @@ BEGIN
 END;
 $$;
 
+-- Atomic submission upsert that consumes nonce within the same transaction
+CREATE OR REPLACE FUNCTION submission_upsert_with_nonce(
+  p_round_id uuid,
+  p_author_id uuid,
+  p_content text,
+  p_claims jsonb,
+  p_citations jsonb,
+  p_canonical_sha256 text,
+  p_client_nonce text
+) RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_id uuid;
+BEGIN
+  PERFORM submission_nonce_consume(p_round_id, p_author_id, p_client_nonce);
+  SELECT submission_upsert(p_round_id, p_author_id, p_content, p_claims, p_citations, p_canonical_sha256, p_client_nonce)
+    INTO v_id;
+  RETURN v_id;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION submission_upsert(
   p_round_id uuid,
   p_author_id uuid,
