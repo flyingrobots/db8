@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'node:http';
 
-// Enable server nonce enforcement before importing app
+// Enable server nonce enforcement before importing app; force memory path
 process.env.ENFORCE_SERVER_NONCES = '1';
+process.env.DATABASE_URL = '';
 const app = (await import('../rpc.js')).default;
 
 describe('Server-issued nonces (enforced)', () => {
