@@ -291,6 +291,14 @@ export default function RoomPage({ params }) {
             <div className="text-lg font-semibold">Transcript</div>
             <Badge variant="outline">{transcript.length} entries</Badge>
           </div>
+          <div className="text-sm">
+            <Link
+              className="underline text-[color:var(--teal)]"
+              href={`/journal/${encodeURIComponent(roomId)}`}
+            >
+              View journal history →
+            </Link>
+          </div>
           {transcript.length === 0 ? (
             <p className="text-sm text-muted">No submissions yet.</p>
           ) : (

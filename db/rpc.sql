@@ -50,6 +50,29 @@ BEGIN
 END;
 $$;
 
+-- Atomic submission upsert that consumes nonce within the same transaction
+CREATE OR REPLACE FUNCTION submission_upsert_with_nonce(
+  p_round_id uuid,
+  p_author_id uuid,
+  p_content text,
+  p_claims jsonb,
+  p_citations jsonb,
+  p_canonical_sha256 text,
+  p_client_nonce text
+) RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_id uuid;
+BEGIN
+  PERFORM submission_nonce_consume(p_round_id, p_author_id, p_client_nonce);
+  SELECT submission_upsert(p_round_id, p_author_id, p_content, p_claims, p_citations, p_canonical_sha256, p_client_nonce)
+    INTO v_id;
+  RETURN v_id;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION submission_upsert(
   p_round_id uuid,
   p_author_id uuid,
@@ -337,3 +360,67 @@ CREATE TRIGGER trg_rounds_notify_change
 AFTER INSERT OR UPDATE ON rounds
 FOR EACH ROW
 EXECUTE PROCEDURE notify_rounds_change();
+
+-- M2: server-issued submission nonces
+CREATE OR REPLACE FUNCTION submission_nonce_issue(
+  p_round_id uuid,
+  p_author_id uuid,
+  p_ttl_seconds int DEFAULT 600
+) RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_nonce text := gen_random_uuid()::text;
+BEGIN
+  INSERT INTO submission_nonces(round_id, author_id, nonce, issued_at, expires_at)
+  VALUES (p_round_id, p_author_id, v_nonce, now(), CASE WHEN p_ttl_seconds > 0 THEN now() + (p_ttl_seconds * interval '1 second') ELSE NULL END);
+  RETURN v_nonce;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION submission_nonce_consume(
+  p_round_id uuid,
+  p_author_id uuid,
+  p_nonce text
+) RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_count integer := 0;
+BEGIN
+  UPDATE submission_nonces
+     SET consumed_at = now()
+   WHERE round_id = p_round_id
+     AND author_id = p_author_id
+     AND nonce = p_nonce
+     AND (expires_at IS NULL OR expires_at > now())
+     AND consumed_at IS NULL;
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  IF v_count = 0 THEN
+    RAISE EXCEPTION 'invalid_nonce' USING ERRCODE = '22023';
+  END IF;
+  RETURN true;
+END;
+$$;
+
+-- Journal upsert
+CREATE OR REPLACE FUNCTION journal_upsert(
+  p_room_id uuid,
+  p_round_idx int,
+  p_hash text,
+  p_signature jsonb,
+  p_core jsonb
+) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO journals(room_id, round_idx, hash, signature, core)
+  VALUES (p_room_id, p_round_idx, p_hash, COALESCE(p_signature, '{}'::jsonb), COALESCE(p_core, '{}'::jsonb))
+  ON CONFLICT (room_id, round_idx)
+  DO UPDATE SET hash = EXCLUDED.hash, signature = EXCLUDED.signature, core = EXCLUDED.core;
+END;
+$$;
