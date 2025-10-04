@@ -11,6 +11,9 @@ export function createSigner({ privateKeyPem, publicKeyPem, canonMode = 'sorted'
     publicKey = crypto.createPublicKey(publicKeyPem);
   } else {
     // Dev-only in-memory keypair
+    console.warn(
+      '[journal] Using in-memory dev keypair — provide SIGNING_PRIVATE_KEY and SIGNING_PUBLIC_KEY (PEM) in production. generateKeyPairSync is synchronous and may block briefly at startup.'
+    );
     const { publicKey: pub, privateKey: priv } = crypto.generateKeyPairSync('ed25519');
     privateKey = priv;
     publicKey = pub;

@@ -351,7 +351,7 @@ AS $$
 DECLARE v_nonce text := gen_random_uuid()::text;
 BEGIN
   INSERT INTO submission_nonces(round_id, author_id, nonce, issued_at, expires_at)
-  VALUES (p_round_id, p_author_id, v_nonce, now(), CASE WHEN p_ttl_seconds > 0 THEN now() + make_interval(secs => p_ttl_seconds) ELSE NULL END);
+  VALUES (p_round_id, p_author_id, v_nonce, now(), CASE WHEN p_ttl_seconds > 0 THEN now() + (p_ttl_seconds * interval '1 second') ELSE NULL END);
   RETURN v_nonce;
 END;
 $$;
@@ -365,7 +365,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
-DECLARE v_ok boolean := false;
+DECLARE v_count integer := 0;
 BEGIN
   UPDATE submission_nonces
      SET consumed_at = now()
@@ -374,8 +374,8 @@ BEGIN
      AND nonce = p_nonce
      AND (expires_at IS NULL OR expires_at > now())
      AND consumed_at IS NULL;
-  GET DIAGNOSTICS v_ok = ROW_COUNT > 0;
-  IF NOT v_ok THEN
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  IF v_count = 0 THEN
     RAISE EXCEPTION 'invalid_nonce' USING ERRCODE = '22023';
   END IF;
   RETURN true;

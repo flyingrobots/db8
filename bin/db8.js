@@ -152,11 +152,8 @@ async function main() {
       }
     }
     if (key === 'journal:verify') {
-      if (!args.room && !process.env.DB8_ROOM_ID && !session.room_id)
-        throw new CLIError(
-          'journal verify requires --room or configured DB8_ROOM_ID',
-          EXIT.VALIDATION
-        );
+      if (!args.room && !process.env.DB8_ROOM_ID)
+        throw new CLIError('journal verify requires --room or DB8_ROOM_ID', EXIT.VALIDATION);
     }
 
     return { wantHelp: false };
