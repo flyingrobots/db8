@@ -2,6 +2,10 @@ import crypto from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { canonicalizeJCS, canonicalizeSorted, sha256Hex } from './utils.js';
 
+/**
+ * createSigner creates an Ed25519 signer and public key export.
+ * Note: generateKeyPairSync is synchronous and may block briefly; avoid in serverless.
+ */
 export function createSigner({ privateKeyPem, publicKeyPem, canonMode = 'sorted' } = {}) {
   let privateKey;
   let publicKey;
@@ -18,7 +22,7 @@ export function createSigner({ privateKeyPem, publicKeyPem, canonMode = 'sorted'
   } else {
     // Dev-only in-memory keypair
     console.warn(
-      '[journal] Using in-memory dev keypair — provide SIGNING_PRIVATE_KEY and SIGNING_PUBLIC_KEY (PEM) in production. generateKeyPairSync is synchronous and may block briefly at startup.'
+      '[journal] Using in-memory dev keypair — provide SIGNING_PRIVATE_KEY and SIGNING_PUBLIC_KEY (PEM) in production.'
     );
     const { publicKey: pub, privateKey: priv } = crypto.generateKeyPairSync('ed25519');
     privateKey = priv;
@@ -52,11 +56,7 @@ export function buildJournalCore({
   transcript_hashes,
   prev_hash
 }) {
-  function toSafeInt(v) {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
-  }
-  function toSafeCount(v) {
+  function toSafeNumber(v) {
     const n = Number(v);
     return Number.isFinite(n) ? n : 0;
   }
@@ -64,14 +64,14 @@ export function buildJournalCore({
     v: 1,
     room_id,
     round_id,
-    idx: toSafeInt(idx),
+    idx: toSafeNumber(idx),
     phase,
-    submit_deadline_unix: toSafeInt(submit_deadline_unix || 0),
-    published_at_unix: toSafeInt(published_at_unix || 0),
-    continue_vote_close_unix: toSafeInt(continue_vote_close_unix || 0),
+    submit_deadline_unix: toSafeNumber(submit_deadline_unix || 0),
+    published_at_unix: toSafeNumber(published_at_unix || 0),
+    continue_vote_close_unix: toSafeNumber(continue_vote_close_unix || 0),
     continue_tally: {
-      yes: toSafeCount(continue_tally?.yes || 0),
-      no: toSafeCount(continue_tally?.no || 0)
+      yes: toSafeNumber(continue_tally?.yes || 0),
+      no: toSafeNumber(continue_tally?.no || 0)
     },
     transcript_hashes: Array.isArray(transcript_hashes) ? transcript_hashes : [],
     prev_hash: prev_hash || null

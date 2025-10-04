@@ -80,4 +80,38 @@ describe('Server-issued nonces (enforced)', () => {
     });
     expect(r2.status).toBe(400);
   });
+
+  it('rejects expired nonce (ttl)', async () => {
+    const round = '00000000-0000-0000-0000-0000000000aa';
+    const author = '00000000-0000-0000-0000-0000000000bb';
+    const room = '00000000-0000-0000-0000-0000000000a0';
+    // Issue very short TTL
+    const issued = await fetch(url + '/rpc/nonce.issue', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ round_id: round, author_id: author, ttl_sec: 1 })
+    }).then((r) => r.json());
+    expect(issued.ok).toBe(true);
+    const nonce = issued.nonce;
+    // Wait slightly longer than TTL
+    await new Promise((r) => setTimeout(r, 1200));
+    // Attempt submission should fail
+    const payload = {
+      room_id: room,
+      round_id: round,
+      author_id: author,
+      phase: 'submit',
+      deadline_unix: 0,
+      content: 'hello',
+      claims: [{ id: 'c1', text: 'Abc', support: [{ kind: 'logic', ref: 'r1' }] }],
+      citations: [{ url: 'https://example.com' }, { url: 'https://example.org' }],
+      client_nonce: nonce
+    };
+    const res = await fetch(url + '/rpc/submission.create', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    expect(res.status).toBe(400);
+  });
 });
