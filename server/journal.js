@@ -7,8 +7,14 @@ export function createSigner({ privateKeyPem, publicKeyPem, canonMode = 'sorted'
   let publicKey;
   let dev = false;
   if (privateKeyPem && publicKeyPem) {
-    privateKey = crypto.createPrivateKey(privateKeyPem);
-    publicKey = crypto.createPublicKey(publicKeyPem);
+    try {
+      privateKey = crypto.createPrivateKey(privateKeyPem);
+      publicKey = crypto.createPublicKey(publicKeyPem);
+    } catch (err) {
+      const msg =
+        'Invalid SIGNING_PRIVATE_KEY or SIGNING_PUBLIC_KEY PEM format. Provide valid PEM-encoded Ed25519 keys.';
+      throw new Error(msg, { cause: err });
+    }
   } else {
     // Dev-only in-memory keypair
     console.warn(
@@ -46,16 +52,27 @@ export function buildJournalCore({
   transcript_hashes,
   prev_hash
 }) {
+  function toSafeInt(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  function toSafeCount(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
   return {
     v: 1,
     room_id,
     round_id,
-    idx,
+    idx: toSafeInt(idx),
     phase,
-    submit_deadline_unix: Number(submit_deadline_unix || 0),
-    published_at_unix: Number(published_at_unix || 0),
-    continue_vote_close_unix: Number(continue_vote_close_unix || 0),
-    continue_tally: { yes: Number(continue_tally?.yes || 0), no: Number(continue_tally?.no || 0) },
+    submit_deadline_unix: toSafeInt(submit_deadline_unix || 0),
+    published_at_unix: toSafeInt(published_at_unix || 0),
+    continue_vote_close_unix: toSafeInt(continue_vote_close_unix || 0),
+    continue_tally: {
+      yes: toSafeCount(continue_tally?.yes || 0),
+      no: toSafeCount(continue_tally?.no || 0)
+    },
     transcript_hashes: Array.isArray(transcript_hashes) ? transcript_hashes : [],
     prev_hash: prev_hash || null
   };

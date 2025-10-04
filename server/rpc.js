@@ -38,8 +38,12 @@ const memSubmissions = new Map(); // key -> { id, canonical_sha256, content, aut
 const memSubmissionIndex = new Map(); // submission_id -> { room_id }
 const memFlags = new Map(); // submission_id -> Map(reporter_id -> { role, reason, created_at })
 // In-memory server-issued nonce stores (when DB is unavailable)
-const memIssuedNonces = new Map(); // key "round:author" -> Set(nonce)
+// key "round:author" -> Map(nonce -> expires_unix)
+const memIssuedNonces = new Map();
 const memConsumedNonces = new Set(); // key "round:author:nonce"
+// Simple per-author issuance rate limiter for fallback path
+// key "round:author" -> { count, window_start_unix }
+const memNonceIssueRate = new Map();
 // In-memory room state and idempotency for room.create fallback
 const memRooms = new Map(); // room_id -> { round: { idx, phase, submit_deadline_unix, published_at_unix?, continue_vote_close_unix? } }
 const memRoomNonces = new Map(); // client_nonce -> room_id
@@ -52,6 +56,23 @@ const signer = createSigner({
 });
 const memJournalHashes = new Map();
 
+function nowSec() {
+  return Math.floor(Date.now() / 1000);
+}
+
+function validateAndConsumeNonceMemory({ round_id, author_id, client_nonce }) {
+  const issuedKey = `${round_id}:${author_id}`;
+  const consumeKey = `${round_id}:${author_id}:${client_nonce}`;
+  const issued = memIssuedNonces.get(issuedKey);
+  if (!issued || typeof client_nonce !== 'string' || client_nonce.length < 8) return false;
+  const exp = issued.get(client_nonce);
+  if (!Number.isFinite(exp) || exp <= nowSec()) return false;
+  if (memConsumedNonces.has(consumeKey)) return false;
+  issued.delete(client_nonce);
+  memConsumedNonces.add(consumeKey);
+  return true;
+}
+
 // Server-issued nonce API (DB preferred)
 app.post('/rpc/nonce.issue', async (req, res) => {
   try {
@@ -62,20 +83,36 @@ app.post('/rpc/nonce.issue', async (req, res) => {
       try {
         const r = await db.query(
           'select submission_nonce_issue($1::uuid,$2::uuid,$3::int) as nonce',
-          [round_id, author_id, Number(ttl_sec ?? 600) | 0]
+          [round_id, author_id, Math.max(1, Math.floor(Number(ttl_sec ?? 600) || 600))]
         );
         const nonce = r.rows?.[0]?.nonce;
         if (!nonce) throw new Error('nonce_issue_no_value');
         return res.json({ ok: true, nonce });
-      } catch {
+      } catch (e) {
         // Fall back to in-memory issuance if DB is unavailable
+        console.error('[nonce.issue] DB error, falling back to memory:', e?.message || e);
       }
     }
     const key = `${round_id}:${author_id}`;
-    const s = memIssuedNonces.get(key) || new Set();
+    // naive per-author windowed rate limit for fallback path
+    const rl = memNonceIssueRate.get(key) || { count: 0, window: nowSec() };
+    const windowLen = 60; // seconds
+    if (nowSec() - rl.window >= windowLen) {
+      rl.count = 0;
+      rl.window = nowSec();
+    }
+    rl.count += 1;
+    memNonceIssueRate.set(key, rl);
+    if (rl.count > 30) return res.status(429).json({ ok: false, error: 'rate_limited' });
+
+    const ttl = Math.max(1, Math.floor(Number(ttl_sec ?? 600) || 600));
+    const issued = memIssuedNonces.get(key) || new Map();
+    // prune expired
+    for (const [n, exp] of issued.entries())
+      if (!Number.isFinite(exp) || exp <= nowSec()) issued.delete(n);
     const nonce = crypto.randomUUID();
-    s.add(nonce);
-    memIssuedNonces.set(key, s);
+    issued.set(nonce, nowSec() + ttl);
+    memIssuedNonces.set(key, issued);
     return res.json({ ok: true, nonce, note: 'db_fallback' });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
@@ -88,14 +125,8 @@ app.post('/rpc/submission.create', (req, res) => {
     const input = SubmissionIn.parse(req.body);
     // Optional server nonce enforcement when enabled
     if (!db && config.enforceServerNonces) {
-      const issuedKey = `${input.round_id}:${input.author_id}`;
-      const consumeKey = `${input.round_id}:${input.author_id}:${input.client_nonce}`;
-      const issued = memIssuedNonces.get(issuedKey);
-      if (!issued || !issued.has(input.client_nonce) || memConsumedNonces.has(consumeKey)) {
+      if (!validateAndConsumeNonceMemory(input))
         return res.status(400).json({ ok: false, error: 'invalid_nonce' });
-      }
-      issued.delete(input.client_nonce);
-      memConsumedNonces.add(consumeKey);
     }
     const canon = canonicalizer({
       room_id: input.room_id,
@@ -138,16 +169,14 @@ app.post('/rpc/submission.create', (req, res) => {
           throw new Error('submission_upsert_missing_id');
         })
         .catch((e) => {
-          // Treat DB errors (including invalid_nonce) as signals to try memory fallback
-          if (config.enforceServerNonces) {
-            const issuedKey = `${input.round_id}:${input.author_id}`;
-            const consumeKey = `${input.round_id}:${input.author_id}:${input.client_nonce}`;
-            const issued = memIssuedNonces.get(issuedKey);
-            if (!issued || !issued.has(input.client_nonce) || memConsumedNonces.has(consumeKey)) {
-              return res.status(400).json({ ok: false, error: 'invalid_nonce' });
-            }
-            issued.delete(input.client_nonce);
-            memConsumedNonces.add(consumeKey);
+          // Only fall back to memory for infrastructure errors, not nonce validation failures
+          const msg = String(e?.message || '');
+          const code = e?.code;
+          if (/invalid_nonce/i.test(msg) || code === '22023') {
+            return res.status(400).json({ ok: false, error: 'invalid_nonce' });
+          }
+          if (config.enforceServerNonces && !validateAndConsumeNonceMemory(input)) {
+            return res.status(400).json({ ok: false, error: 'invalid_nonce' });
           }
           let submission_id;
           if (memSubmissions.has(key)) {

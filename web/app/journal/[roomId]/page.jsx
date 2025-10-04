@@ -12,26 +12,21 @@ function apiBase() {
 
 async function verifySig(j) {
   try {
+    const subtle = (globalThis.crypto || window.crypto)?.subtle;
+    if (!subtle || typeof subtle.importKey !== 'function') return 'unsupported';
     const b64 = (s) => Uint8Array.from(globalThis.atob(s), (c) => c.charCodeAt(0));
     const pubDer = b64(j.signature.public_key_b64);
-    const pubKey = await (globalThis.crypto || window.crypto).subtle.importKey(
-      'spki',
-      pubDer,
-      { name: 'Ed25519', namedCurve: 'NODE-ED25519' },
-      false,
-      ['verify']
-    );
+    const pubKey = await subtle.importKey('spki', pubDer, { name: 'Ed25519' }, false, ['verify']);
     const sig = b64(j.signature.sig_b64);
     const hash = Uint8Array.from(j.hash.match(/.{1,2}/g).map((b) => parseInt(b, 16)));
-    const ok = await (globalThis.crypto || window.crypto).subtle.verify(
-      { name: 'Ed25519' },
-      pubKey,
-      sig,
-      hash
-    );
-    return Boolean(ok);
-  } catch {
-    return false;
+    const ok = await subtle.verify({ name: 'Ed25519' }, pubKey, sig, hash);
+    return ok ? 'ok' : 'fail';
+  } catch (e) {
+    const name = e?.name || '';
+    if (/NotSupported/i.test(name) || /not\s*supported/i.test(String(e?.message || ''))) {
+      return 'unsupported';
+    }
+    return 'fail';
   }
 }
 
@@ -49,10 +44,18 @@ export default function JournalPage({ params }) {
         const j = await r.json().catch(() => ({}));
         const journals = Array.isArray(j?.journals) ? j.journals : [];
         if (!cancelled) setItems(journals);
-        // async verify
+        // async verify with stable keys (prefer hash)
         Promise.all(journals.map(verifySig)).then((vals) => {
           const map = {};
-          for (let i = 0; i < journals.length; i++) map[journals[i].round_idx ?? i] = vals[i];
+          for (let i = 0; i < journals.length; i++) {
+            const jn = journals[i];
+            const key = typeof jn?.hash === 'string' && jn.hash.length === 64 ? jn.hash : null;
+            if (!key) {
+              console.warn('[journal] missing stable key for verification result', jn);
+              continue;
+            }
+            map[key] = vals[i];
+          }
           if (!cancelled) setVer(map);
         });
       } catch {
@@ -82,33 +85,48 @@ export default function JournalPage({ params }) {
             <p className="text-sm text-muted">No journals yet.</p>
           ) : (
             <ul className="space-y-3">
-              {items.map((j) => (
-                <li key={j.round_idx} className="rounded border border-border p-3">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <div className="text-sm">Round</div>
-                      <div className="text-xl font-semibold">{j.round_idx}</div>
+              {items
+                .slice()
+                .sort((a, b) => (a.round_idx ?? 0) - (b.round_idx ?? 0))
+                .map((j) => (
+                  <li key={j.hash || j.round_idx} className="rounded border border-border p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-1">
+                        <div className="text-sm">Round</div>
+                        <div className="text-xl font-semibold">{j.round_idx}</div>
+                      </div>
+                      <div className="text-right space-y-1">
+                        <div className="text-sm">Hash</div>
+                        <div className="font-mono text-[11px] break-all">{j.hash}</div>
+                      </div>
                     </div>
-                    <div className="text-right space-y-1">
-                      <div className="text-sm">Hash</div>
-                      <div className="font-mono text-[11px] break-all">{j.hash}</div>
+                    <div className="mt-3 flex items-center justify-between">
+                      <Badge
+                        variant={
+                          ver[j.hash] === 'ok'
+                            ? 'success'
+                            : ver[j.hash] === 'unsupported'
+                              ? 'outline'
+                              : 'destructive'
+                        }
+                      >
+                        {ver[j.hash] === 'ok'
+                          ? 'signature: ok'
+                          : ver[j.hash] === 'unsupported'
+                            ? 'signature: unsupported'
+                            : 'signature: fail'}
+                      </Badge>
+                      <a
+                        className="underline text-[color:var(--teal)]"
+                        href={`${apiBase()}/journal?room_id=${encodeURIComponent(roomId)}&idx=${j.round_idx}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        View JSON →
+                      </a>
                     </div>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between">
-                    <Badge variant={ver[j.round_idx] ? 'success' : 'destructive'}>
-                      {ver[j.round_idx] ? 'signature: ok' : 'signature: fail'}
-                    </Badge>
-                    <a
-                      className="underline text-[color:var(--teal)]"
-                      href={`${apiBase()}/journal?room_id=${encodeURIComponent(roomId)}&idx=${j.round_idx}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      View JSON →
-                    </a>
-                  </div>
-                </li>
-              ))}
+                  </li>
+                ))}
             </ul>
           )}
         </CardContent>
