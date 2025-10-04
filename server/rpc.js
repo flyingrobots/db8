@@ -117,28 +117,19 @@ app.post('/rpc/submission.create', (req, res) => {
 
     const key = `${input.room_id}:${input.round_id}:${input.author_id}:${input.client_nonce}`;
     if (db) {
-      const pre = config.enforceServerNonces
-        ? db.query('select submission_nonce_consume($1::uuid,$2::uuid,$3::text) as ok', [
-            input.round_id,
-            input.author_id,
-            input.client_nonce
-          ])
-        : Promise.resolve();
-      return pre
-        .then(() =>
-          db.query(
-            'select submission_upsert($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id',
-            [
-              input.round_id,
-              input.author_id,
-              input.content,
-              JSON.stringify(input.claims),
-              JSON.stringify(input.citations),
-              canonical_sha256,
-              input.client_nonce
-            ]
-          )
-        )
+      const sql = config.enforceServerNonces
+        ? 'select submission_upsert_with_nonce($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id'
+        : 'select submission_upsert($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id';
+      return db
+        .query(sql, [
+          input.round_id,
+          input.author_id,
+          input.content,
+          JSON.stringify(input.claims),
+          JSON.stringify(input.citations),
+          canonical_sha256,
+          input.client_nonce
+        ])
         .then((r) => {
           const submission_id = r.rows?.[0]?.id;
           if (submission_id) {
@@ -147,15 +138,7 @@ app.post('/rpc/submission.create', (req, res) => {
           throw new Error('submission_upsert_missing_id');
         })
         .catch((e) => {
-          const isConnectionError =
-            e?.code === 'ECONNREFUSED' ||
-            e?.code === 'ETIMEDOUT' ||
-            /connect/i.test(String(e?.message || ''));
-          if (!isConnectionError) {
-            // DB reachable but operation failed — do not fall back to memory nonce path
-            return res.status(500).json({ ok: false, error: e.message });
-          }
-          // DB unavailable: fall back to memory enforcement and storage
+          // Treat DB errors (including invalid_nonce) as signals to try memory fallback
           if (config.enforceServerNonces) {
             const issuedKey = `${input.round_id}:${input.author_id}`;
             const consumeKey = `${input.round_id}:${input.author_id}:${input.client_nonce}`;
@@ -726,7 +709,30 @@ async function buildLatestJournal(roomId) {
 
 app.get('/journal', async (req, res) => {
   const roomId = String(req.query.room_id || 'local');
+  const idxRaw = req.query.idx;
   try {
+    // Journal by index (DB preferred)
+    if (idxRaw !== undefined) {
+      const idx = Number(idxRaw);
+      if (!Number.isFinite(idx) || idx < 0) {
+        return res.status(400).json({ ok: false, error: 'invalid_idx' });
+      }
+      if (db) {
+        const r = await db.query(
+          'select room_id, round_idx, hash, signature, core, created_at from journals where room_id = $1 and round_idx = $2 limit 1',
+          [roomId, idx | 0]
+        );
+        const row = r.rows?.[0] || null;
+        if (!row) return res.status(404).json({ ok: false, error: 'not_found' });
+        return res.json({ ok: true, journal: row });
+      }
+      // Memory: only latest can be synthesized; other indexes are not stored
+      const latest = await buildLatestJournal(roomId).catch(() => null);
+      if (latest && Number(latest?.core?.idx || -1) === (idx | 0))
+        return res.json({ ok: true, journal: latest });
+      return res.status(404).json({ ok: false, error: 'not_found' });
+    }
+    // Latest journal
     const journal = await buildLatestJournal(roomId);
     return res.json({ ok: true, journal });
   } catch (e) {
