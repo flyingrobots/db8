@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-02
+lastUpdated: 2025-10-04
 ---
 
 # Getting Started
@@ -43,6 +43,13 @@ load them in production.
 ```bash
 node server/rpc.js   # listens on :3000
 ```
+
+Environment flags (M2)
+
+- `CANON_MODE=sorted|jcs` — switch canonicalization mode (RFC 8785 when `jcs`).
+- `ENFORCE_SERVER_NONCES=1` — require server-issued nonces for submissions.
+- `SIGNING_PRIVATE_KEY` / `SIGNING_PUBLIC_KEY` — PEM Ed25519 keypair to sign
+  journals (dev keypair is generated if unset).
 
 Endpoints (canonical realtime = SSE):
 
@@ -99,6 +106,13 @@ Endpoints (canonical realtime = SSE):
 ok, submission_id, canonical_sha256 }`
 - `POST /rpc/vote.continue` — idempotent continue vote; returns `{ ok, vote_id
 }`
+
+Journals
+
+- `GET /journal?room_id=<uuid>` — latest signed journal (JSON)
+- `GET /journal?room_id=<uuid>&idx=<n>` — journal by index (DB row when stored;
+  synthesized latest in memory mode)
+- `GET /journal/history?room_id=<uuid>` — list of journals (for history pages / CLI verify)
 
 ## Run tests
 

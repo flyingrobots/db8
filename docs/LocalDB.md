@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-02
+lastUpdated: 2025-10-04
 ---
 
 # Local Database Setup (Postgres / Supabase)
@@ -136,6 +136,42 @@ node server/rpc.js
 # healthcheck
 curl <http://localhost:3000/health>
 ```text
+
+### Environment Flags (M2)
+
+These flags gate new M2 capabilities and are read by the server and CLI.
+
+- `CANON_MODE=sorted|jcs`
+  - `sorted` (default): stable, legacy sorted-keys canonicalization.
+  - `jcs`: RFC 8785 JSON Canonicalization Scheme (recommended for provenance).
+- `ENFORCE_SERVER_NONCES=1`
+  - When set, the API enforces single-use server-issued nonces for submissions.
+  - Issue a nonce via `POST /rpc/nonce.issue` and include it as `client_nonce` in
+    `POST /rpc/submission.create`.
+  - Behavior is atomic on the DB path and safely falls back to memory when the
+    DB rejects nonces due to missing rows in dev.
+- `SIGNING_PRIVATE_KEY` / `SIGNING_PUBLIC_KEY`
+  - PEM-encoded Ed25519 keypair used to sign journals.
+  - If unset, the server generates an in-memory dev keypair at startup (for dev
+    only) and logs a warning.
+
+### Journals + CLI Verify
+
+The server publishes per-round journals that include a chain hash and an Ed25519
+signature. You can fetch and verify them via HTTP or the CLI.
+
+- Endpoints
+  - `GET /journal?room_id=<uuid>` — latest journal (synthesized if DB is absent)
+  - `GET /journal?room_id=<uuid>&idx=<n>` — journal by round index
+    - DB: returns the stored row `{ room_id, round_idx, hash, signature, core, created_at }`.
+    - Memory: returns the synthesized latest only when `idx` equals the latest
+      round; otherwise `404`.
+  - `GET /journal/history?room_id=<uuid>` — ordered list of stored journals.
+
+- CLI
+  - `db8 journal:verify --room <uuid>` — verifies the latest journal signature
+  - `db8 journal:verify --room <uuid> --history` — verifies every stored
+    journal and checks chain linking via `prev_hash`.
 
 ## Test-only SQL helpers (do not deploy)
 
