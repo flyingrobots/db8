@@ -3,11 +3,14 @@ import crypto from 'node:crypto';
 import pg from 'pg';
 import { rateLimitStub } from './mw/rate-limit.js';
 import { SubmissionIn, ContinueVote, SubmissionFlag, RoomCreate } from './schemas.js';
-import { canonicalize, sha256Hex } from './utils.js';
+import { canonicalizeSorted, canonicalizeJCS, sha256Hex } from './utils.js';
 import { loadConfig } from './config/config-builder.js';
+import { createSigner, buildJournalCore, finalizeJournal } from './journal.js';
 
 const app = express();
 const config = loadConfig();
+const canonicalizer =
+  config.canonMode?.toLowerCase?.() === 'jcs' ? canonicalizeJCS : canonicalizeSorted;
 app.use(express.json());
 app.use(rateLimitStub({ enforce: config.enforceRateLimit }));
 // Serve static demo files (public/*) so you can preview UI in a browser
@@ -34,17 +37,141 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 const memSubmissions = new Map(); // key -> { id, canonical_sha256, content, author_id, room_id }
 const memSubmissionIndex = new Map(); // submission_id -> { room_id }
 const memFlags = new Map(); // submission_id -> Map(reporter_id -> { role, reason, created_at })
+// In-memory server-issued nonce stores (when DB is unavailable)
+// key "round:author" -> Map(nonce -> expires_unix)
+const memIssuedNonces = new Map();
+const memConsumedNonces = new Set(); // key "round:author:nonce"
+// Simple per-author issuance rate limiter for fallback path
+// key "round:author" -> { count, window_start_unix, last_cleanup_unix }
+const memNonceIssueRate = new Map();
+let memIssuedTotal = 0;
+const NONCE_WINDOW_SEC = 60;
+const NONCE_RATE_LIMIT = 30; // per (round,author) per window
+const PER_AUTHOR_MAX = 200;
+const GLOBAL_NONCE_MAX = 5000;
+const CLEANUP_INTERVAL_SEC = 10;
 // In-memory room state and idempotency for room.create fallback
 const memRooms = new Map(); // room_id -> { round: { idx, phase, submit_deadline_unix, published_at_unix?, continue_vote_close_unix? } }
 const memRoomNonces = new Map(); // client_nonce -> room_id
 const SUBMIT_WINDOW_SEC = config.submitWindowSec;
 const CONTINUE_WINDOW_SEC = config.continueWindowSec;
+const signer = createSigner({
+  privateKeyPem: process.env.SIGNING_PRIVATE_KEY || '',
+  publicKeyPem: process.env.SIGNING_PUBLIC_KEY || '',
+  canonMode: config.canonMode
+});
+const memJournalHashes = new Map();
+
+function nowSec() {
+  return Math.floor(Date.now() / 1000);
+}
+
+function validateAndConsumeNonceMemory({ round_id, author_id, client_nonce }) {
+  const issuedKey = `${round_id}:${author_id}`;
+  const consumeKey = `${round_id}:${author_id}:${client_nonce}`;
+  const issued = memIssuedNonces.get(issuedKey);
+  const UUIDv4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!issued || typeof client_nonce !== 'string' || !UUIDv4.test(client_nonce)) return false;
+  const exp = issued.get(client_nonce);
+  if (!Number.isFinite(exp) || exp <= nowSec()) return false;
+  if (memConsumedNonces.has(consumeKey)) return false;
+  if (issued.delete(client_nonce)) memIssuedTotal = Math.max(0, memIssuedTotal - 1);
+  memConsumedNonces.add(consumeKey);
+  return true;
+}
+
+// Server-issued nonce API (DB preferred)
+app.post('/rpc/nonce.issue', async (req, res) => {
+  try {
+    const { round_id, author_id, ttl_sec } = req.body || {};
+    if (!round_id || !author_id)
+      return res.status(400).json({ ok: false, error: 'missing_round_or_author' });
+    if (db) {
+      try {
+        const r = await db.query(
+          'select submission_nonce_issue($1::uuid,$2::uuid,$3::int) as nonce',
+          [round_id, author_id, Math.max(1, Math.floor(Number(ttl_sec ?? 600) || 600))]
+        );
+        const nonce = r.rows?.[0]?.nonce;
+        if (!nonce) throw new Error('nonce_issue_no_value');
+        return res.json({ ok: true, nonce });
+      } catch (e) {
+        const code = e?.code;
+        const msg = String(e?.message || '');
+        if (code === '23503' || code === '23505' || /invalid_/i.test(msg))
+          return res.status(400).json({ ok: false, error: msg || 'nonce_issue_failed' });
+        console.error('[nonce.issue] DB error, falling back to memory:', msg || e);
+      }
+    }
+    const key = `${round_id}:${author_id}`;
+    const rl = memNonceIssueRate.get(key) || { count: 0, window: nowSec(), last_cleanup_unix: 0 };
+    if (nowSec() - rl.window >= NONCE_WINDOW_SEC) {
+      rl.count = 0;
+      rl.window = nowSec();
+    }
+    rl.count += 1;
+    memNonceIssueRate.set(key, rl);
+    if (rl.count > NONCE_RATE_LIMIT)
+      return res.status(429).json({ ok: false, error: 'rate_limited' });
+
+    const ttl = Math.max(1, Math.floor(Number(ttl_sec ?? 600) || 600));
+    const issued = memIssuedNonces.get(key) || new Map();
+    // Lazy prune occasionally or when large
+    if (
+      nowSec() - (rl.last_cleanup_unix || 0) >= CLEANUP_INTERVAL_SEC ||
+      issued.size > PER_AUTHOR_MAX
+    ) {
+      let pruned = 0;
+      for (const [n, exp] of issued.entries()) {
+        if (!Number.isFinite(exp) || exp <= nowSec()) {
+          issued.delete(n);
+          memIssuedTotal = Math.max(0, memIssuedTotal - 1);
+          pruned++;
+          if (pruned >= 50) break;
+        }
+      }
+      rl.last_cleanup_unix = nowSec();
+      memNonceIssueRate.set(key, rl);
+    }
+    if (issued.size >= PER_AUTHOR_MAX)
+      return res.status(429).json({ ok: false, error: 'rate_limited' });
+    // Global sweep for expired nonces before enforcing global cap
+    if (memIssuedTotal >= GLOBAL_NONCE_MAX) {
+      let reduced = 0;
+      for (const [, map] of memIssuedNonces.entries()) {
+        for (const [n, exp] of map.entries()) {
+          if (!Number.isFinite(exp) || exp <= nowSec()) {
+            map.delete(n);
+            memIssuedTotal = Math.max(0, memIssuedTotal - 1);
+            reduced++;
+            if (reduced >= 200) break;
+          }
+        }
+        if (reduced >= 200) break;
+      }
+      if (memIssuedTotal >= GLOBAL_NONCE_MAX)
+        return res.status(429).json({ ok: false, error: 'memory_limit_exceeded' });
+    }
+    const nonce = crypto.randomUUID();
+    issued.set(nonce, nowSec() + ttl);
+    memIssuedTotal++;
+    memIssuedNonces.set(key, issued);
+    return res.json({ ok: true, nonce, note: 'db_fallback' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
 
 // submission.create
 app.post('/rpc/submission.create', (req, res) => {
   try {
     const input = SubmissionIn.parse(req.body);
-    const canon = canonicalize({
+    // Optional server nonce enforcement when enabled
+    if (!db && config.enforceServerNonces) {
+      if (!validateAndConsumeNonceMemory(input))
+        return res.status(400).json({ ok: false, error: 'invalid_nonce' });
+    }
+    const canon = canonicalizer({
       room_id: input.room_id,
       round_id: input.round_id,
       author_id: input.author_id,
@@ -64,27 +191,33 @@ app.post('/rpc/submission.create', (req, res) => {
 
     const key = `${input.room_id}:${input.round_id}:${input.author_id}:${input.client_nonce}`;
     if (db) {
+      // Use atomic RPC when enforcing server nonces; otherwise plain upsert
+      const upsertSql = config.enforceServerNonces
+        ? 'select submission_upsert_with_nonce($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id'
+        : 'select submission_upsert($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id';
       return db
-        .query(
-          'select submission_upsert($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id',
-          [
-            input.round_id,
-            input.author_id,
-            input.content,
-            JSON.stringify(input.claims),
-            JSON.stringify(input.citations),
-            canonical_sha256,
-            input.client_nonce
-          ]
-        )
+        .query(upsertSql, [
+          input.round_id,
+          input.author_id,
+          input.content,
+          JSON.stringify(input.claims),
+          JSON.stringify(input.citations),
+          canonical_sha256,
+          input.client_nonce
+        ])
         .then((r) => {
           const submission_id = r.rows?.[0]?.id;
-          if (submission_id) {
-            return res.json({ ok: true, submission_id, canonical_sha256 });
-          }
+          if (submission_id) return res.json({ ok: true, submission_id, canonical_sha256 });
           throw new Error('submission_upsert_missing_id');
         })
         .catch((e) => {
+          const msg = String(e?.message || '');
+          if (/invalid_nonce/i.test(msg))
+            return res.status(400).json({ ok: false, error: 'invalid_nonce' });
+          // Log DB error and fall back to memory (except invalid_nonce handled above)
+          console.error('[submission.create] DB error, falling back to memory:', e, e?.message);
+          if (config.enforceServerNonces && !validateAndConsumeNonceMemory(input))
+            return res.status(400).json({ ok: false, error: 'invalid_nonce' });
           let submission_id;
           if (memSubmissions.has(key)) {
             submission_id = memSubmissions.get(key).id;
@@ -562,6 +695,137 @@ app.get('/events', async (req, res) => {
     res.end();
   });
   sendTimer();
+});
+
+async function buildLatestJournal(roomId) {
+  let roundRow = null;
+  let transcriptHashes = [];
+  let tally = { yes: 0, no: 0 };
+  let prevHash = null;
+  if (db) {
+    try {
+      const r = await db.query(
+        `select room_id, round_id, idx, phase, submit_deadline_unix,
+                published_at_unix, continue_vote_close_unix
+           from view_current_round
+          where room_id = $1
+          order by idx desc
+          limit 1`,
+        [roomId]
+      );
+      roundRow = r.rows?.[0] || null;
+      if (roundRow) {
+        const [tallyResult, submissionsResult] = await Promise.all([
+          db.query(
+            'select yes, no from view_continue_tally where room_id = $1 and round_id = $2 limit 1',
+            [roomId, roundRow.round_id]
+          ),
+          db.query(
+            `select canonical_sha256 from submissions_with_flags_view where round_id = $1 order by submitted_at asc nulls last, id asc`,
+            [roundRow.round_id]
+          )
+        ]);
+        tally = tallyResult.rows?.[0] || { yes: 0, no: 0 };
+        transcriptHashes = submissionsResult.rows.map((r) => String(r.canonical_sha256));
+        // Load previous journal hash for chain linking without mutating DB row object
+        prevHash = await db
+          .query('select hash from journals where room_id = $1 and round_idx = $2', [
+            roomId,
+            Number(roundRow.idx || 0) - 1
+          ])
+          .then((x) => x.rows?.[0]?.hash || null)
+          .catch(() => null);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!roundRow) {
+    const state = ensureRoom(roomId);
+    const r = state.round;
+    roundRow = {
+      room_id: roomId,
+      round_id: `mem-${roomId}-${r.idx}`,
+      idx: r.idx,
+      phase: r.phase,
+      submit_deadline_unix: r.submit_deadline_unix,
+      published_at_unix: r.published_at_unix,
+      continue_vote_close_unix: r.continue_vote_close_unix
+    };
+    tally = memVoteTotals.get(roomId) || { yes: 0, no: 0 };
+    transcriptHashes = Array.from(memSubmissions.entries())
+      .filter(([key]) => key.startsWith(`${roomId}:`))
+      .map(([, v]) => v.canonical_sha256);
+  }
+  const prev = prevHash || memJournalHashes.get(`${roomId}:${Number(roundRow.idx) - 1}`) || null;
+  const core = buildJournalCore({
+    room_id: roundRow.room_id,
+    round_id: roundRow.round_id,
+    idx: Number(roundRow.idx || 0),
+    phase: roundRow.phase,
+    submit_deadline_unix: roundRow.submit_deadline_unix,
+    published_at_unix: roundRow.published_at_unix,
+    continue_vote_close_unix: roundRow.continue_vote_close_unix,
+    continue_tally: tally,
+    transcript_hashes: transcriptHashes,
+    prev_hash: prev
+  });
+  const journal = finalizeJournal({ core, signer });
+  memJournalHashes.set(`${roomId}:${core.idx}`, journal.hash);
+  return journal;
+}
+
+app.get('/journal', async (req, res) => {
+  const roomId = String(req.query.room_id || 'local');
+  const idxRaw = req.query.idx;
+  try {
+    // Journal by index (DB preferred)
+    if (idxRaw !== undefined) {
+      const idx = Number(idxRaw);
+      if (!Number.isFinite(idx) || idx < 0) {
+        return res.status(400).json({ ok: false, error: 'invalid_idx' });
+      }
+      if (db) {
+        const r = await db.query(
+          'select room_id, round_idx, hash, signature, core, created_at from journals where room_id = $1 and round_idx = $2 limit 1',
+          [roomId, idx | 0]
+        );
+        const row = r.rows?.[0] || null;
+        if (!row) return res.status(404).json({ ok: false, error: 'not_found' });
+        return res.json({ ok: true, journal: row });
+      }
+      // Memory: only latest can be synthesized; other indexes are not stored
+      const latest = await buildLatestJournal(roomId).catch(() => null);
+      if (latest && Number(latest?.core?.idx || -1) === (idx | 0))
+        return res.json({ ok: true, journal: latest });
+      return res.status(404).json({ ok: false, error: 'not_found' });
+    }
+    // Latest journal
+    const journal = await buildLatestJournal(roomId);
+    return res.json({ ok: true, journal });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// Journal history — returns stored journals (DB). Memory path returns latest only.
+app.get('/journal/history', async (req, res) => {
+  const roomId = String(req.query.room_id || 'local');
+  try {
+    if (db) {
+      const r = await db.query(
+        'select room_id, round_idx, hash, signature, core, created_at from journals where room_id = $1 order by round_idx asc',
+        [roomId]
+      );
+      return res.json({ ok: true, journals: r.rows });
+    }
+    // Memory: synthesize latest directly
+    const latest = await buildLatestJournal(roomId).catch(() => null);
+    if (latest) return res.json({ ok: true, journals: [latest] });
+    return res.json({ ok: true, journals: [] });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
 });
 
 export default app;
