@@ -214,13 +214,8 @@ app.post('/rpc/submission.create', (req, res) => {
           const msg = String(e?.message || '');
           if (/invalid_nonce/i.test(msg))
             return res.status(400).json({ ok: false, error: 'invalid_nonce' });
-          const isConnectionError =
-            e?.code === 'ECONNREFUSED' || e?.code === 'ETIMEDOUT' || /connect/i.test(msg);
-          if (!isConnectionError) {
-            // DB reachable but op failed; do not fall back to memory
-            return res.status(500).json({ ok: false, error: e.message || 'db_operation_failed' });
-          }
-          // DB unavailable: fall back to memory enforcement and storage
+          // Log DB error and fall back to memory (except invalid_nonce handled above)
+          console.error('[submission.create] DB error, falling back to memory:', e, e?.message);
           if (config.enforceServerNonces && !validateAndConsumeNonceMemory(input))
             return res.status(400).json({ ok: false, error: 'invalid_nonce' });
           let submission_id;
