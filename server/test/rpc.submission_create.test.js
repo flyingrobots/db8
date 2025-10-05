@@ -1,7 +1,8 @@
 /* eslint-disable import/first */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import request from 'supertest';
 // Force in-memory path for this test to avoid DB coupling
+const __origDbUrl = process.env.DATABASE_URL;
 process.env.DATABASE_URL = '';
 const app = (await import('../rpc.js')).default;
 import { canonicalizeSorted, canonicalizeJCS, sha256Hex } from '../utils.js';
@@ -32,4 +33,9 @@ describe('POST /rpc/submission.create', () => {
     expect(r1.body.submission_id).toEqual(r2.body.submission_id);
     expect(r1.body.canonical_sha256).toEqual(expected);
   });
+});
+
+afterAll(() => {
+  if (__origDbUrl === undefined) delete process.env.DATABASE_URL;
+  else process.env.DATABASE_URL = __origDbUrl;
 });

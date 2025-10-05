@@ -60,19 +60,28 @@ export const SubmissionFlag = z.object({
   reason: z.string().max(500).optional().default('')
 });
 
-export const SubmissionVerify = z.object({
-  doc: z.object({
-    room_id: z.string().uuid(),
-    round_id: z.string().uuid(),
-    author_id: z.string().uuid(),
-    phase: z.enum(['submit', 'published', 'final']),
-    deadline_unix: z.number().int(),
-    content: z.string().min(1),
-    claims: z.array(Claim).min(1),
-    citations: z.array(Citation).min(2),
-    client_nonce: z.string().min(8)
-  }),
-  signature_kind: z.enum(['ed25519', 'ssh']),
-  sig_b64: z.string().min(1),
-  public_key_b64: z.string().optional()
-});
+export const SubmissionVerify = z
+  .object({
+    doc: z.object({
+      room_id: z.string().uuid(),
+      round_id: z.string().uuid(),
+      author_id: z.string().uuid(),
+      phase: z.enum(['submit', 'published', 'final']),
+      deadline_unix: z.number().int(),
+      content: z.string().min(1).max(4000),
+      claims: z.array(Claim).min(1).max(5),
+      citations: z.array(Citation).min(2),
+      client_nonce: z.string().min(8)
+    }),
+    signature_kind: z.enum(['ed25519', 'ssh']),
+    // Accept both legacy sig_b64 and the more explicit signature_b64 for forward compatibility
+    sig_b64: z.string().min(1).optional(),
+    signature_b64: z.string().min(1).optional(),
+    // Accept legacy public_key_b64; signer_fingerprint may be used by future flows
+    public_key_b64: z.string().optional(),
+    signer_fingerprint: z.string().optional()
+  })
+  .refine((v) => Boolean(v.sig_b64 || v.signature_b64), {
+    message: 'missing_signature',
+    path: ['sig_b64']
+  });
