@@ -32,7 +32,7 @@ export class ConfigBuilder {
   }
 
   build() {
-    const canonRaw = this._str('CANON_MODE', 'sorted');
+    const canonRaw = this._str('CANON_MODE', 'jcs');
     const canon = String(canonRaw || 'sorted').toLowerCase();
     const allowed = new Set(['sorted', 'jcs']);
     if (!allowed.has(canon)) {

@@ -54,7 +54,7 @@ describe('provenance.verify author binding (DB)', () => {
     __setDbPool(makeStubPool(expectedFp));
 
     const canonicalizer =
-      String(process.env.CANON_MODE || 'sorted').toLowerCase() === 'jcs'
+      String(process.env.CANON_MODE || 'jcs').toLowerCase() === 'jcs'
         ? canonicalizeJCS
         : canonicalizeSorted;
     const hashHex = sha256Hex(canonicalizer(doc));
@@ -83,7 +83,7 @@ describe('provenance.verify author binding (DB)', () => {
     __setDbPool(makeStubPool(wrong));
 
     const canonicalizer =
-      String(process.env.CANON_MODE || 'sorted').toLowerCase() === 'jcs'
+      String(process.env.CANON_MODE || 'jcs').toLowerCase() === 'jcs'
         ? canonicalizeJCS
         : canonicalizeSorted;
     const hashHex = sha256Hex(canonicalizer(doc));

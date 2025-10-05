@@ -142,8 +142,8 @@ curl <http://localhost:3000/health>
 These flags gate new M2 capabilities and are read by the server and CLI.
 
 - `CANON_MODE=sorted|jcs`
-  - `sorted` (default): stable, legacy sorted-keys canonicalization.
-  - `jcs`: RFC 8785 JSON Canonicalization Scheme (recommended for provenance).
+  - `jcs` (default): RFC 8785 JSON Canonicalization Scheme (recommended for provenance).
+  - `sorted`: legacy sorted-keys canonicalization (temporary compatibility mode).
 - `ENFORCE_SERVER_NONCES=1`
   - When set, the API enforces single-use server-issued nonces for submissions.
   - Issue a nonce via `POST /rpc/nonce.issue` and include it as `client_nonce` in

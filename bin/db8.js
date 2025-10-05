@@ -204,7 +204,7 @@ async function main() {
 
   function canonicalize(value) {
     const mode = String(
-      process.env.DB8_CANON_MODE || process.env.CANON_MODE || 'sorted'
+      process.env.DB8_CANON_MODE || process.env.CANON_MODE || 'jcs'
     ).toLowerCase();
     if (mode === 'jcs') return canonicalizePkg(value);
     const seen = new WeakSet();
