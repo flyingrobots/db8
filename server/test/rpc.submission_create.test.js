@@ -1,6 +1,9 @@
+/* eslint-disable import/first */
 import { describe, it, expect } from 'vitest';
 import request from 'supertest';
-import app from '../rpc.js';
+// Force in-memory path for this test to avoid DB coupling
+process.env.DATABASE_URL = '';
+const app = (await import('../rpc.js')).default;
 import { canonicalizeSorted, canonicalizeJCS, sha256Hex } from '../utils.js';
 
 describe('POST /rpc/submission.create', () => {
