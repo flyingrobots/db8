@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-02
+lastUpdated: 2025-10-05
 ---
 
 # CLI Specification (db8)
@@ -102,6 +102,7 @@ Journal & Verify
   - Downloads signed journal artifacts for room/round
 - db8 journal verify [--round <idx>]
   - Verifies round.chain.sig and per-submission signatures
+  - On success, prints ok; on failure prints fail and exits non‑zero.
 
 Agent QoL (batch)
 
@@ -125,6 +126,7 @@ Headers & Provenance
 - Authorization: Bearer <JWT>
 - X-DB8-Client-Nonce: <id> (also in body)
 - If --sign: attach ssh_sig (+ cert optional)
+- Verification: server returns `public_key_fingerprint` and enforces author binding when `participants.ssh_fingerprint` is configured (mismatch → 400).
 
 CLI UX Rules
 

@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-04
+lastUpdated: 2025-10-05
 ---
 
 # Local Database Setup (Postgres / Supabase)
@@ -167,6 +167,14 @@ signature. You can fetch and verify them via HTTP or the CLI.
     - Memory: returns the synthesized latest only when `idx` equals the latest
       round; otherwise `404`.
   - `GET /journal/history?room_id=<uuid>` — ordered list of stored journals.
+
+### Provenance verification and author binding (M2)
+
+`POST /rpc/provenance.verify` canonicalizes the provided document using the server’s `CANON_MODE` and verifies Ed25519 signatures.
+
+- On success, returns `{ ok: true, hash, public_key_fingerprint }` where the fingerprint is `sha256:<hex>` of the DER‑encoded public key. If a participant fingerprint is configured (see below), response also includes `author_binding: "match"`.
+- Strict author binding: if the participant row has `ssh_fingerprint` populated, the fingerprint used to verify MUST match. On mismatch the server returns `400 { ok:false, error:"author_binding_mismatch", expected_fingerprint, got_fingerprint }`.
+- Store the expected fingerprint in `participants.ssh_fingerprint`. Preferred format: `sha256:<hex>`; if plain hex is provided, the server normalizes to `sha256:<hex>` for comparison.
 
 - CLI
   - `db8 journal:verify --room <uuid>` — verifies the latest journal signature
