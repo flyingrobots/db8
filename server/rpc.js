@@ -848,21 +848,42 @@ app.post('/rpc/provenance.verify', async (req, res) => {
       try {
         const pubDer = Buffer.from(pub, 'base64');
         const pubKey = crypto.createPublicKey({ format: 'der', type: 'spki', key: pubDer });
+        const sigInputB64 = input.sig_b64 || input.signature_b64 || '';
         const ok = crypto.verify(
           null,
           Buffer.from(hashHex, 'hex'),
           pubKey,
-          Buffer.from(input.sig_b64, 'base64')
+          Buffer.from(sigInputB64, 'base64')
         );
-        return res.json({ ok: Boolean(ok), hash: hashHex });
+        if (!ok) {
+          return res.status(400).json({ ok: false, error: 'invalid_public_key_or_signature' });
+        }
+        // Compute a simple DER SHA-256 fingerprint for caller binding
+        const fpHex = crypto.createHash('sha256').update(pubDer).digest('hex');
+        const payload = { ok: true, hash: hashHex, public_key_fingerprint: `sha256:${fpHex}` };
+        // Optional DB-backed author binding: if participants.ssh_fingerprint matches, report 'match'
+        if (db && input?.doc?.author_id) {
+          try {
+            const r = await db.query(
+              'select ssh_fingerprint from participants where id = $1 limit 1',
+              [input.doc.author_id]
+            );
+            const fp = String(r.rows?.[0]?.ssh_fingerprint || '').trim();
+            if (fp)
+              payload.author_binding =
+                fp.toLowerCase() === `sha256:${fpHex}` ? 'match' : 'mismatch';
+            else payload.author_binding = 'not_configured';
+          } catch {
+            payload.author_binding = 'unknown';
+          }
+        }
+        return res.json(payload);
       } catch (e) {
-        return res
-          .status(400)
-          .json({
-            ok: false,
-            error: 'invalid_public_key_or_signature',
-            detail: String(e?.message || e)
-          });
+        return res.status(400).json({
+          ok: false,
+          error: 'invalid_public_key_or_signature',
+          detail: String(e?.message || e)
+        });
       }
     }
     return res.status(501).json({ ok: false, error: 'ssh_unsupported' });
