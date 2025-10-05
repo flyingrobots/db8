@@ -28,6 +28,11 @@ npm run dev:db      # starts Postgres 16 on localhost:54329
 
 Set `DATABASE_URL=postgresql://postgres:test@localhost:54329/db8_test`
 in your shell
+
+## CLI reference
+
+- CLI reference/spec: see docs/CLI.md
+
 if you want the server to persist submissions/votes. Without it, the server uses
 in‑memory storage with idempotency.
 
@@ -186,3 +191,9 @@ when deadlines are crossed.
 - Read the architecture: docs/Architecture.md
 - Explore features & user stories: docs/Features.md, docs/UserStories.md
 - CLI reference/spec: docs/CLI.md
+
+### Submitting from the Web UI (nonces)
+
+When `ENFORCE_SERVER_NONCES=1` is set, the server requires a short‑lived, single‑use nonce for each submission. The Room page automatically requests a nonce via `POST /rpc/nonce.issue` before submitting. If issuance fails and enforcement is enabled, the UI will show “Submit failed: server requires an issued nonce.”
+
+You can disable enforcement during local demos by unsetting `ENFORCE_SERVER_NONCES`.
