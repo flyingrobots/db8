@@ -35,6 +35,7 @@ export default function RoomPage({ params }) {
   const [success, setSuccess] = useState('');
   const timerRef = useRef(null);
   const esRef = useRef(null);
+  const lastNonceRef = useRef('');
 
   // Fetch snapshot
   useEffect(() => {
@@ -165,9 +166,35 @@ export default function RoomPage({ params }) {
     setBusy(true);
     setError('');
     setSuccess('');
+    const roundId = '00000000-0000-0000-0000-000000000002';
+    // Try to obtain a server-issued nonce first (works for both DB + fallback)
+    // If issuance fails, fall back to a random nonce (may be rejected when enforcement is enabled)
+    async function issueNonce() {
+      try {
+        const r = await fetch(`${apiBase()}/rpc/nonce.issue`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ round_id: roundId, author_id: participant, ttl_sec: 120 })
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && j?.ok && typeof j?.nonce === 'string') return j.nonce;
+        return '';
+      } catch {
+        return '';
+      }
+    }
+
+    const issued = await issueNonce();
+    const clientNonce =
+      issued ||
+      (typeof window !== 'undefined' && window.crypto && window.crypto.randomUUID
+        ? window.crypto.randomUUID()
+        : String(Date.now()));
+    lastNonceRef.current = clientNonce;
+
     const payload = {
       room_id: roomId,
-      round_id: '00000000-0000-0000-0000-000000000002',
+      round_id: roundId,
       author_id: participant,
       phase: 'submit',
       deadline_unix: state.round.submit_deadline_unix || 0,
@@ -180,10 +207,7 @@ export default function RoomPage({ params }) {
         }
       ],
       citations: [{ url: 'https://example.com/a' }, { url: 'https://example.com/b' }],
-      client_nonce:
-        typeof window !== 'undefined' && window.crypto && window.crypto.randomUUID
-          ? window.crypto.randomUUID()
-          : String(Date.now())
+      client_nonce: clientNonce
     };
     try {
       SubmissionIn.parse(payload);
@@ -191,12 +215,15 @@ export default function RoomPage({ params }) {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
+          ...(jwt ? { authorization: `Bearer ${jwt}` } : {}),
+          'x-db8-client-nonce': clientNonce
         },
         body: JSON.stringify(payload)
       });
       const j = await r.json().catch(() => ({}));
       if (j?.ok) setSuccess(`Submitted: ${j.submission_id}`);
+      else if (j?.error === 'invalid_nonce')
+        setError('Submit failed: server requires an issued nonce. Please try again.');
       else setError(j?.error || `Server error ${r.status}`);
     } catch (e) {
       setError(String(e?.message || e));
