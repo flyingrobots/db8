@@ -60,6 +60,8 @@ Commands:
   submit               submit current draft
   resubmit             resubmit with a new nonce
   flag submission      report a submission to moderators
+  journal pull         download journal (latest or history)
+  journal verify       verify journal signature and chain
 `);
 }
 
@@ -89,7 +91,9 @@ async function main() {
       'submit',
       'resubmit',
       'flag:submission',
-      'journal:verify'
+      'journal:pull',
+      'journal:verify',
+      'provenance:verify'
     ]);
 
     // Help handling
@@ -151,9 +155,32 @@ async function main() {
         throw new CLIError('--reporter must be a string', EXIT.VALIDATION);
       }
     }
+    if (key === 'journal:pull') {
+      if (!args.room && !process.env.DB8_ROOM_ID)
+        throw new CLIError('journal pull requires --room or DB8_ROOM_ID', EXIT.VALIDATION);
+      if (args.round !== undefined) {
+        const n = Number(args.round);
+        if (!Number.isInteger(n) || n < 0)
+          throw new CLIError('--round must be a non-negative integer', EXIT.VALIDATION);
+        args.round = n;
+      }
+      if (args.out !== undefined && typeof args.out !== 'string')
+        throw new CLIError('--out must be a string path', EXIT.VALIDATION);
+    }
     if (key === 'journal:verify') {
       if (!args.room && !process.env.DB8_ROOM_ID)
         throw new CLIError('journal verify requires --room or DB8_ROOM_ID', EXIT.VALIDATION);
+    }
+    if (key === 'provenance:verify') {
+      const kind = String(args.kind || 'ed25519').toLowerCase();
+      if (!['ed25519', 'ssh'].includes(kind))
+        throw new CLIError("--kind must be 'ed25519' or 'ssh'", EXIT.VALIDATION);
+      if (!args.file && !args.path)
+        throw new CLIError('provenance:verify requires --file <path>', EXIT.VALIDATION);
+      if (kind === 'ed25519') {
+        if (!args['sig-b64']) throw new CLIError('ed25519 requires --sig-b64', EXIT.VALIDATION);
+        if (!args['pub-b64']) throw new CLIError('ed25519 requires --pub-b64', EXIT.VALIDATION);
+      }
     }
 
     return { wantHelp: false };
@@ -735,6 +762,63 @@ async function main() {
       // Reuse submit handler with a new nonce (simple delegation)
       process.argv = [...process.argv.slice(0, 2), 'submit', ...process.argv.slice(3)];
       return EXIT.OK;
+    case 'journal:pull': {
+      const roomId = args.room || process.env.DB8_ROOM_ID || session.room_id;
+      const outDir = args.out || path.join(homedir, '.db8', 'journal', roomId);
+      const idx = args.round;
+      const wantHistory = Boolean(args.history) && idx === undefined;
+
+      async function writeFileJson(p, obj) {
+        await ensureDir(path.dirname(p));
+        await fsp.writeFile(p, JSON.stringify(obj, null, 2));
+        return p;
+      }
+
+      try {
+        if (wantHistory) {
+          const res = await fetch(
+            `${apiUrl.replace(/\/$/, '')}/journal/history?room_id=${encodeURIComponent(roomId)}`
+          );
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            printerr(body?.error || `Server error ${res.status}`);
+            return EXIT.NETWORK;
+          }
+          const journals = Array.isArray(body.journals) ? body.journals : [];
+          const files = [];
+          for (const j of journals) {
+            const idxOut = Number(j.round_idx ?? (j.core && j.core.idx) ?? 0);
+            const fp = path.join(outDir, `round-${idxOut}.json`);
+            files.push(await writeFileJson(fp, j));
+          }
+          if (args.json) print(JSON.stringify({ ok: true, count: files.length, files }));
+          else if (files.length === 0) print('no journals');
+          else print(files.join('\n'));
+          return EXIT.OK;
+        }
+        // Single latest or specific index
+        const url =
+          idx === undefined
+            ? `${apiUrl.replace(/\/$/, '')}/journal?room_id=${encodeURIComponent(roomId)}`
+            : `${apiUrl.replace(/\/$/, '')}/journal?room_id=${encodeURIComponent(roomId)}&idx=${idx}`;
+        const res = await fetch(url);
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          printerr(body?.error || `Server error ${res.status}`);
+          return EXIT.NETWORK;
+        }
+        const j = body.journal || body; // support either shape
+        const idxOut = Number(j.round_idx ?? (j.core && j.core.idx) ?? 0);
+        const fp = path.join(outDir, `round-${idxOut}.json`);
+        await writeFileJson(fp, j);
+        if (args.json) print(JSON.stringify({ ok: true, file: fp }));
+        else print(fp);
+        return EXIT.OK;
+      } catch (e) {
+        printerr(e?.message || String(e));
+        return EXIT.NETWORK;
+      }
+    }
     case 'journal:verify': {
       const roomId = args.room || process.env.DB8_ROOM_ID || session.room_id;
       const wantHistory = Boolean(args.history);

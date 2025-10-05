@@ -2,7 +2,14 @@ import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
 import { rateLimitStub } from './mw/rate-limit.js';
-import { SubmissionIn, ContinueVote, SubmissionFlag, RoomCreate } from './schemas.js';
+import { Buffer } from 'node:buffer';
+import {
+  SubmissionIn,
+  ContinueVote,
+  SubmissionFlag,
+  RoomCreate,
+  SubmissionVerify
+} from './schemas.js';
 import { canonicalizeSorted, canonicalizeJCS, sha256Hex } from './utils.js';
 import { loadConfig } from './config/config-builder.js';
 import { createSigner, buildJournalCore, finalizeJournal } from './journal.js';
@@ -825,6 +832,42 @@ app.get('/journal/history', async (req, res) => {
     return res.json({ ok: true, journals: [] });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// Provenance: verify submission signature (Ed25519 now; SSH returns 501)
+app.post('/rpc/provenance.verify', async (req, res) => {
+  try {
+    const input = SubmissionVerify.parse(req.body);
+    // Canonicalize the provided document using server canon mode for consistency
+    const canon = canonicalizer(input.doc);
+    const hashHex = sha256Hex(canon);
+    if (input.signature_kind === 'ed25519') {
+      const pub = input.public_key_b64;
+      if (!pub) return res.status(400).json({ ok: false, error: 'missing_public_key_b64' });
+      try {
+        const pubDer = Buffer.from(pub, 'base64');
+        const pubKey = crypto.createPublicKey({ format: 'der', type: 'spki', key: pubDer });
+        const ok = crypto.verify(
+          null,
+          Buffer.from(hashHex, 'hex'),
+          pubKey,
+          Buffer.from(input.sig_b64, 'base64')
+        );
+        return res.json({ ok: Boolean(ok), hash: hashHex });
+      } catch (e) {
+        return res
+          .status(400)
+          .json({
+            ok: false,
+            error: 'invalid_public_key_or_signature',
+            detail: String(e?.message || e)
+          });
+      }
+    }
+    return res.status(501).json({ ok: false, error: 'ssh_unsupported' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
   }
 });
 

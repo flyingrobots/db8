@@ -59,3 +59,20 @@ export const SubmissionFlag = z.object({
     .default('participant'),
   reason: z.string().max(500).optional().default('')
 });
+
+export const SubmissionVerify = z.object({
+  doc: z.object({
+    room_id: z.string().uuid(),
+    round_id: z.string().uuid(),
+    author_id: z.string().uuid(),
+    phase: z.enum(['submit', 'published', 'final']),
+    deadline_unix: z.number().int(),
+    content: z.string().min(1),
+    claims: z.array(Claim).min(1),
+    citations: z.array(Citation).min(2),
+    client_nonce: z.string().min(8)
+  }),
+  signature_kind: z.enum(['ed25519', 'ssh']),
+  sig_b64: z.string().min(1),
+  public_key_b64: z.string().optional()
+});
