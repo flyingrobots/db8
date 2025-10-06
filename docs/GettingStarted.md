@@ -53,6 +53,12 @@ Environment flags (M2)
 - `SIGNING_PRIVATE_KEY` / `SIGNING_PUBLIC_KEY` — PEM Ed25519 keypair to sign
   journals (dev keypair is generated if unset).
 
+SSH verification (M2)
+
+- The provenance verify endpoint also accepts OpenSSH ed25519 public keys with `signature_kind: "ssh"` and a
+  `public_key_ssh` string (e.g., `ssh-ed25519 AAAA...`). The server derives the same `sha256:<hex>` fingerprint
+  as the DER SPKI path and applies the same author binding rules.
+
 Endpoints (canonical realtime = SSE):
 
 - `GET /state` — returns the active round snapshot, continue tally, and transcript

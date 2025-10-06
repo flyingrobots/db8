@@ -75,6 +75,40 @@ function nowSec() {
   return Math.floor(Date.now() / 1000);
 }
 
+// Parse OpenSSH ed25519 public key to DER SPKI per RFC 8410.
+// Accepts typical formats like: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... comment"
+function parseOpenSshEd25519ToSpkiDer(pub) {
+  if (typeof pub !== 'string' || pub.trim().length === 0) throw new Error('empty');
+  const parts = pub.trim().split(/\s+/);
+  let b64 = '';
+  if (parts[0] === 'ssh-ed25519' && parts[1]) b64 = parts[1];
+  else {
+    // try to find a base64 token
+    const base64Candidate = parts.find((p) => /^[A-Za-z0-9+/=]+$/.test(p));
+    if (!base64Candidate) throw new Error('no_base64');
+    b64 = base64Candidate;
+  }
+  if (!b64) throw new Error('empty_base64');
+  const buf = Buffer.from(b64, 'base64');
+  let off = 0;
+  const readStr = () => {
+    if (off + 4 > buf.length) throw new Error('short');
+    const len = buf.readUInt32BE(off);
+    off += 4;
+    if (off + len > buf.length) throw new Error('short');
+    const s = buf.slice(off, off + len);
+    off += len;
+    return s;
+  };
+  const type = readStr().toString('ascii');
+  if (type !== 'ssh-ed25519') throw new Error('wrong_type');
+  const key = readStr();
+  if (key.length !== 32) throw new Error('bad_len');
+  // DER SPKI prefix for Ed25519 per RFC 8410: 302a300506032b6570032100 + 32 bytes pubkey
+  const prefix = Buffer.from('302a300506032b6570032100', 'hex');
+  return Buffer.concat([prefix, key]);
+}
+
 function validateAndConsumeNonceMemory({ round_id, author_id, client_nonce }) {
   const issuedKey = `${round_id}:${author_id}`;
   const consumeKey = `${round_id}:${author_id}:${client_nonce}`;
@@ -915,18 +949,30 @@ app.get('/journal/history', async (req, res) => {
   }
 });
 
-// Provenance: verify submission signature (Ed25519 now; SSH returns 501)
+// Provenance: verify submission signature (ed25519 and OpenSSH ed25519)
 app.post('/rpc/provenance.verify', async (req, res) => {
   try {
     const input = SubmissionVerify.parse(req.body);
     // Canonicalize the provided document using server canon mode for consistency
     const canon = canonicalizer(input.doc);
     const hashHex = sha256Hex(canon);
-    if (input.signature_kind === 'ed25519') {
-      const pub = input.public_key_b64;
-      if (!pub) return res.status(400).json({ ok: false, error: 'missing_public_key_b64' });
+    if (input.signature_kind === 'ed25519' || input.signature_kind === 'ssh') {
       try {
-        const pubDer = Buffer.from(pub, 'base64');
+        let pubDer;
+        if (input.signature_kind === 'ed25519') {
+          const pub = input.public_key_b64;
+          if (!pub) return res.status(400).json({ ok: false, error: 'missing_public_key_b64' });
+          pubDer = Buffer.from(pub, 'base64');
+        } else {
+          const ssh = input.public_key_ssh;
+          if (!ssh) return res.status(400).json({ ok: false, error: 'missing_public_key_ssh' });
+          try {
+            pubDer = parseOpenSshEd25519ToSpkiDer(ssh);
+          } catch {
+            return res.status(400).json({ ok: false, error: 'invalid_ssh_public_key' });
+          }
+        }
+
         const pubKey = crypto.createPublicKey({ format: 'der', type: 'spki', key: pubDer });
         const sigInputB64 = input.sig_b64 || input.signature_b64 || '';
         const ok = crypto.verify(
@@ -938,7 +984,6 @@ app.post('/rpc/provenance.verify', async (req, res) => {
         if (!ok) {
           return res.status(400).json({ ok: false, error: 'invalid_public_key_or_signature' });
         }
-        // Compute a simple DER SHA-256 fingerprint for caller binding
         const fpHex = crypto.createHash('sha256').update(pubDer).digest('hex');
         const payload = { ok: true, hash: hashHex, public_key_fingerprint: `sha256:${fpHex}` };
         // Strict DB-backed author binding: if participants.ssh_fingerprint exists, it MUST match.
@@ -990,7 +1035,7 @@ app.post('/rpc/provenance.verify', async (req, res) => {
         });
       }
     }
-    return res.status(501).json({ ok: false, error: 'ssh_unsupported' });
+    return res.status(501).json({ ok: false, error: 'unsupported_signature_kind' });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
   }
