@@ -8,7 +8,8 @@ import {
   ContinueVote,
   SubmissionFlag,
   RoomCreate,
-  SubmissionVerify
+  SubmissionVerify,
+  ParticipantFingerprintSet
 } from './schemas.js';
 import { canonicalizeSorted, canonicalizeJCS, sha256Hex } from './utils.js';
 import { loadConfig } from './config/config-builder.js';
@@ -68,6 +69,8 @@ const signer = createSigner({
   canonMode: config.canonMode
 });
 const memJournalHashes = new Map();
+// In-memory participant fingerprint store when DB is unavailable
+const memParticipantFingerprints = new Map(); // participant_id -> fingerprint
 
 function nowSec() {
   return Math.floor(Date.now() / 1000);
@@ -577,6 +580,59 @@ app.get('/state', async (req, res) => {
     round: { ...round, continue_tally: tally, transcript },
     flags: flagged
   });
+});
+
+// participant.fingerprint.set — enroll/normalize a participant's public-key fingerprint
+app.post('/rpc/participant.fingerprint.set', async (req, res) => {
+  try {
+    const input = ParticipantFingerprintSet.parse(req.body || {});
+    let normalized;
+    if (input.public_key_b64) {
+      try {
+        const der = Buffer.from(String(input.public_key_b64), 'base64');
+        const hex = crypto.createHash('sha256').update(der).digest('hex');
+        normalized = `sha256:${hex}`;
+      } catch {
+        return res.status(400).json({ ok: false, error: 'invalid_public_key_b64' });
+      }
+    } else if (input.fingerprint) {
+      const hex = String(input.fingerprint)
+        .toLowerCase()
+        .replace(/^sha256:/, '');
+      if (!/^[0-9a-f]{64}$/.test(hex))
+        return res.status(400).json({ ok: false, error: 'invalid_fingerprint_format' });
+      normalized = `sha256:${hex}`;
+    } else {
+      return res.status(400).json({ ok: false, error: 'provide_exactly_one' });
+    }
+
+    if (db) {
+      try {
+        const r = await db.query(
+          'select participant_fingerprint_set($1::uuid,$2::text) as fingerprint',
+          [
+            input.participant_id,
+            input.public_key_b64 ? String(input.public_key_b64) : String(normalized)
+          ]
+        );
+        const fp = r.rows?.[0]?.fingerprint;
+        if (!fp) throw new Error('fingerprint_set_no_value');
+        return res.json({ ok: true, fingerprint: String(fp) });
+      } catch (e) {
+        const msg = String(e?.message || '');
+        if (/participant_not_found/.test(msg))
+          return res.status(404).json({ ok: false, error: 'participant_not_found' });
+        if (/invalid_fingerprint_or_key/.test(msg))
+          return res.status(400).json({ ok: false, error: 'invalid_fingerprint_or_key' });
+        return res.status(500).json({ ok: false, error: 'db_error', detail: msg });
+      }
+    }
+    // Memory fallback path
+    memParticipantFingerprints.set(String(input.participant_id), normalized);
+    return res.json({ ok: true, fingerprint: normalized, note: 'db_fallback' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
 });
 
 // SSE: timer events. Streams { t:'timer', room_id, ends_unix, round_idx, phase } every 1s.

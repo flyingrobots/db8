@@ -85,3 +85,33 @@ export const SubmissionVerify = z
     message: 'missing_signature',
     path: ['sig_b64']
   });
+
+// Participant fingerprint enrollment
+export const ParticipantFingerprintSet = z
+  .object({
+    participant_id: z.string().uuid(),
+    public_key_b64: z.string().optional(),
+    fingerprint: z.string().optional()
+  })
+  .refine(
+    (v) => {
+      const a = Boolean(v.public_key_b64);
+      const b = Boolean(v.fingerprint);
+      return (a || b) && !(a && b);
+    },
+    {
+      message: 'provide_exactly_one_of_public_key_b64_or_fingerprint',
+      path: ['public_key_b64']
+    }
+  )
+  .refine(
+    (v) => {
+      if (v.fingerprint === undefined) return true;
+      const s = String(v.fingerprint).toLowerCase();
+      return /^(sha256:)?[0-9a-f]{64}$/.test(s);
+    },
+    {
+      message: 'invalid_fingerprint_format',
+      path: ['fingerprint']
+    }
+  );
