@@ -902,6 +902,7 @@ async function main() {
             let val = String(args['pub-ssh']);
             if (val.startsWith('@')) {
               const p = val.slice(1);
+              if (!p) throw new CLIError('empty path passed to --pub-ssh', EXIT.VALIDATION);
               try {
                 // Use the already-imported fsp helper for consistency
                 val = await fsp.readFile(p, 'utf8');

@@ -83,18 +83,19 @@ function parseOpenSshEd25519ToSpkiDer(pub) {
   let b64 = '';
   if (parts[0] === 'ssh-ed25519' && parts[1]) b64 = parts[1];
   else {
-    // try to find a base64-ish token
-    const cand = parts.find((p) => /^[A-Za-z0-9+/=]+$/.test(p));
-    if (!cand) throw new Error('no_base64');
-    b64 = cand;
+    // try to find a base64 token
+    const base64Candidate = parts.find((p) => /^[A-Za-z0-9+/=]+$/.test(p));
+    if (!base64Candidate) throw new Error('no_base64');
+    b64 = base64Candidate;
   }
+  if (!b64) throw new Error('empty_base64');
   const buf = Buffer.from(b64, 'base64');
   let off = 0;
   const readStr = () => {
     if (off + 4 > buf.length) throw new Error('short');
     const len = buf.readUInt32BE(off);
     off += 4;
-    if (len < 0 || off + len > buf.length) throw new Error('short');
+    if (off + len > buf.length) throw new Error('short');
     const s = buf.slice(off, off + len);
     off += len;
     return s;
@@ -948,7 +949,7 @@ app.get('/journal/history', async (req, res) => {
   }
 });
 
-// Provenance: verify submission signature (Ed25519 now; SSH returns 501)
+// Provenance: verify submission signature (ed25519 and OpenSSH ed25519)
 app.post('/rpc/provenance.verify', async (req, res) => {
   try {
     const input = SubmissionVerify.parse(req.body);
@@ -1034,7 +1035,7 @@ app.post('/rpc/provenance.verify', async (req, res) => {
         });
       }
     }
-    return res.status(501).json({ ok: false, error: 'ssh_unsupported' });
+    return res.status(501).json({ ok: false, error: 'unsupported_signature_kind' });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
   }

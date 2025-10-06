@@ -1,5 +1,7 @@
 ---
 lastUpdated: 2025-10-06
+tags: [spec]
+milestone: 'M2: Provenance & Journals'
 ---
 
 # Provenance

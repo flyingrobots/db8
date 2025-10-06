@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { Buffer } from 'node:buffer';
@@ -9,11 +11,12 @@ import canonicalizePkg from 'canonicalize';
 let app;
 let server;
 let baseURL;
+let __tmpDir = '';
 
 function runCli(args, env = {}) {
   return new Promise((resolve) => {
     const bin = path.resolve('bin/db8.js');
-    const p = spawn('node', [bin, ...args], {
+    const p = spawn(process.execPath, [bin, ...args], {
       env: { ...process.env, ...env },
       stdio: ['ignore', 'pipe', 'pipe']
     });
@@ -40,16 +43,23 @@ function toOpenSshEd25519(pubKey) {
 
 beforeEach(async () => {
   process.env.DATABASE_URL = '';
+  process.env.CANON_MODE = 'jcs';
   const mod = await import('../rpc.js');
   app = mod.default;
   server = http.createServer(app);
   await new Promise((r) => server.listen(0, r));
   baseURL = `http://127.0.0.1:${server.address().port}`;
+  __tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'db8-test-'));
 });
 
 afterEach(async () => {
   await new Promise((r) => server.close(r));
   delete process.env.DATABASE_URL;
+  delete process.env.CANON_MODE;
+  if (__tmpDir) {
+    await fs.rm(__tmpDir, { recursive: true, force: true }).catch(() => {});
+    __tmpDir = '';
+  }
 });
 
 describe('CLI provenance verify (ssh-ed25519)', () => {
@@ -73,11 +83,11 @@ describe('CLI provenance verify (ssh-ed25519)', () => {
       crypto.sign(null, Buffer.from(hashHex, 'hex'), privateKey)
     ).toString('base64');
 
-    const tmp = path.join(process.cwd(), '.tmp.prov.doc.json');
-    await (await import('node:fs/promises')).writeFile(tmp, JSON.stringify(doc));
+    const tmp = path.join(__tmpDir, 'doc.json');
+    await fs.writeFile(tmp, JSON.stringify(doc));
 
-    const pubPath = path.join(process.cwd(), '.tmp.pub_ssh');
-    await (await import('node:fs/promises')).writeFile(pubPath, pubSsh);
+    const pubPath = path.join(__tmpDir, 'id_ed25519.pub');
+    await fs.writeFile(pubPath, pubSsh);
     const { code, out } = await runCli(
       [
         'provenance',
