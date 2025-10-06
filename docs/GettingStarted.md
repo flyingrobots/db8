@@ -96,6 +96,22 @@ Endpoints (canonical realtime = SSE):
   }
   ```
 
+  - event: journal (emitted on DB NOTIFY from `journal_upsert`)
+    - t: "journal"
+    - room_id: string (uuid)
+    - idx: number (round index)
+    - hash: string (sha256 of the journal core)
+    - Example frame:
+
+  ```json
+  {
+    "t": "journal",
+    "room_id": "00000000-0000-0000-0000-0000000000ab",
+    "idx": 0,
+    "hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  }
+  ```
+
   - Errors
     - HTTP error responses: 4xx/5xx with JSON body `{ ok:false, error:string }`
   - SSE connection guidance: use EventSource with default retry;
