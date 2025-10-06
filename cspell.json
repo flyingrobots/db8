@@ -93,7 +93,9 @@
     "scoringandreputation",
     "researchtools",
     "attributioncontrol",
-    "orchestratorheartbeat"
+    "orchestratorheartbeat",
+    "SPKI",
+    "spki"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
