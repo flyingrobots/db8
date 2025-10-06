@@ -871,6 +871,31 @@ rationale and added a rule to separate event blocks with HRs in debriefs.
 - Docs: bump `lastUpdated` on every Markdown edit; append Agent Log entries after shipping.
 - CI: run docker-backed tests locally when touching DB or SSE paths; keep tests free of server leaks.
 
+---
+
+### Event — 2025-10-06 | Board Sync + M2 progress
+
+#### Summary
+
+- Merged #130 (docs), #132 (fingerprint enrollment DB/API/CLI), and #134 (CLI provenance verify UX). Updated project board to Done for #129/#131/#133.
+
+#### References
+
+- PRs: #130, #132, #134
+- Issues: #129 (closed via PR #130), #131 (closed via PR #132), #133 (closed via PR #134)
+
+#### Key Decisions
+
+- Close issues on merge and set Project Status/Workflow to Done immediately to keep hygiene tight.
+
+#### Action Items
+
+- Next tasks: Journal SSE event; optional `ENFORCE_AUTHOR_BINDING=1`; SSH path.
+
+#### Notes
+
+- CLI now prints fingerprint + binding in verify; JSON passthrough remains for tooling.
+
 #### Post‑compact Prompt (paste to rehydrate context)
 
 """
