@@ -41,6 +41,23 @@ CREATE TABLE IF NOT EXISTS participants (
 
 CREATE INDEX IF NOT EXISTS idx_participants_room ON participants (room_id);
 
+-- Enforce normalized fingerprint format when present: 'sha256:<64 hex>' or plain 64-hex
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    WHERE t.relname = 'participants' AND c.conname = 'chk_participants_ssh_fingerprint_format'
+  ) THEN
+    ALTER TABLE participants
+      ADD CONSTRAINT chk_participants_ssh_fingerprint_format
+      CHECK (
+        ssh_fingerprint IS NULL OR
+        ssh_fingerprint ~ '^(sha256:)?[0-9a-f]{64}$'
+      );
+  END IF;
+END $$;
+
 -- Submissions: idempotent by (round_id, author_id, client_nonce)
 CREATE TABLE IF NOT EXISTS submissions (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),

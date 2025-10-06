@@ -1,0 +1,60 @@
+-- 31_participants_enrollment.pgtap — fingerprint enrollment normalization and checks
+BEGIN;
+SELECT plan(6);
+
+-- Seed a room, round, and participant
+SELECT diag('seeding room/round/participant');
+INSERT INTO rooms(id, title) VALUES ('00000000-0000-0000-0000-00000000aa00', 't');
+INSERT INTO rounds(id, room_id, idx, phase, submit_deadline_unix)
+VALUES ('00000000-0000-0000-0000-00000000aa01', '00000000-0000-0000-0000-00000000aa00', 0, 'submit', 0);
+INSERT INTO participants(id, room_id, anon_name, role)
+VALUES ('00000000-0000-0000-0000-00000000aa02', '00000000-0000-0000-0000-00000000aa00', 'p1', 'debater');
+
+-- 1) Accept explicit sha256:<hex>
+SELECT diag('explicit sha256: hex');
+SELECT is(
+  participant_fingerprint_set('00000000-0000-0000-0000-00000000aa02', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+  'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  'returns normalized prefixed fingerprint'
+);
+SELECT is(
+  (SELECT ssh_fingerprint FROM participants WHERE id = '00000000-0000-0000-0000-00000000aa02'),
+  'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  'participants.ssh_fingerprint updated'
+);
+
+-- 2) Accept plain hex and normalize to sha256:
+SELECT diag('plain hex normalization');
+SELECT like(
+  participant_fingerprint_set('00000000-0000-0000-0000-00000000aa02', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+  'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  'plain hex normalized with prefix'
+);
+
+-- 3) Accept base64 and compute digest over decoded bytes
+SELECT diag('base64 input');
+SELECT is(
+  participant_fingerprint_set('00000000-0000-0000-0000-00000000aa02', 'AQIDBA=='),
+  'sha256:' || encode(digest(decode('AQIDBA==','base64'), 'sha256'), 'hex'),
+  'base64 decoded and hashed'
+);
+
+-- 4) Invalid input rejected
+SELECT throws_ok(
+  $$ SELECT participant_fingerprint_set('00000000-0000-0000-0000-00000000aa02', 'not-a-key'); $$,
+  '22023',
+  'invalid_fingerprint_or_key',
+  'rejects invalid format'
+);
+
+-- 5) Non-existent participant rejected
+SELECT throws_ok(
+  $$ SELECT participant_fingerprint_set('00000000-0000-0000-0000-00000000aa09', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); $$,
+  '22023',
+  'participant_not_found',
+  'rejects unknown participant'
+);
+
+SELECT finish();
+ROLLBACK;
+
