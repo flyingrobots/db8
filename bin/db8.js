@@ -903,7 +903,8 @@ async function main() {
             if (val.startsWith('@')) {
               const p = val.slice(1);
               try {
-                val = await (await import('node:fs/promises')).then((m) => m.readFile(p, 'utf8'));
+                // Use the already-imported fsp helper for consistency
+                val = await fsp.readFile(p, 'utf8');
               } catch {
                 throw new CLIError(`failed to read --pub-ssh file: ${p}`, EXIT.VALIDATION);
               }
