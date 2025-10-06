@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-05
+lastUpdated: 2025-10-06
 ---
 
 # Getting Started

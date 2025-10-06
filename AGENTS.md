@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-05
+lastUpdated: 2025-10-06
 ---
 
 # AGENTS.md
@@ -827,3 +827,79 @@ rationale and added a rule to separate event blocks with HRs in debriefs.
 
 - Optional SSE `event: journal` on publish so web can surface “new signed checkpoint”.
 - Flip default canonicalization to JCS once downstream consumers are ready.
+
+---
+
+## Agent Log — 2025-10-06
+
+### Session Debrief — 2025-10-06
+
+#### Summary
+
+- Canonicalization: flipped default to JCS (RFC 8785) across server, watcher, and CLI; resolved merge conflicts in docs; ensured empty CANON_MODE falls back to `jcs` consistently.
+- Provenance: enforced strict author binding in `/rpc/provenance.verify` when a participant fingerprint exists; responses include `public_key_fingerprint`; expanded tests and fixed env isolation.
+- Web/CLI: confirmed previously shipped web nonce issuance before submit and CLI journal pull; integrated docs and tests.
+- Docs/Logs: updated GettingStarted/LocalDB/CLI for JCS default and provenance binding; CHANGELOG updated; Agent Log appended.
+- Process correction: reaffirmed “never merge without owner approval”; PRs opened as draft and left In Review until explicit approval.
+
+#### References
+
+- PRs: #124, #125, #127 (merged), #128 (JCS default; merged)
+- Files: `server/config/config-builder.js`, `server/watcher.js`, `bin/db8.js`, `server/rpc.js`, `server/schemas.js`
+- Tests: `server/test/provenance.verify.test.js`, `server/test/provenance.verify.binding.test.js`, `server/test/cli.journal.pull.test.js`
+- Docs: `docs/GettingStarted.md`, `docs/LocalDB.md`, `docs/CLI.md`, `CHANGELOG.md`
+
+#### Key Decisions
+
+- Default to JCS; keep legacy `sorted` as temporary opt‑out via `CANON_MODE=sorted`.
+- Strict author binding: if `participants.ssh_fingerprint` is set, mismatch → 400 `author_binding_mismatch` (return expected/got).
+- Normalize returned/compared fingerprints to `sha256:<hex>`.
+- Treat empty `CANON_MODE` as `jcs` to avoid accidental legacy fallback.
+- Tests must isolate `DATABASE_URL` before importing the app.
+
+#### Action Items (Next)
+
+- Participant fingerprint enrollment (DB RPC/API/CLI) with normalization + pgTAP.
+- CLI verify UX: print fingerprint + binding; exit non‑zero on mismatch; JSON includes expected/got.
+- Realtime `event: journal` + web indicator.
+- SSH (ssh‑ed25519) verification path.
+- Optional policy flag: `ENFORCE_AUTHOR_BINDING=1` to require enrolled fingerprints.
+
+#### Notes
+
+- Process: open PRs as draft; never auto‑merge; await explicit owner approval; keep Project board fields in sync.
+- Docs: bump `lastUpdated` on every Markdown edit; append Agent Log entries after shipping.
+- CI: run docker-backed tests locally when touching DB or SSE paths; keep tests free of server leaks.
+
+#### Post‑compact Prompt (paste to rehydrate context)
+
+"""
+You are resuming work on db8 after context compaction.
+
+Facts:
+
+- JCS (RFC 8785) is now the default canonicalization (server/watcher/CLI); legacy `sorted` remains as opt‑out.
+- `/rpc/provenance.verify` returns `public_key_fingerprint` and enforces strict author binding when `participants.ssh_fingerprint` exists (mismatch → 400).
+- Web issues server nonces before submit; server enforces issued nonces when enabled.
+- Journals are signed on publish; journal endpoints exist; CLI has `journal pull` and `journal verify`.
+- Process: PRs are draft; never merge without owner approval; maintain board hygiene and docs frontmatter.
+
+Immediate tasks (create issues + draft PRs, no merge):
+
+1. Participant fingerprint enrollment (DB RPC/API/CLI) with normalization + pgTAP.
+2. CLI verify UX to print fingerprint + binding; non‑zero exit on mismatch; JSON includes expected/got.
+
+On each change: bump docs `lastUpdated`, update Agent Log, and sync the Project board (Status/Workflow/Milestone).
+"""
+
+---
+
+### Milestones
+
+- [M2: Provenance & Journals](https://github.com/flyingrobots/db8/milestone/3)
+- [M3: Verification](https://github.com/flyingrobots/db8/milestone/4)
+- [M4: Votes & Final](https://github.com/flyingrobots/db8/milestone/5)
+- [M5: Scoring & Elo](https://github.com/flyingrobots/db8/milestone/6)
+- [M6: Research Tools](https://github.com/flyingrobots/db8/milestone/7)
+- [M7: Hardening & Ops](https://github.com/flyingrobots/db8/milestone/8)
+- [M2: Provenance](https://github.com/flyingrobots/db8/milestone/16)
