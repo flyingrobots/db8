@@ -702,23 +702,39 @@ app.get('/events', async (req, res) => {
       await loadCurrentRound();
       listenerClient = await db.connect();
       await listenerClient.query('LISTEN db8_rounds');
+      await listenerClient.query('LISTEN db8_journal');
       const onNotification = (msg) => {
-        if (msg.channel !== 'db8_rounds' || closed) return;
+        if (closed) return;
         try {
           const payload = JSON.parse(msg.payload || '{}');
-          if (payload.room_id !== roomId) return;
-          // Update cached round and emit a phase event immediately
-          currentRound = {
-            room_id: payload.room_id,
-            round_id: payload.round_id,
-            idx: payload.idx,
-            phase: payload.phase,
-            submit_deadline_unix: payload.submit_deadline_unix,
-            published_at_unix: payload.published_at_unix,
-            continue_vote_close_unix: payload.continue_vote_close_unix
-          };
-          res.write(`event: phase\n`);
-          res.write(`data: ${JSON.stringify({ t: 'phase', ...currentRound })}\n\n`);
+          if (!payload || payload.room_id !== roomId) return;
+          if (msg.channel === 'db8_rounds') {
+            // Update cached round and emit a phase event immediately
+            currentRound = {
+              room_id: payload.room_id,
+              round_id: payload.round_id,
+              idx: payload.idx,
+              phase: payload.phase,
+              submit_deadline_unix: payload.submit_deadline_unix,
+              published_at_unix: payload.published_at_unix,
+              continue_vote_close_unix: payload.continue_vote_close_unix
+            };
+            res.write(`event: phase\n`);
+            res.write(`data: ${JSON.stringify({ t: 'phase', ...currentRound })}\n\n`);
+            return;
+          }
+          if (msg.channel === 'db8_journal') {
+            // Emit a lightweight journal event
+            const j = {
+              t: 'journal',
+              room_id: payload.room_id,
+              idx: payload.idx,
+              hash: payload.hash
+            };
+            res.write(`event: journal\n`);
+            res.write(`data: ${JSON.stringify(j)}\n\n`);
+            return;
+          }
         } catch {
           // ignore bad payloads
         }
@@ -734,7 +750,16 @@ app.get('/events', async (req, res) => {
         try {
           if (listenerClient) {
             listenerClient.removeListener('notification', onNotification);
-            await listenerClient.query('UNLISTEN db8_rounds');
+            try {
+              await listenerClient.query('UNLISTEN db8_rounds');
+            } catch {
+              /* ignore */
+            }
+            try {
+              await listenerClient.query('UNLISTEN db8_journal');
+            } catch {
+              /* ignore */
+            }
             listenerClient.release();
           }
         } catch {

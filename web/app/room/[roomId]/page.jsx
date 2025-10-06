@@ -33,6 +33,7 @@ export default function RoomPage({ params }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [hasNewJournal, setHasNewJournal] = useState(false);
   const timerRef = useRef(null);
   const esRef = useRef(null);
   const lastNonceRef = useRef('');
@@ -71,6 +72,14 @@ export default function RoomPage({ params }) {
           void 0;
         }
       };
+      es.addEventListener('journal', (ev) => {
+        try {
+          const d = JSON.parse(ev.data);
+          if (d && d.t === 'journal' && d.room_id === roomId) setHasNewJournal(true);
+        } catch {
+          /* ignore */
+        }
+      });
       es.onerror = () => {
         try {
           es.close();
@@ -318,13 +327,14 @@ export default function RoomPage({ params }) {
             <div className="text-lg font-semibold">Transcript</div>
             <Badge variant="outline">{transcript.length} entries</Badge>
           </div>
-          <div className="text-sm">
+          <div className="text-sm flex items-center gap-3">
             <Link
               className="underline text-[color:var(--teal)]"
               href={`/journal/${encodeURIComponent(roomId)}`}
             >
               View journal history →
             </Link>
+            {hasNewJournal && <Badge variant="success">New checkpoint</Badge>}
           </div>
           {transcript.length === 0 ? (
             <p className="text-sm text-muted">No submissions yet.</p>
