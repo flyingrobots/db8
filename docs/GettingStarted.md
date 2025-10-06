@@ -101,8 +101,8 @@ Endpoints (canonical realtime = SSE):
   - event: journal (emitted on DB NOTIFY from `journal_upsert`)
     - t: "journal"
     - room_id: string (uuid)
-    - idx: number (round index)
-    - hash: string (sha256 of the journal core)
+    - idx: integer ≥ 0 (round index)
+    - hash: string (64‑char lowercase hex, sha256 of the journal core)
     - Example frame:
 
   ```json
