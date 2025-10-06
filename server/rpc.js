@@ -11,14 +11,13 @@ import {
   SubmissionVerify,
   ParticipantFingerprintSet
 } from './schemas.js';
-import { canonicalizeSorted, canonicalizeJCS, sha256Hex } from './utils.js';
+import { sha256Hex } from './utils.js';
+import canonicalizer from './canonicalizer.js';
 import { loadConfig } from './config/config-builder.js';
 import { createSigner, buildJournalCore, finalizeJournal } from './journal.js';
 
 const app = express();
 const config = loadConfig();
-const canonicalizer =
-  config.canonMode?.toLowerCase?.() === 'jcs' ? canonicalizeJCS : canonicalizeSorted;
 app.use(express.json());
 app.use(rateLimitStub({ enforce: config.enforceRateLimit }));
 // Serve static demo files (public/*) so you can preview UI in a browser
@@ -971,7 +970,14 @@ app.post('/rpc/provenance.verify', async (req, res) => {
               }
               payload.author_binding = 'not_configured';
             }
-          } catch {
+          } catch (err) {
+            const msg = String(err?.message || err || '');
+            // Fail closed when enforcement is enabled
+            if (config.enforceAuthorBinding) {
+              console.error('[provenance.verify] participant lookup failed:', msg);
+              return res.status(503).json({ ok: false, error: 'participant_lookup_failed' });
+            }
+            console.warn('[provenance.verify] participant lookup failed (non-enforcing):', msg);
             payload.author_binding = 'unknown';
           }
         }

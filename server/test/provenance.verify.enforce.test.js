@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { Buffer } from 'node:buffer';
-import { canonicalizeSorted, canonicalizeJCS, sha256Hex } from '../utils.js';
+import { sha256Hex } from '../utils.js';
+import { selectCanonicalizer } from '../canonicalizer.js';
 
 let app;
 let __setDbPool;
@@ -64,11 +65,8 @@ describe('provenance.verify enforcement (author binding required)', () => {
     const pubDer = publicKey.export({ format: 'der', type: 'spki' });
     const public_key_b64 = Buffer.from(pubDer).toString('base64');
     const doc = testDoc();
-    const canonicalizer =
-      String(process.env.CANON_MODE || 'jcs').toLowerCase() === 'jcs'
-        ? canonicalizeJCS
-        : canonicalizeSorted;
-    const hashHex = sha256Hex(canonicalizer(doc));
+    const canon = selectCanonicalizer(process.env.CANON_MODE || 'jcs');
+    const hashHex = sha256Hex(canon(doc));
     const sig_b64 = Buffer.from(
       crypto.sign(null, Buffer.from(hashHex, 'hex'), privateKey)
     ).toString('base64');

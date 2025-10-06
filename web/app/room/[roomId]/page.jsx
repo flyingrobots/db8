@@ -331,6 +331,7 @@ export default function RoomPage({ params }) {
             <Link
               className="underline text-[color:var(--teal)]"
               href={`/journal/${encodeURIComponent(roomId)}`}
+              onClick={() => setHasNewJournal(false)}
             >
               View journal history →
             </Link>

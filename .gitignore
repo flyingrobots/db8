@@ -16,6 +16,7 @@ pnpm-debug.log*
 .pnpm-debug.log*
 .eslintcache
 .cache/
+.tmp*.prov*.json
 
 # Env files (keep an example committed separately)
 .env
