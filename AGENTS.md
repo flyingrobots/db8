@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-03
+lastUpdated: 2025-10-05
 ---
 
 # AGENTS.md
@@ -791,3 +791,39 @@ rationale and added a rule to separate event blocks with HRs in debriefs.
 - HR (`---`) between Event Log entries is now the norm.
 
 {"date":"2025-10-03","time":"22:29","summary":"Wrapped M1, stabilized Docker/CI, and advanced M2 with JCS canonicalization, server‑issued nonces (atomic), and journals + watcher signing + CLI verify; fixed SQL/lockfile issues and reliability gaps.","topics":[{"topic":"M1 wrap + hygiene","what":"Closed remaining M1 issues and milestone; synced project board","why":"Finish MVP loop and clear the deck for M2","context":"RLS/read views enforced; phase enums unified; docs parity","issue":"Process and status drift across issues/board","resolution":"Closed #112/#66/#113; set Status/Workflow=Done; closed milestone","future_work":"Keep board hygiene on new PRs/issues","time_percent":10},{"topic":"Docker/CI stabilization","what":"Named compose resources, readiness wait, traps, volume cleanup, link/spell fixes","why":"CI flakes and local disk bloat were wasting cycles","context":"docker-compose.test.yml + test runner script","issue":"Containers/volumes left behind; npm ci/link checks failing","resolution":"Added wait + EXIT/ERR trap + --volumes; ignored localhost links; fixed cspell terms","future_work":"Monitor CI; add minimal docs note for cleanup","time_percent":15},{"topic":"JCS canonicalization (M2)","what":"Added RFC 8785 canonicalization behind CANON_MODE (server+CLI)","why":"Unblock provenance features that require deterministic hashing","context":"Kept sorted-key legacy as default; added JCS edge-case tests","issue":"Need deterministic, standard canonicalization without breaking M1","resolution":"Flag-gated JCS with tests; validated config and edge cases","future_work":"Flip default after adoption; propagate to web/worker where needed","time_percent":20},{"topic":"Server-issued nonces (M2)","what":"Implemented issue + enforce single-use with atomic DB path","why":"Prevent replay and coordinate idempotent submissions","context":"SQL RPCs, endpoint /rpc/nonce.issue, ENFORCE_SERVER_NONCES","issue":"Initial design consumed nonce pre-upsert and conflated DB failures","resolution":"Added submission_upsert_with_nonce() for atomicity; fallback only on connection errors; tests updated","future_work":"Docs; optional metrics on issue/consume; UI hook-ups","time_percent":25},{"topic":"Journals + signatures (M2)","what":"/journal and /journal/history, watcher signs on publish, CLI verify","why":"Provide per-round chain hash and checkpoint signature","context":"Ed25519; dev keypair fallback with explicit warning","issue":"History synthesized via HTTP and numeric NaNs could corrupt hashes","resolution":"Refactored helper (no self-HTTP); safe numeric coercion; DB journals table + RLS","future_work":"Expose by idx; web UI for history; configurable PEM keys in env","time_percent":30}],"key_decisions":["Adopt JCS behind CANON_MODE with strict validation","Enforce server-issued nonces atomically via submission_upsert_with_nonce()","Sign journals on publish and persist via journal_upsert()","Only fall back to memory nonce path on DB connection errors","Close M1 and proceed with M2 provenance"] ,"action_items":[{"task":"Add docs for CANON_MODE, ENFORCE_SERVER_NONCES, and Journals/CLI verify","owner":"james"},{"task":"Monitor CI and merge PR #118 once green","owner":"james"},{"task":"Add GET /journal?room_id&idx and basic web history view","owner":"james"}]}
+
+---
+
+## Agent Log — 2025-10-05
+
+### Work Completed — 2025-10-05
+
+- Web
+  - Room submit now requests a server‑issued nonce via `POST /rpc/nonce.issue` and includes `X-DB8-Client-Nonce` on submission; falls back gracefully when issuance isn’t available; shows a clear message on `invalid_nonce`.
+- CLI
+  - Added `journal pull` command with `--history`/`--round`/`--out` options. Writes `round-<idx>.json` files and supports `--json` output. Included tests.
+- Docs
+  - Updated GettingStarted with a short “Submitting from the Web UI (nonces)” section.
+  - Expanded CLI spec for `journal pull`. Fixed missing YAML frontmatter in a docs page.
+
+- Security (Provenance)
+  - Hardened `/rpc/provenance.verify`: returns 400 for invalid signatures; returns `public_key_fingerprint`; enforces strict author binding when `participants.ssh_fingerprint` is configured (mismatch → 400). Tightened verification schema and expanded test coverage (error paths, no server leaks).
+
+#### References
+
+- web/app/room/[roomId]/page.jsx
+- bin/db8.js
+- server/test/cli.journal.pull.test.js
+- server/rpc.js, server/schemas.js, server/test/provenance.verify.test.js, server/test/provenance.verify.binding.test.js
+- docs/GettingStarted.md, docs/CLI.md
+- docs/LocalDB.md (provenance & author binding)
+
+#### Key Decisions
+
+- Keep nonce issuance in the web client minimal (no UI prompt); rely on API enforcement to guide UX.
+- Output journals with stable filenames using `round_idx` or `core.idx` for memory mode.
+
+#### Next
+
+- Optional SSE `event: journal` on publish so web can surface “new signed checkpoint”.
+- Flip default canonicalization to JCS once downstream consumers are ready.

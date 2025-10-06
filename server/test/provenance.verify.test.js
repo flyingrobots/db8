@@ -45,7 +45,7 @@ describe('POST /rpc/provenance.verify', () => {
 
     const doc = testDoc();
     const canonicalizer =
-      String(process.env.CANON_MODE || 'sorted').toLowerCase() === 'jcs'
+      String(process.env.CANON_MODE || 'jcs').toLowerCase() === 'jcs'
         ? canonicalizeJCS
         : canonicalizeSorted;
     const hashHex = sha256Hex(canonicalizer(doc));

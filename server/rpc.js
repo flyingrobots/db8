@@ -861,7 +861,7 @@ app.post('/rpc/provenance.verify', async (req, res) => {
         // Compute a simple DER SHA-256 fingerprint for caller binding
         const fpHex = crypto.createHash('sha256').update(pubDer).digest('hex');
         const payload = { ok: true, hash: hashHex, public_key_fingerprint: `sha256:${fpHex}` };
-        // Optional DB-backed author binding: if participants.ssh_fingerprint matches, report 'match'
+        // Strict DB-backed author binding: if participants.ssh_fingerprint exists, it MUST match
         if (db && input?.doc?.author_id) {
           try {
             const r = await db.query(
@@ -869,10 +869,21 @@ app.post('/rpc/provenance.verify', async (req, res) => {
               [input.doc.author_id]
             );
             const fp = String(r.rows?.[0]?.ssh_fingerprint || '').trim();
-            if (fp)
-              payload.author_binding =
-                fp.toLowerCase() === `sha256:${fpHex}` ? 'match' : 'mismatch';
-            else payload.author_binding = 'not_configured';
+            if (fp) {
+              const expected = fp.toLowerCase().startsWith('sha256:')
+                ? fp.toLowerCase()
+                : `sha256:${fp.toLowerCase()}`;
+              const got = `sha256:${fpHex}`;
+              if (expected !== got) {
+                return res.status(400).json({
+                  ok: false,
+                  error: 'author_binding_mismatch',
+                  expected_fingerprint: expected,
+                  got_fingerprint: got
+                });
+              }
+              payload.author_binding = 'match';
+            } else payload.author_binding = 'not_configured';
           } catch {
             payload.author_binding = 'unknown';
           }

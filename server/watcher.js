@@ -19,7 +19,7 @@ export async function runTick(pool) {
 const _signer = createSigner({
   privateKeyPem: process.env.SIGNING_PRIVATE_KEY || '',
   publicKeyPem: process.env.SIGNING_PUBLIC_KEY || '',
-  canonMode: process.env.CANON_MODE || 'sorted'
+  canonMode: process.env.CANON_MODE || 'jcs'
 });
 
 async function signPublished(pool) {
