@@ -1,8 +1,7 @@
 import { describe, beforeAll, afterAll, it, expect } from 'vitest';
 import http from 'node:http';
 import { Pool } from 'pg';
-import fs from 'node:fs';
-import path from 'node:path';
+// schema/rpc/rls are prepared by scripts/prepare-db.js before test run
 import app, { __setDbPool } from '../rpc.js';
 
 const shouldRun =
@@ -25,14 +24,7 @@ suite('SSE /events is DB-backed (LISTEN/NOTIFY)', () => {
     pool = new Pool({ connectionString: dbUrl });
     __setDbPool(pool);
 
-    // Load schema + RPCs if missing (avoid concurrent redefine races)
-    // Load schema/RPC/RLS always to keep deterministic
-    const schemaSql = fs.readFileSync(path.resolve('db/schema.sql'), 'utf8');
-    await pool.query(schemaSql);
-    const rpcSql = fs.readFileSync(path.resolve('db/rpc.sql'), 'utf8');
-    await pool.query(rpcSql);
-    const rlsSql = fs.readFileSync(path.resolve('db/rls.sql'), 'utf8');
-    await pool.query(rlsSql);
+    // Schema/RPC/RLS are loaded by scripts/prepare-db.js prior to tests.
 
     // Create a room/round via RPC and fetch the current round via the secure view
     const rc = await pool.query('select room_create($1) as id', ['SSE Test Room']);

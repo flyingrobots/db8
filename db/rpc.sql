@@ -422,6 +422,17 @@ BEGIN
   VALUES (p_room_id, p_round_idx, p_hash, COALESCE(p_signature, '{}'::jsonb), COALESCE(p_core, '{}'::jsonb))
   ON CONFLICT (room_id, round_idx)
   DO UPDATE SET hash = EXCLUDED.hash, signature = EXCLUDED.signature, core = EXCLUDED.core;
+
+  -- Notify listeners that a new/updated journal is available for this room/round
+  PERFORM pg_notify(
+    'db8_journal',
+    json_build_object(
+      't', 'journal',
+      'room_id', p_room_id::text,
+      'idx', p_round_idx,
+      'hash', p_hash
+    )::text
+  );
 END;
 $$;
 
