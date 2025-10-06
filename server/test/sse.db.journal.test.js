@@ -61,7 +61,14 @@ suite('SSE /events emits journal on DB NOTIFY', () => {
               const dataLine = frame.split('\n').find((l) => l.startsWith('data: '));
               if (!dataLine) continue;
               const type = evLine ? evLine.slice(7).trim() : 'message';
-              const payload = JSON.parse(dataLine.slice(6));
+              let payload;
+              try {
+                payload = JSON.parse(dataLine.slice(6));
+              } catch (err) {
+                res.off('data', onData);
+                res.destroy();
+                return reject(err);
+              }
               if (!sawTimer && payload.t === 'timer') {
                 sawTimer = true;
                 try {

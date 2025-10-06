@@ -75,9 +75,13 @@ export default function RoomPage({ params }) {
       es.addEventListener('journal', (ev) => {
         try {
           const d = JSON.parse(ev.data);
-          if (d && d.t === 'journal' && d.room_id === roomId) setHasNewJournal(true);
+          const hasIdx = d && (typeof d.idx === 'number' || Number.isInteger(d.idx));
+          const hasHash = d && typeof d.hash === 'string' && d.hash.length >= 1;
+          if (d && d.t === 'journal' && d.room_id === roomId && hasIdx && hasHash) {
+            setHasNewJournal(true);
+          }
         } catch {
-          /* ignore */
+          /* ignore parse errors */
         }
       });
       es.onerror = () => {
