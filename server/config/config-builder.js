@@ -45,6 +45,7 @@ export class ConfigBuilder {
       databaseUrl: this._str('DATABASE_URL', ''),
       canonMode: canon,
       enforceServerNonces: this._bool('ENFORCE_SERVER_NONCES', false),
+      enforceAuthorBinding: this._bool('ENFORCE_AUTHOR_BINDING', false),
       enforceRateLimit: this._bool('ENFORCE_RATELIMIT', false),
       submitWindowSec: this._int('SUBMIT_WINDOW_SEC', 300),
       continueWindowSec: this._int('CONTINUE_WINDOW_SEC', 30)

@@ -48,6 +48,8 @@ Environment flags (M2)
 
 - `CANON_MODE=sorted|jcs` — switch canonicalization mode (default is `jcs`, RFC 8785).
 - `ENFORCE_SERVER_NONCES=1` — require server-issued nonces for submissions.
+- `ENFORCE_AUTHOR_BINDING=1` — require an enrolled fingerprint for the claimed author_id during provenance verify;
+  if missing, `/rpc/provenance.verify` returns `400 { ok:false, error:"author_not_configured" }`.
 - `SIGNING_PRIVATE_KEY` / `SIGNING_PUBLIC_KEY` — PEM Ed25519 keypair to sign
   journals (dev keypair is generated if unset).
 
