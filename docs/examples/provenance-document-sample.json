@@ -1,0 +1,11 @@
+{
+  "room_id": "00000000-0000-0000-0000-00000000abcd",
+  "round_id": "00000000-0000-0000-0000-00000000abce",
+  "author_id": "00000000-0000-0000-0000-00000000abcf",
+  "phase": "submit",
+  "deadline_unix": 1700000000000,
+  "content": "Hello provenance",
+  "claims": [{ "id": "c1", "text": "Claim A", "support": [{ "kind": "logic", "ref": "x" }] }],
+  "citations": [{ "url": "https://example.com/a" }, { "url": "https://example.com/b" }],
+  "client_nonce": "nonce-12345678"
+}
