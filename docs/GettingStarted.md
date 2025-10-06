@@ -48,6 +48,8 @@ Environment flags (M2)
 
 - `CANON_MODE=sorted|jcs` — switch canonicalization mode (default is `jcs`, RFC 8785).
 - `ENFORCE_SERVER_NONCES=1` — require server-issued nonces for submissions.
+- `ENFORCE_AUTHOR_BINDING=1` — require an enrolled fingerprint for the claimed author_id during provenance verify;
+  if missing, `/rpc/provenance.verify` returns `400 { ok:false, error:"author_not_configured" }`.
 - `SIGNING_PRIVATE_KEY` / `SIGNING_PUBLIC_KEY` — PEM Ed25519 keypair to sign
   journals (dev keypair is generated if unset).
 
@@ -93,6 +95,22 @@ Endpoints (canonical realtime = SSE):
     "phase": "published",
     "published_at_unix": 1730505601,
     "continue_vote_close_unix": 1730505631
+  }
+  ```
+
+  - event: journal (emitted on DB NOTIFY from `journal_upsert`)
+    - t: "journal"
+    - room_id: string (uuid)
+    - idx: number (round index)
+    - hash: string (sha256 of the journal core)
+    - Example frame:
+
+  ```json
+  {
+    "t": "journal",
+    "room_id": "00000000-0000-0000-0000-0000000000ab",
+    "idx": 0,
+    "hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
   }
   ```
 

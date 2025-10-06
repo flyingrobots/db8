@@ -11,14 +11,13 @@ import {
   SubmissionVerify,
   ParticipantFingerprintSet
 } from './schemas.js';
-import { canonicalizeSorted, canonicalizeJCS, sha256Hex } from './utils.js';
+import { sha256Hex } from './utils.js';
+import canonicalizer from './canonicalizer.js';
 import { loadConfig } from './config/config-builder.js';
 import { createSigner, buildJournalCore, finalizeJournal } from './journal.js';
 
 const app = express();
 const config = loadConfig();
-const canonicalizer =
-  config.canonMode?.toLowerCase?.() === 'jcs' ? canonicalizeJCS : canonicalizeSorted;
 app.use(express.json());
 app.use(rateLimitStub({ enforce: config.enforceRateLimit }));
 // Serve static demo files (public/*) so you can preview UI in a browser
@@ -702,23 +701,39 @@ app.get('/events', async (req, res) => {
       await loadCurrentRound();
       listenerClient = await db.connect();
       await listenerClient.query('LISTEN db8_rounds');
+      await listenerClient.query('LISTEN db8_journal');
       const onNotification = (msg) => {
-        if (msg.channel !== 'db8_rounds' || closed) return;
+        if (closed) return;
         try {
           const payload = JSON.parse(msg.payload || '{}');
-          if (payload.room_id !== roomId) return;
-          // Update cached round and emit a phase event immediately
-          currentRound = {
-            room_id: payload.room_id,
-            round_id: payload.round_id,
-            idx: payload.idx,
-            phase: payload.phase,
-            submit_deadline_unix: payload.submit_deadline_unix,
-            published_at_unix: payload.published_at_unix,
-            continue_vote_close_unix: payload.continue_vote_close_unix
-          };
-          res.write(`event: phase\n`);
-          res.write(`data: ${JSON.stringify({ t: 'phase', ...currentRound })}\n\n`);
+          if (!payload || payload.room_id !== roomId) return;
+          if (msg.channel === 'db8_rounds') {
+            // Update cached round and emit a phase event immediately
+            currentRound = {
+              room_id: payload.room_id,
+              round_id: payload.round_id,
+              idx: payload.idx,
+              phase: payload.phase,
+              submit_deadline_unix: payload.submit_deadline_unix,
+              published_at_unix: payload.published_at_unix,
+              continue_vote_close_unix: payload.continue_vote_close_unix
+            };
+            res.write(`event: phase\n`);
+            res.write(`data: ${JSON.stringify({ t: 'phase', ...currentRound })}\n\n`);
+            return;
+          }
+          if (msg.channel === 'db8_journal') {
+            // Emit a lightweight journal event
+            const j = {
+              t: 'journal',
+              room_id: payload.room_id,
+              idx: payload.idx,
+              hash: payload.hash
+            };
+            res.write(`event: journal\n`);
+            res.write(`data: ${JSON.stringify(j)}\n\n`);
+            return;
+          }
         } catch {
           // ignore bad payloads
         }
@@ -734,7 +749,16 @@ app.get('/events', async (req, res) => {
         try {
           if (listenerClient) {
             listenerClient.removeListener('notification', onNotification);
-            await listenerClient.query('UNLISTEN db8_rounds');
+            try {
+              await listenerClient.query('UNLISTEN db8_rounds');
+            } catch {
+              /* ignore */
+            }
+            try {
+              await listenerClient.query('UNLISTEN db8_journal');
+            } catch {
+              /* ignore */
+            }
             listenerClient.release();
           }
         } catch {
@@ -917,7 +941,8 @@ app.post('/rpc/provenance.verify', async (req, res) => {
         // Compute a simple DER SHA-256 fingerprint for caller binding
         const fpHex = crypto.createHash('sha256').update(pubDer).digest('hex');
         const payload = { ok: true, hash: hashHex, public_key_fingerprint: `sha256:${fpHex}` };
-        // Strict DB-backed author binding: if participants.ssh_fingerprint exists, it MUST match
+        // Strict DB-backed author binding: if participants.ssh_fingerprint exists, it MUST match.
+        // If ENFORCE_AUTHOR_BINDING is enabled and the fingerprint is not configured, return 400.
         if (db && input?.doc?.author_id) {
           try {
             const r = await db.query(
@@ -939,8 +964,20 @@ app.post('/rpc/provenance.verify', async (req, res) => {
                 });
               }
               payload.author_binding = 'match';
-            } else payload.author_binding = 'not_configured';
-          } catch {
+            } else {
+              if (config.enforceAuthorBinding) {
+                return res.status(400).json({ ok: false, error: 'author_not_configured' });
+              }
+              payload.author_binding = 'not_configured';
+            }
+          } catch (err) {
+            const msg = String(err?.message || err || '');
+            // Fail closed when enforcement is enabled
+            if (config.enforceAuthorBinding) {
+              console.error('[provenance.verify] participant lookup failed:', msg);
+              return res.status(503).json({ ok: false, error: 'participant_lookup_failed' });
+            }
+            console.warn('[provenance.verify] participant lookup failed (non-enforcing):', msg);
             payload.author_binding = 'unknown';
           }
         }
