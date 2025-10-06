@@ -418,6 +418,9 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
+  IF p_round_idx < 0 THEN
+    RAISE EXCEPTION 'invalid_round_idx' USING ERRCODE = '22023';
+  END IF;
   INSERT INTO journals(room_id, round_idx, hash, signature, core)
   VALUES (p_room_id, p_round_idx, p_hash, COALESCE(p_signature, '{}'::jsonb), COALESCE(p_core, '{}'::jsonb))
   ON CONFLICT (room_id, round_idx)

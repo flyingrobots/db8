@@ -5,6 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { z } from 'zod';
+import {
+  isValidJournalEventPayload,
+  getLastSeenJournalIdx,
+  setLastSeenJournalIdx
+} from '@/lib/validateSse';
 
 function apiBase() {
   const u = process.env.NEXT_PUBLIC_DB8_API_URL || 'http://localhost:3000';
@@ -34,6 +39,8 @@ export default function RoomPage({ params }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [hasNewJournal, setHasNewJournal] = useState(false);
+  const lastAckIdxRef = useRef(-1);
+  const latestIdxRef = useRef(-1);
   const timerRef = useRef(null);
   const esRef = useRef(null);
   const lastNonceRef = useRef('');
@@ -56,6 +63,15 @@ export default function RoomPage({ params }) {
     };
   }, [roomId]);
 
+  // Initialize last acknowledged journal idx from sessionStorage
+  useEffect(() => {
+    try {
+      lastAckIdxRef.current = getLastSeenJournalIdx(roomId);
+    } catch {
+      lastAckIdxRef.current = -1;
+    }
+  }, [roomId]);
+
   // SSE countdown subscription
   useEffect(() => {
     if (!roomId) return;
@@ -75,7 +91,9 @@ export default function RoomPage({ params }) {
       es.addEventListener('journal', (ev) => {
         try {
           const d = JSON.parse(ev.data);
-          if (d && d.t === 'journal' && d.room_id === roomId) setHasNewJournal(true);
+          if (!isValidJournalEventPayload(roomId, d)) return;
+          latestIdxRef.current = d.idx;
+          if (d.idx > (lastAckIdxRef.current | 0)) setHasNewJournal(true);
         } catch {
           /* ignore */
         }
@@ -331,7 +349,14 @@ export default function RoomPage({ params }) {
             <Link
               className="underline text-[color:var(--teal)]"
               href={`/journal/${encodeURIComponent(roomId)}`}
-              onClick={() => setHasNewJournal(false)}
+              onClick={() => {
+                setHasNewJournal(false);
+                const idx = latestIdxRef.current;
+                if (Number.isInteger(idx) && idx >= 0) {
+                  setLastSeenJournalIdx(roomId, idx);
+                  lastAckIdxRef.current = idx;
+                }
+              }}
             >
               View journal history →
             </Link>
