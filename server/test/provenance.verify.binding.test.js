@@ -1,8 +1,10 @@
+/* eslint-disable import/first, import/newline-after-import */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { Buffer } from 'node:buffer';
-import app, { __setDbPool } from '../rpc.js';
+let app;
+let __setDbPool;
 import { canonicalizeSorted, canonicalizeJCS, sha256Hex } from '../utils.js';
 
 let server;
@@ -33,7 +35,14 @@ function makeStubPool(fingerprint) {
   };
 }
 
+const __origDbUrl = process.env.DATABASE_URL;
+
 beforeEach(async () => {
+  // Ensure in-memory server path; import app after clearing DB URL
+  process.env.DATABASE_URL = '';
+  const mod = await import('../rpc.js');
+  app = mod.default;
+  __setDbPool = mod.__setDbPool;
   server = http.createServer(app);
   await new Promise((r) => server.listen(0, r));
   baseURL = `http://127.0.0.1:${server.address().port}`;
@@ -42,6 +51,9 @@ beforeEach(async () => {
 afterEach(async () => {
   await new Promise((r) => server.close(r));
   __setDbPool(null);
+  // Restore DB URL to avoid cross-test pollution
+  if (__origDbUrl === undefined) delete process.env.DATABASE_URL;
+  else process.env.DATABASE_URL = __origDbUrl;
 });
 
 describe('provenance.verify author binding (DB)', () => {
