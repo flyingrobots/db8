@@ -71,7 +71,7 @@ describe('CLI provenance verify (ssh-ed25519)', () => {
       round_id: '00000000-0000-0000-0000-00000000f102',
       author_id: '00000000-0000-0000-0000-00000000f103',
       phase: 'submit',
-      deadline_unix: 1700000000000,
+      deadline_unix: Math.floor(Date.now() / 1000) + 3600,
       content: 'Hello SSH provenance (CLI)',
       claims: [{ id: 'c1', text: 'Abc', support: [{ kind: 'logic', ref: 'x' }] }],
       citations: [{ url: 'https://example.com/a' }, { url: 'https://example.com/b' }],
