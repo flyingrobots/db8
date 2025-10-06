@@ -1,3 +1,7 @@
+---
+lastUpdated: 2025-10-04
+---
+
 # Future Work and Research Opportunities
 
 ## Advanced Multi-Agent Coordination Studies

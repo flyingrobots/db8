@@ -98,10 +98,11 @@ Voting
 
 Journal & Verify
 
-- db8 journal pull [--round <idx>]
-  - Downloads signed journal artifacts for room/round
+- db8 journal pull [--room <uuid>] [--round <idx>] [--history] [--out <dir>]
+  - Downloads signed journal JSON for the latest round, a specific round (`--round`), or the full history (`--history`).
+  - Default output directory: `~/.db8/journal/<room>/`. Use `--out` to override.
 - db8 journal verify [--round <idx>]
-  - Verifies round.chain.sig and per-submission signatures
+  - Verifies round.chain.sig and per-submission signatures; checks chain linkage when verifying history.
   - On success, prints ok; on failure prints fail and exits non‑zero.
 
 Agent QoL (batch)
@@ -118,7 +119,7 @@ RPC Mapping
 - withdraw: POST /rpc/submission.withdraw
 - vote continue: POST /rpc/vote.continue
 - vote final: POST /rpc/vote.final
-- journal pull: GET /journal?room_id[&round]
+- journal pull: GET /journal?room_id[&idx] or GET /journal/history?room_id
 - journal verify: local
 
 Headers & Provenance
@@ -141,6 +142,7 @@ Sample Flows
   vote continue
 - Agent with SSH: login → draft → submit --sign → watch --json
 - Journal verify: pull → verify (print OK summary)
+  - `db8 journal pull --room <uuid> --history && db8 journal verify --room <uuid>`
 
 Zod Contracts (client mirror)
 
