@@ -62,6 +62,8 @@ Commands:
   flag submission      report a submission to moderators
   journal pull         download journal (latest or history)
   journal verify       verify journal signature and chain
+  provenance enroll    enroll a participant fingerprint (author binding)
+  provenance verify    verify a submission signature (ed25519 or ssh)
 `);
 }
 
@@ -877,6 +879,44 @@ async function main() {
         if (args.json) print(JSON.stringify({ ok }));
         else print(ok ? 'ok' : 'fail');
         return ok ? EXIT.OK : EXIT.VALIDATION;
+      } catch (e) {
+        printerr(e?.message || String(e));
+        return EXIT.NETWORK;
+      }
+    }
+    case 'provenance:verify': {
+      const kind = String(args.kind || 'ed25519').toLowerCase();
+      const file = String(args.file || args.path || '');
+      try {
+        const doc = await readJson(file);
+        const body = { doc, signature_kind: kind };
+        if (kind === 'ed25519') {
+          body.sig_b64 = String(args['sig-b64']);
+          body.public_key_b64 = String(args['pub-b64']);
+        } else if (kind === 'ssh') {
+          body.sig_b64 = String(args['sig-b64'] || '');
+          if (args['pub-ssh']) body.public_key_ssh = String(args['pub-ssh']);
+        }
+        const res = await fetch(`${apiUrl.replace(/\/$/, '')}/rpc/provenance.verify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data?.ok !== true) {
+          if (args.json)
+            print(JSON.stringify({ ok: false, status: res.status, error: data?.error }));
+          else printerr(data?.error || `Server error ${res.status}`);
+          return EXIT.PROVENANCE;
+        }
+        if (args.json) {
+          print(JSON.stringify(data));
+        } else {
+          const fp = data.public_key_fingerprint || '';
+          const bind = data.author_binding || 'unknown';
+          print(`ok ${data.hash}${fp ? ` fp=${fp}` : ''} binding=${bind}`);
+        }
+        return EXIT.OK;
       } catch (e) {
         printerr(e?.message || String(e));
         return EXIT.NETWORK;
