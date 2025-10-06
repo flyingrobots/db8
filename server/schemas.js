@@ -79,6 +79,8 @@ export const SubmissionVerify = z
     signature_b64: z.string().min(1).optional(),
     // Accept legacy public_key_b64; signer_fingerprint may be used by future flows
     public_key_b64: z.string().optional(),
+    // SSH (OpenSSH) public key string (e.g., "ssh-ed25519 AAAA... comment")
+    public_key_ssh: z.string().optional(),
     signer_fingerprint: z.string().optional()
   })
   .refine((v) => Boolean(v.sig_b64 || v.signature_b64), {

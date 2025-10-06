@@ -65,17 +65,17 @@ describe('POST /rpc/provenance.verify', () => {
     expect(/^[0-9a-f]{64}$/.test(body.hash)).toBe(true);
   });
 
-  it('returns 501 for SSH signatures (stub)', async () => {
+  it('returns 400 for SSH path with missing public_key_ssh', async () => {
     const doc = testDoc();
     const res = await fetch(baseURL + '/rpc/provenance.verify', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ doc, signature_kind: 'ssh', sig_b64: 'x' })
     });
-    expect(res.status).toBe(501);
+    expect(res.status).toBe(400);
     const body = await res.json();
     expect(body?.ok).toBe(false);
-    expect(typeof body?.error).toBe('string');
+    expect(body?.error).toBe('missing_public_key_ssh');
   });
 
   it('400 when missing public_key_b64 for ed25519', async () => {
