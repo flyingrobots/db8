@@ -949,7 +949,7 @@ On each change: bump docs `lastUpdated`, update Agent Log, and sync the Project 
 #### Notes
 
 - Added `/.tmp*` to `.gitignore` and removed previously committed temp files.
-- Lint/spellcheck now green; cspell false-positive on `cand` removed by rename.
+- Lint/spellcheck now green; renamed a previous placeholder variable to a clearer name to satisfy cspell.
 
 ### Milestones
 
