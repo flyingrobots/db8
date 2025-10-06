@@ -7,7 +7,7 @@ lastUpdated: 2025-10-04
 ## 2025-10-04 — PR #118 merged (M2 foundations)
 
 - Canonicalization
-  - Added RFC 8785 JCS behind `CANON_MODE=jcs`; default remains `sorted` for compatibility.
+  - Adopt RFC 8785 JCS as the default (`CANON_MODE=jcs`). Legacy `sorted` remains available for compatibility.
 - Nonces (server-issued)
   - Atomic DB path via `submission_upsert_with_nonce(...)` to consume-and-insert in one step.
   - Clear fallbacks: `invalid_nonce` → 400; otherwise log DB error and fall back to memory (when enabled) with TTL + single-use semantics.

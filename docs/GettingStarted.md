@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-04
+lastUpdated: 2025-10-05
 ---
 
 # Getting Started
@@ -46,7 +46,7 @@ node server/rpc.js   # listens on :3000
 
 Environment flags (M2)
 
-- `CANON_MODE=sorted|jcs` — switch canonicalization mode (RFC 8785 when `jcs`).
+- `CANON_MODE=sorted|jcs` — switch canonicalization mode (default is `jcs`, RFC 8785).
 - `ENFORCE_SERVER_NONCES=1` — require server-issued nonces for submissions.
 - `SIGNING_PRIVATE_KEY` / `SIGNING_PUBLIC_KEY` — PEM Ed25519 keypair to sign
   journals (dev keypair is generated if unset).

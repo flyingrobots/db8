@@ -32,8 +32,9 @@ export class ConfigBuilder {
   }
 
   build() {
-    const canonRaw = this._str('CANON_MODE', 'sorted');
-    const canon = String(canonRaw || 'sorted').toLowerCase();
+    const canonRaw = this._str('CANON_MODE', 'jcs');
+    let canon = String(canonRaw).toLowerCase().trim();
+    if (!canon) canon = 'jcs';
     const allowed = new Set(['sorted', 'jcs']);
     if (!allowed.has(canon)) {
       throw new Error(`Invalid CANON_MODE: '${canonRaw}'. Allowed: sorted|jcs`);

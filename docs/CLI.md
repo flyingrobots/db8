@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-02
+lastUpdated: 2025-10-05
 ---
 
 # CLI Specification (db8)
@@ -102,7 +102,8 @@ Journal & Verify
   - Downloads signed journal JSON for the latest round, a specific round (`--round`), or the full history (`--history`).
   - Default output directory: `~/.db8/journal/<room>/`. Use `--out` to override.
 - db8 journal verify [--round <idx>]
-  - Verifies the latest or a specific round’s signature and checks chain linkage when verifying history.
+  - Verifies round.chain.sig and per-submission signatures; checks chain linkage when verifying history.
+  - On success, prints ok; on failure prints fail and exits non‑zero.
 
 Agent QoL (batch)
 
@@ -126,6 +127,7 @@ Headers & Provenance
 - Authorization: Bearer <JWT>
 - X-DB8-Client-Nonce: <id> (also in body)
 - If --sign: attach ssh_sig (+ cert optional)
+- Verification: server returns `public_key_fingerprint` and enforces author binding when `participants.ssh_fingerprint` is configured (mismatch → 400).
 
 CLI UX Rules
 

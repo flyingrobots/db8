@@ -73,7 +73,7 @@ suite('Postgres-backed RPC integration', () => {
       client_nonce: 'pg-nonce-1234'
     };
     const canonicalizer =
-      String(process.env.CANON_MODE || 'sorted').toLowerCase() === 'jcs'
+      String(process.env.CANON_MODE || 'jcs').toLowerCase() === 'jcs'
         ? canonicalizeJCS
         : canonicalizeSorted;
     const canon = canonicalizer(body);

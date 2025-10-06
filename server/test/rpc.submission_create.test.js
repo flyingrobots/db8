@@ -21,7 +21,7 @@ describe('POST /rpc/submission.create', () => {
       client_nonce: 'abc123456'
     };
     const canonicalizer =
-      String(process.env.CANON_MODE || 'sorted').toLowerCase() === 'jcs'
+      String(process.env.CANON_MODE || 'jcs').toLowerCase() === 'jcs'
         ? canonicalizeJCS
         : canonicalizeSorted;
     const canon = canonicalizer(body);
