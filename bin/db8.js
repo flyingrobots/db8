@@ -183,6 +183,9 @@ async function main() {
       if (kind === 'ed25519') {
         if (!args['sig-b64']) throw new CLIError('ed25519 requires --sig-b64', EXIT.VALIDATION);
         if (!args['pub-b64']) throw new CLIError('ed25519 requires --pub-b64', EXIT.VALIDATION);
+      } else if (kind === 'ssh') {
+        if (!args['sig-b64']) throw new CLIError('ssh requires --sig-b64', EXIT.VALIDATION);
+        if (!args['pub-ssh']) throw new CLIError('ssh requires --pub-ssh', EXIT.VALIDATION);
       }
     }
 
@@ -895,7 +898,18 @@ async function main() {
           body.public_key_b64 = String(args['pub-b64']);
         } else if (kind === 'ssh') {
           body.sig_b64 = String(args['sig-b64'] || '');
-          if (args['pub-ssh']) body.public_key_ssh = String(args['pub-ssh']);
+          if (args['pub-ssh']) {
+            let val = String(args['pub-ssh']);
+            if (val.startsWith('@')) {
+              const p = val.slice(1);
+              try {
+                val = await (await import('node:fs/promises')).then((m) => m.readFile(p, 'utf8'));
+              } catch {
+                throw new CLIError(`failed to read --pub-ssh file: ${p}`, EXIT.VALIDATION);
+              }
+            }
+            body.public_key_ssh = val.trim();
+          }
         }
         const res = await fetch(`${apiUrl.replace(/\/$/, '')}/rpc/provenance.verify`, {
           method: 'POST',
