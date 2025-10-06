@@ -919,6 +919,38 @@ On each change: bump docs `lastUpdated`, update Agent Log, and sync the Project 
 
 ---
 
+### Event — 2025-10-06 | SSH verify polish + PR sequencing
+
+#### Summary
+
+- Shepherded SSH provenance work to reviewable state and stabilized the PR queue. Fixed CLI edge cases for `--pub-ssh`, hardened server SSH parser, added tests and docs, and resolved Dependabot conflicts forward-only. Marked the CLI PR ready for review.
+
+#### References
+
+- PRs: [#147](https://github.com/flyingrobots/db8/pull/147) (markdownlint-cli — merged), [#145](https://github.com/flyingrobots/db8/pull/145) (markdownlint — conflicts resolved), [#146](https://github.com/flyingrobots/db8/pull/146) (@eslint/js — merged), [#142](https://github.com/flyingrobots/db8/pull/142) (eslint — conflicts resolved), [#144](https://github.com/flyingrobots/db8/pull/144) (CLI SSH verify — ready)
+- Issue: [#141](https://github.com/flyingrobots/db8/issues/141) (CLI `--pub-ssh @<path>`)
+- Files: `.gitignore`, `bin/db8.js`, `server/rpc.js`, `server/test/cli.provenance.verify.ssh.test.js`, `docs/Provenance.md`
+
+#### Key Decisions
+
+- No force-push policy reaffirmed: resolve forward with merge/additive commits only.
+- CLI: reject `--pub-ssh @` explicitly (clear validation message).
+- Server: SSH parser fails fast on empty base64; clearer variable names; removed dead checks.
+- API: unknown signature kinds return `unsupported_signature_kind` (501) and comment reflects SSH support.
+- Tests: use `process.execPath`, isolate temps via `mkdtemp`, pin `CANON_MODE=jcs` to prevent drift.
+- Docs: Provenance.md frontmatter includes `tags: [spec]` and milestone.
+
+#### Action Items
+
+- Monitor CI for PR #144; on green, request review and proceed per board hygiene.
+- Merge order (remaining): #145 → #143 → #142 already queued; keep lockfiles stable and avoid rebases.
+- After #144 merges: update board (Status/Workflow=Done), close #141.
+
+#### Notes
+
+- Added `/.tmp*` to `.gitignore` and removed previously committed temp files.
+- Lint/spellcheck now green; cspell false-positive on `cand` removed by rename.
+
 ### Milestones
 
 - [M2: Provenance & Journals](https://github.com/flyingrobots/db8/milestone/3)
