@@ -96,5 +96,5 @@ suite('SSE /events emits journal on DB NOTIFY', () => {
     expect(got.room_id).toBe(roomId);
     expect(got.idx).toBe(0);
     expect(got.hash).toBe(expectedHash);
-  }, 6000);
+  }, 3000);
 });
