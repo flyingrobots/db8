@@ -114,6 +114,19 @@ Journals
   synthesized latest in memory mode)
 - `GET /journal/history?room_id=<uuid>` — list of journals (for history pages / CLI verify)
 
+Enrollment (author binding)
+
+- Enroll a participant fingerprint so provenance verify can bind authorship:
+
+```bash
+# DER SPKI (Base64) example
+PUB_B64="$(node -e "const c=require('crypto');const {publicKey}=c.generateKeyPairSync('ed25519');console.log(Buffer.from(publicKey.export({format:'der',type:'spki'})).toString('base64'))")"
+db8 provenance enroll --participant <participant-uuid> --pub-b64 "$PUB_B64"
+
+# Or enroll a known fingerprint (sha256:<64-hex>)
+db8 provenance enroll --participant <participant-uuid> --fp sha256:<hex>
+```
+
 ## Run tests
 
 ```bash

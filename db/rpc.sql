@@ -424,3 +424,48 @@ BEGIN
   DO UPDATE SET hash = EXCLUDED.hash, signature = EXCLUDED.signature, core = EXCLUDED.core;
 END;
 $$;
+
+-- Participant fingerprint enrollment: accepts DER SPKI base64 or sha256:<hex>,
+-- normalizes to 'sha256:<hex>' and updates participants.ssh_fingerprint.
+CREATE OR REPLACE FUNCTION participant_fingerprint_set(
+  p_id uuid,
+  p_input text
+) RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_norm text;
+  v_hex text;
+  v_rows int := 0;
+BEGIN
+  IF p_id IS NULL THEN
+    RAISE EXCEPTION 'participant_not_found' USING ERRCODE = '22023';
+  END IF;
+  IF p_input IS NULL OR length(trim(p_input)) = 0 THEN
+    RAISE EXCEPTION 'invalid_fingerprint_or_key' USING ERRCODE = '22023';
+  END IF;
+
+  -- Case 1: explicit sha256:<hex> or plain 64-hex
+  IF p_input ~ '^(sha256:)?[0-9a-fA-F]{64}$' THEN
+    v_hex := lower(replace(p_input, 'sha256:', ''));
+    v_norm := 'sha256:' || v_hex;
+  ELSE
+    -- Case 2: try base64 decode and hash
+    BEGIN
+      v_hex := encode(digest(decode(p_input, 'base64'), 'sha256'), 'hex');
+      v_norm := 'sha256:' || v_hex;
+    EXCEPTION WHEN others THEN
+      RAISE EXCEPTION 'invalid_fingerprint_or_key' USING ERRCODE = '22023';
+    END;
+  END IF;
+
+  UPDATE participants SET ssh_fingerprint = v_norm WHERE id = p_id;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows = 0 THEN
+    RAISE EXCEPTION 'participant_not_found' USING ERRCODE = '22023';
+  END IF;
+  RETURN v_norm;
+END;
+$$;
