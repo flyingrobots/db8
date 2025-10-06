@@ -51,7 +51,7 @@ Errors (400/501):
 
 - `missing_public_key_b64` (ed25519), `missing_public_key_ssh` (ssh)
 - `invalid_public_key_or_signature`, `invalid_ssh_public_key`
-- `ssh_unsupported` if an unsupported kind is requested
+- `unsupported_signature_kind` if an unsupported kind is requested
 
 ## Author Binding Enforcement
 
