@@ -166,3 +166,14 @@ provenance verify verify a submission signature (ed25519 or ssh)
 
 - Conventional Commits; CI runs lint + tests
 - Use Issues + Project “db8 Roadmap”; follow AGENTS.md for hygiene
+
+## Milestone Focus
+
+- M0: Repo & Docs — scaffolding, docs, and CI wiring to enable disciplined development.
+- M1: MVP Loop — room/round lifecycle, submit/continue flow, basic CLI + web snapshot.
+- M2: Provenance & Journals — JCS canonicalization, client provenance verify (SSH/Ed25519), author binding, signed journals, CLI verify.
+- M3: Verification — per-claim verification verdicts, server/CLI flows, and minimal UI for the verification phase.
+- M4: Votes & Final — continue/no-continue flows to finalize debates, tally exposure, and transitions to “final”.
+- M5: Scoring & Elo — scoring models, per-user/participant ratings, and leaderboards.
+- M6: Research Tools — exports, analytics hooks, and E2E scripts to support research scenarios.
+- M7: Hardening & Ops — security reviews, rate limiting and quotas, packaging, and operational runbooks.
