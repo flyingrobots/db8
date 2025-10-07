@@ -960,3 +960,50 @@ On each change: bump docs `lastUpdated`, update Agent Log, and sync the Project 
 - [M6: Research Tools](https://github.com/flyingrobots/db8/milestone/7)
 - [M7: Hardening & Ops](https://github.com/flyingrobots/db8/milestone/8)
 - [M2: Provenance](https://github.com/flyingrobots/db8/milestone/16)
+
+---
+
+### Event — 2025-10-07 | M2 closed, README roadmap, DB tests workflow
+
+#### Summary
+
+- Closed both M2 milestones and verified acceptance with green tests. Added CLI journal verify tests, corrected error labels, cleaned temp ignores, and hardened SSH parsing. Rewrote README with a weighted milestone progress bar and added milestone focus descriptions. Introduced a manual/weekly GitHub Actions workflow to run DB‑gated integration suites; ensured lint runs before tests.
+
+#### References
+
+- Issues: closed/moved — #67, #68, #70, #30, #117, #121, #9, #10 (closed); #11, #12, #29, #7 (→ M3); #31, #15 (→ M6); #32, #13, #14 (→ M7)
+- PRs: #144 (CLI SSH verify + docs), #145/#146/#142 (deps alignment), #148 (db‑tests workflow + README milestone focus)
+- Files: `server/test/cli.journal.verify.test.js`, `docs/Provenance.md`, `.gitignore`, `server/rpc.js`, `.github/workflows/db-tests.yml`, `README.md`
+
+#### Key Decisions
+
+- M2 is done; provenance/journals shipped with tests and docs.
+- Keep DB‑gated suites behind a dedicated workflow (manual + weekly); lint must run first in that job.
+- README carries a simple, weighted progress bar plus a concise “Milestone Focus” section.
+- No force‑push; resolve forward with additive commits.
+
+#### Action Items
+
+- Monitor the new db‑tests workflow; stabilize if any flakes appear.
+- Kick off M3 (Verification): open issues, define schema/RPCs, add tests and endpoints (see next plan).
+- Keep board hygiene: set new M3 issues to Status=Todo/Workflow=Todo and link them to the project.
+
+#### Notes
+
+- Added `/.tmp*` to `.gitignore` and removed tracked temp files.
+- Corrected docs to use `unsupported_signature_kind`; pinned JCS in SSH tests.
+
+#### Next Moves (Plan — M3 Verification)
+
+- Schema/RPC (DB)
+  - `verification_verdicts` (id, round_id, submission_id/claim_id, verdict enum, rationale, reporter_id, created_at) + indexes + RLS; secure read views.
+  - RPCs: `verify_submit(...)`, `verify_aggregate(...)` with idempotency + bounds.
+  - pgTAP invariants for tables/uniques/RLS and RPC contracts.
+- Server/CLI/UI
+  - Server endpoints: `POST /rpc/verify.submit`, `GET /verify/summary`.
+  - CLI: `db8 verify submit` and `db8 verify summary`.
+  - Web: minimal verification view on the room page.
+- Tests/CI
+  - Unit tests for endpoints/CLI; DB‑gated integration for RPCs end‑to‑end; keep lint first in all jobs.
+- Docs/Board
+  - `docs/Verification.md` guide; README link; track under milestone “M3: Verification”.
