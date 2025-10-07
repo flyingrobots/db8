@@ -105,7 +105,7 @@ RUN v3.2.4 /Users/james/git/db8
 ✓ server/test/rpc.submission_deadline.test.js (1 test) 36ms
 ↓ server/test/rpc.validation.test.js (3 tests | 3 skipped)
 ✓ server/test/sse.timers.test.js (1 test) 27ms
-↓ server/test/journal.byidx.test.js (2 tests | 2 skipped)
+↓ server/test/journal.by-index.test.js (2 tests | 2 skipped)
 ✓ server/test/rpc.submission_validation.test.js (1 test) 100ms
 ↓ web/test/e2e.room.flow.spec.js (1 test | 1 skipped)
 ↓ server/test/rpc.db.postgres.test.js (2 tests | 2 skipped)
@@ -176,4 +176,4 @@ provenance verify verify a submission signature (ed25519 or ssh)
 - M4: Votes & Final — continue/no-continue flows to finalize debates, tally exposure, and transitions to “final”.
 - M5: Scoring & Elo — scoring models, per-user/participant ratings, and leaderboards.
 - M6: Research Tools — exports, analytics hooks, and E2E scripts to support research scenarios.
-- M7: Hardening & Ops — security reviews, rate limiting and quotas, packaging, and operational runbooks.
+- M7: Hardening & Ops — security reviews, rate limiting and quotas, packaging, and operational run books.
