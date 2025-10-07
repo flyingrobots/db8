@@ -1,157 +1,168 @@
 ---
-lastUpdated: 2025-10-02
+lastUpdated: 2025-10-07
 ---
 
-# DB8
+# db8
 
-**Structured conversations between multiple AI systems.**
+Debate engine with provenance, journals, and deterministic behavior.
 
-![db8-6](https://github.com/user-attachments/assets/b957fcdb-2443-42fc-990b-cfda7a3bad79)
+## Roadmap Progress
 
-## The Problem
+███████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░
+| | | | | | | |
+0 M1 M2 M3 M4 M5M6 M7
 
-We can talk to one AI at a time. But when you want multiple systems
-(Claude, ChatGPT, Gemini, LLaMA, even human participants) to interact in the
-same structured conversation, there's no good tool.
+Milestones (weighted cumulative positions):
 
-Group chats descend into chaos. APIs don't coordinate timing. Copy/paste only
-gets you so far. Attribution gets messy across providers. There's no audit
-trail for analyzing conversation patterns, and models influence each other
-through response ordering.
+- M0: Repo & Docs — weight: 0 — state: closed
+- M1: MVP Loop — weight: 125 — state: closed
+- M2: Provenance — weight: 95 — state: closed
+- M3: Verification — weight: 39 — state: open
+- M4: Votes & Final — weight: 29 — state: open
+- M5: Scoring & Elo — weight: 16 — state: open
+- M6: Research Tools — weight: 12 — state: open
+- M7: Hardening & Ops — weight: 20 — state: open
 
-## The Thesis: Conversation as Coordination
+Weights: priority/p0=8, p1=5, p2=3, p3=1, default=1. Positions are cumulative by milestone (e.g., M2 includes M1+M2).
 
-**DB8** ("debate") treats structured conversation as a multi-agent coordination
-problem. It creates a competitive, auditable environment where both humans and
-diverse AI models are first-class, anonymous participants.
+## Quickstart
 
-Think: Gladiatorial debate meets Git. Five masked participants enter.
-Arguments are chained forever.
+- Node 20+ (see )
+- Install:
+  > db8@0.0.0 postinstall
+  > node -e "try{require('@rollup/rollup-linux-x64-gnu');process.exit(0)}catch(e){process.exit(1)}" || npm i @rollup/rollup-linux-x64-gnu@latest || true
 
-## How DB8 Solves This
+up to date, audited 712 packages in 1s
 
-- **Barrier Rounds**: All participants draft simultaneously; submissions reveal
-  only when the round closes. No peeking, no first-mover advantage.
-- **Provenance by Design**: Every message is canonicalized, hashed, and
-  optionally signed — creating verifiable audit trails across heterogeneous
-  APIs.
-- **Systematic Judgment**: Claims require evidence; fact-checkers mark them
-  supported or unsupported, and rubric scoring produces comparable results.
-- **Reputation & Datasets**: Elo ratings and calibration scores track
-  performance over time, while signed journals produce structured datasets for
-  later analysis.
+245 packages are looking for funding
+run `npm fund` for details
 
-## Why It Matters
+found 0 vulnerabilities
 
-For researchers, tinkerers, and AI-curious builders, DB8 opens up new
-experiments:
+> db8@0.0.0 prepare
+> git config core.hooksPath .githooks
 
-- **Model vs. Model**: Run structured debates between different LLMs under
-  blind conditions.
-- **Human vs. AI**: Let humans and agents spar with equal constraints.
-- **AI Ensembles**: Mix models into juries, skeptics, or fact-checkers and
-  watch consensus emerge.
-- **Dataset Generation**: Every debate is an immutable, labeled corpus of
-  reasoning and citations.
+added 67 packages, removed 2 packages, changed 8 packages, and audited 712 packages in 2s
 
-> Sorta like AutoGen, but theatrical _and_ auditable.
+245 packages are looking for funding
+run `npm fund` for details
 
-## Agent Workflow
+found 0 vulnerabilities
 
-DB8 is CLI-first and RPC-driven. Autonomous agents participate in the
-synchronous debate loop:
+- Optional Postgres:
+  > db8@0.0.0 dev:db
+  > docker compose up -d db && sleep 2 && echo 'DB on :54329'
 
-```bash
-# Set up a room with multiple AI participants
-db8 room create --topic "Should AI be trained on copyrighted data?"
-db8 participant add --agent claude --api-key $ANTHROPIC_KEY
-db8 participant add --agent gpt4 --api-key $OPENAI_KEY
-db8 participant add --agent gemini --api-key $GOOGLE_KEY
+DB on :54329 (localhost:54329)
 
-# Agents monitor and participate automatically
-db8 room watch --json | ./agent-script.sh
-db8 submit --sign  # Cryptographically signed submissions
-```
+- Tests:
+  > db8@0.0.0 test
+  > if [ "$CI" = "true" ]; then npm run test:inner; else npm run test:docker; fi
 
-The Watcher service enforces authoritative time limits and phase flips,
-broadcasting events in real time.
+> db8@0.0.0 test:docker
+> bash ./scripts/test-docker.sh (docker-backed) or
+> db8@0.0.0 test:inner
+> vitest run
 
-Immutable journals commit every round’s transcript, scores, and logs to a
-public, append-only Git repository.
+RUN v3.2.4 /Users/james/git/db8
 
----
+✓ server/test/cli.login.test.js (2 tests) 706ms
+✓ CLI login + whoami (session file) > stores session and whoami reflects it 522ms
+✓ server/test/cli.provenance.enroll.test.js (1 test) 782ms
+✓ CLI provenance enroll > enrolls with --pub-b64 and prints normalized fingerprint 781ms
+✓ server/test/cli.provenance.verify.test.js (1 test) 774ms
+✓ CLI provenance verify > verifies ed25519 signature and prints hash + fingerprint 773ms
+✓ server/test/cli.provenance.verify.ssh.test.js (1 test) 815ms
+✓ CLI provenance verify (ssh-ed25519) > verifies a doc with --kind ssh and --pub-ssh 814ms
+✓ server/test/watcher.transitions.test.js (1 test) 598ms
+✓ Watcher transitions (authoritative timers) > submit -> published, then to next round when continue=yes wins 596ms
+✓ server/test/cli.journal.verify.test.js (2 tests) 917ms
+✓ CLI journal verify > verifies latest journal signature 756ms
+✓ server/test/cli.journal.pull.test.js (2 tests) 480ms
+✓ CLI journal pull > pulls journal history to output directory 309ms
+✓ server/test/cli.room.watch.test.js (3 tests) 559ms
+✓ server/test/rate_limit.test.js (2 tests) 191ms
+✓ server/test/cli.submit.test.js (1 test) 200ms
+✓ server/test/cli.room.status.test.js (1 test) 195ms
+✓ server/test/provenance.verify.binding.test.js (2 tests) 188ms
+✓ server/test/provenance.verify.ssh.test.js (3 tests) 176ms
+✓ server/test/cli.flag.test.js (1 test) 234ms
+✓ server/test/participant.fingerprint.set.test.js (3 tests) 164ms
+✓ server/test/cli.room.create.test.js (1 test) 244ms
+✓ server/test/nonce.enforce.test.js (3 tests) 1321ms
+✓ Server-issued nonces (enforced) > rejects expired nonce (ttl) 1209ms
+✓ server/test/rpc.db.integration.test.js (2 tests) 41ms
+✓ server/test/provenance.verify.enforce.test.js (1 test) 169ms
+✓ server/test/journal.test.js (1 test) 171ms
+✓ server/test/provenance.verify.test.js (5 tests) 215ms
+✓ server/test/state.enrichment.test.js (2 tests) 268ms
+✓ server/test/rpc.submission_flag.test.js (2 tests) 76ms
+✓ server/test/rpc.vote_continue.test.js (1 test) 125ms
+✓ server/test/rpc.room_create.test.js (2 tests) 276ms
+✓ server/test/config.builder.test.js (2 tests) 2ms
+✓ server/test/rpc.submission_create.test.js (1 test) 151ms
+✓ server/test/canonicalization.test.js (3 tests) 6ms
+✓ server/test/rpc.submission_deadline.test.js (1 test) 36ms
+↓ server/test/rpc.validation.test.js (3 tests | 3 skipped)
+✓ server/test/sse.timers.test.js (1 test) 27ms
+↓ server/test/journal.byidx.test.js (2 tests | 2 skipped)
+✓ server/test/rpc.submission_validation.test.js (1 test) 100ms
+↓ web/test/e2e.room.flow.spec.js (1 test | 1 skipped)
+↓ server/test/rpc.db.postgres.test.js (2 tests | 2 skipped)
+↓ server/test/watcher.db.flip.test.js (1 test | 1 skipped)
+↓ server/test/sse.db.events.test.js (1 test | 1 skipped)
+↓ server/test/sse.db.journal.test.js (1 test | 1 skipped)
 
-## Architecture
+Test Files 31 passed | 7 skipped (38)
+Tests 55 passed | 8 skipped | 3 todo (66)
+Start at 16:31:33
+Duration 3.68s (transform 604ms, setup 298ms, collect 7.09s, tests 10.20s, environment 4ms, prepare 3.56s)
 
-- Backend: Node.js (Express) — Authoritative Watcher service and Zod-validated
-  RPC endpoints.
-- Database: Postgres / Supabase — Storage, auth, and real-time changefeeds with
-  Row-Level Security.
-- Provenance: Git, SSH/Ed25519 — Immutable audit trail and cryptographic
-  content signing.
-- Client: CLI (`bin/db8.js`) — Agent orchestration, local draft validation,
-  signed submissions.
-- Frontend: Next.js — Human-readable Web UI for monitoring and playback.
+- CLI help: db8 CLI (skeleton)
+  Usage: db8 <command> [options]
 
----
+Global options:
+--room <uuid> override room
+--participant <uuid> override participant
+--json machine-readable output
+--quiet suppress non-errors
+--non-interactive fail instead of prompting
+--timeout <ms> RPC timeout
+--nonce <id> client idempotency key
 
-## Quick Start
+Commands:
+login obtain a room-scoped JWT (add --device-code for interactive flow)
+whoami print current identity
+room status show room snapshot
+room watch stream events (WS/SSE)
+room create create a new room (server RPC)
+draft open create/open draft.json
+draft validate validate and print canonical sha
+submit submit current draft
+resubmit resubmit with a new nonce
+flag submission report a submission to moderators
+journal pull download journal (latest or history)
+journal verify verify journal signature and chain
+provenance enroll enroll a participant fingerprint (author binding)
+provenance verify verify a submission signature (ed25519 or ssh)
 
-```bash
-git clone https://github.com/yourorg/db8.git && cd db8
-npm install
+## Highlights
 
-# Start the full stack
-npm run dev:db && npm run dev:server
+- RFC 8785 JCS canonicalization (default) for deterministic hashing
+- Provenance verify (Ed25519, OpenSSH Ed25519) with optional author binding
+- Server-issued nonces (issue/enforce)
+- Journals: per-round core, chain hash, Ed25519 signature; endpoints + CLI verify
+- SSE: realtime timers, phase, and journal events
 
-# Set up CLI and join a room
-npm link
-db8 login && db8 room status
-db8 draft open && db8 submit
-```
+## Layout
 
----
-
-## Status
-
-- M1 — 95%: Core debate loop, CLI automation, JWT auth, authoritative timers.
-- M2 — Planned: Cryptographic provenance, Git journaling, multi-API adapters.
-- M3+ — Planned: Analysis dashboard, conversation templates, full scoring
-  system.
-
----
-
-## Features (For Researchers and Builders)
-
-- 🔒 **Provenance**: Every submission is hashed, signed, and validated for
-  attribution.
-- ⏱️ **Barrier Sync**: Rounds close simultaneously — enforceable fairness for
-  AIs and humans alike.
-- 🧾 **Structured Claims**: Evidence and citations are first-class objects, not
-  afterthoughts.
-- 📜 **Immutable Journals**: Append-only Git records create permanent datasets
-  for replay and analysis.
-- 🤖 **Agent-Ready**: The CLI is built for programmatic participation; plug in
-  any LLM API via adapters.
-- 📊 **Scoring and Reputation**: Elo, calibration, and rubric scores generate
-  benchmarks across runs.
-- 🔎 **Research Cache**: Deduplicated citations and shared sources to keep
-  agents efficient.
-
----
+- — RPCs, SSE, watcher, journal signer
+- — CLI ()
+- — schema, RPCs, RLS, test helpers
+- — Next.js demo UI
+- — architecture & guides
 
 ## Contributing
 
-We are a JavaScript-only project and enforce high standards for code quality and
-commit history.
-
-- Follow Conventional Commits.
-- Run `./scripts/bootstrap.sh` after cloning to enable Git hooks.
-- Ensure all tests pass: `npm test`.
-
-PRs are welcome — but bring receipts. New features should be proposed in
-Discussions first; issues are for accepted work and bug reports.
-
----
-
-**DB8: Where AI systems meet in the arena of ideas.**
+- Conventional Commits; CI runs lint + tests
+- Use Issues + Project “db8 Roadmap”; follow AGENTS.md for hygiene
