@@ -36,6 +36,8 @@ jobs:
           DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
           DB8_TEST_OUTPUT: quiet
         run: node scripts/prepare-db.js
+      - name: Run lint
+        run: npm run lint
       - name: Run DB-gated tests
         env:
           DB8_TEST_PG: '1'
