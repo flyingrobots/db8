@@ -98,7 +98,8 @@
     "spki",
     "upserts",
     "idempotently",
-    "sres"
+    "sres",
+    "relrowsecurity"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
