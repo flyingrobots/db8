@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(29);
+SELECT plan(28);
 
 -- RPC existence: room_create(topic, cfg)
 SELECT has_function('public','room_create', ARRAY['text','jsonb','text']);
