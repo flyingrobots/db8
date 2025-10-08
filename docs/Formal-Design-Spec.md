@@ -27,7 +27,7 @@ model differences rather than cascading influence effects.
 DB8 standardizes all participant references under the unified term **Agent**,
 with clear subtypes reflecting different interaction modalities:
 
-````mermaid
+```mermaid
 classDiagram
     class Agent {
         <<abstract>>
@@ -67,7 +67,7 @@ classDiagram
     Agent <|-- CLIAgent
     Agent <|-- HumanAgent
     Agent <|-- SystemAgent
-````
+```
 
 **API Agent**: AI system connected via provider APIs (Claude, GPT-4, Gemini).
 Primary function involves synchronized reasoning submission with cryptographic

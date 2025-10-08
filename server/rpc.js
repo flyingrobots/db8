@@ -9,7 +9,8 @@ import {
   SubmissionFlag,
   RoomCreate,
   SubmissionVerify,
-  ParticipantFingerprintSet
+  ParticipantFingerprintSet,
+  VerifySubmit
 } from './schemas.js';
 import { sha256Hex } from './utils.js';
 import canonicalizer from './canonicalizer.js';
@@ -44,6 +45,8 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 const memSubmissions = new Map(); // key -> { id, canonical_sha256, content, author_id, room_id }
 const memSubmissionIndex = new Map(); // submission_id -> { room_id }
 const memFlags = new Map(); // submission_id -> Map(reporter_id -> { role, reason, created_at })
+// In-memory verification verdicts: key "round:reporter:submission:claim" -> { id, verdict, rationale }
+const memVerifications = new Map();
 // In-memory server-issued nonce stores (when DB is unavailable)
 // key "round:author" -> Map(nonce -> expires_unix)
 const memIssuedNonces = new Map();
@@ -468,6 +471,106 @@ app.post('/rpc/submission.flag', async (req, res) => {
     const payload = { ok: true, flag_count: existing.size };
     if (duplicate) payload.note = 'duplicate_flag';
     return res.json(payload);
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// verify.submit — record a verification verdict (DB first, memory fallback)
+app.post('/rpc/verify.submit', async (req, res) => {
+  try {
+    const input = VerifySubmit.parse(req.body || {});
+    const key = `${input.round_id}:${input.reporter_id}:${input.submission_id}:${input.claim_id || ''}`;
+    if (db) {
+      try {
+        const r = await db.query(
+          'select verify_submit($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::text,$7::text) as id',
+          [
+            input.round_id,
+            input.reporter_id,
+            input.submission_id,
+            input.claim_id || null,
+            input.verdict,
+            input.rationale || null,
+            input.client_nonce
+          ]
+        );
+        const id = r.rows?.[0]?.id;
+        if (!id) throw new Error('verify_submit_missing_id');
+        return res.json({ ok: true, id });
+      } catch (e) {
+        const msg = String(e?.message || '');
+        const code = e?.code;
+        if (code === '23503') return res.status(404).json({ ok: false, error: 'not_found' });
+        if (/invalid_verdict|round_not_verifiable|submission_round_mismatch/i.test(msg))
+          return res.status(400).json({ ok: false, error: msg });
+        if (/reporter_not_participant|reporter_role_denied/.test(msg))
+          return res.status(403).json({ ok: false, error: msg });
+        console.warn('[verify.submit] DB error, falling back to memory:', msg || e);
+      }
+    }
+    // memory fallback — idempotent by key
+    if (memVerifications.has(key)) {
+      const existing = memVerifications.get(key);
+      existing.verdict = input.verdict;
+      if (input.rationale) existing.rationale = input.rationale;
+      memVerifications.set(key, existing);
+      return res.json({ ok: true, id: existing.id, note: 'db_fallback' });
+    }
+    const id = crypto.randomUUID();
+    memVerifications.set(key, {
+      id,
+      verdict: input.verdict,
+      rationale: input.rationale || ''
+    });
+    return res.json({ ok: true, id, note: 'db_fallback' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// verify/summary — aggregated verdict counts for a round
+app.get('/verify/summary', async (req, res) => {
+  try {
+    const roundId = String(req.query.round_id || '');
+    if (!/^[0-9a-f-]{8,}$/i.test(roundId))
+      return res.status(400).json({ ok: false, error: 'invalid_round_id' });
+    if (db) {
+      try {
+        const r = await db.query(
+          'select submission_id, claim_id, true_count, false_count, unclear_count, needs_work_count, total from verify_summary($1::uuid) order by submission_id, claim_id nulls first',
+          [roundId]
+        );
+        return res.json({ ok: true, rows: r.rows || [] });
+      } catch (e) {
+        console.warn('[verify.summary] DB error, falling back to memory:', e?.message || e);
+      }
+    }
+    // memory summary
+    const rows = [];
+    const counts = new Map(); // key: submission:claim -> aggregate counts
+    for (const [k, v] of memVerifications.entries()) {
+      const [r, , s, c] = k.split(':');
+      if (r !== roundId) continue;
+      const ck = `${s}:${c}`;
+      const t = counts.get(ck) || {
+        submission_id: s,
+        claim_id: c || null,
+        true_count: 0,
+        false_count: 0,
+        unclear_count: 0,
+        needs_work_count: 0,
+        total: 0
+      };
+      if (v.verdict === 'true') t.true_count++;
+      else if (v.verdict === 'false') t.false_count++;
+      else if (v.verdict === 'unclear') t.unclear_count++;
+      else if (v.verdict === 'needs_work') t.needs_work_count++;
+      t.total++;
+      counts.set(ck, t);
+    }
+    for (const v of counts.values()) rows.push(v);
+    return res.json({ ok: true, rows, note: 'db_fallback' });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
   }
@@ -925,6 +1028,8 @@ app.get('/journal', async (req, res) => {
     const journal = await buildLatestJournal(roomId);
     return res.json({ ok: true, journal });
   } catch (e) {
+    // debug log to help identify CI AggregateError
+    console.error('[journal] error:', e);
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });

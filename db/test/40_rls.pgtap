@@ -2,9 +2,14 @@
 BEGIN;
 SELECT plan(6);
 
--- Ensure RLS is enabled
-SELECT has_rls('public', 'submissions') AS rls_enabled \gset
-SELECT ok(:'rls_enabled', 'RLS enabled on submissions');
+-- Ensure RLS is enabled (portable across pgTAP versions)
+WITH f AS (
+  SELECT relrowsecurity AS enabled
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' AND c.relname = 'submissions'
+)
+SELECT ok((SELECT enabled FROM f), 'RLS enabled on submissions');
 
 -- Seed minimal data
 DO $$
@@ -55,4 +60,3 @@ SELECT results_eq(
 
 SELECT finish();
 ROLLBACK;
-

@@ -39,6 +39,7 @@ export default function RoomPage({ params }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [hasNewJournal, setHasNewJournal] = useState(false);
+  const [verifyRows, setVerifyRows] = useState([]);
   const lastAckIdxRef = useRef(-1);
   const latestIdxRef = useRef(-1);
   const timerRef = useRef(null);
@@ -132,6 +133,28 @@ export default function RoomPage({ params }) {
   const canSubmit =
     state?.ok && state?.round?.phase === 'submit' && isUUID(roomId) && isUUID(participant);
   const transcript = Array.isArray(state?.round?.transcript) ? state.round.transcript : [];
+
+  // Fetch verification summary (read-only) when round_id is known
+  useEffect(() => {
+    const rid = state?.round?.round_id;
+    if (!rid) return;
+    let cancelled = false;
+    async function loadSummary() {
+      try {
+        const r = await fetch(`${apiBase()}/verify/summary?round_id=${encodeURIComponent(rid)}`);
+        const j = await r.json().catch(() => ({}));
+        if (!cancelled && j?.ok && Array.isArray(j.rows)) setVerifyRows(j.rows);
+      } catch {
+        /* ignore */
+      }
+    }
+    loadSummary();
+    const t = setInterval(loadSummary, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [state?.round?.round_id]);
 
   // Persist small fields locally for convenience
   useEffect(() => {
@@ -383,6 +406,30 @@ export default function RoomPage({ params }) {
                   <p className="text-[11px] text-muted-foreground font-mono">
                     sha256: {entry.canonical_sha256}
                   </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-lg font-semibold">Verification Summary</div>
+            <Badge variant="outline">
+              {Array.isArray(verifyRows) ? verifyRows.length : 0} rows
+            </Badge>
+          </div>
+          {!verifyRows || verifyRows.length === 0 ? (
+            <p className="text-sm text-muted">No verification verdicts yet.</p>
+          ) : (
+            <ul className="space-y-2">
+              {verifyRows.map((r, i) => (
+                <li key={i} className="text-sm font-mono">
+                  <span className="text-muted-foreground">{(r.claim_id ?? '-') + ' '}</span>
+                  T:{r.true_count} F:{r.false_count} U:{r.unclear_count} N:{r.needs_work_count} ·
+                  total {r.total}
                 </li>
               ))}
             </ul>

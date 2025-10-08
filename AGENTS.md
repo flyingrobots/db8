@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-06
+lastUpdated: 2025-10-08
 ---
 
 # AGENTS.md
@@ -960,3 +960,51 @@ On each change: bump docs `lastUpdated`, update Agent Log, and sync the Project 
 - [M6: Research Tools](https://github.com/flyingrobots/db8/milestone/7)
 - [M7: Hardening & Ops](https://github.com/flyingrobots/db8/milestone/8)
 - [M2: Provenance](https://github.com/flyingrobots/db8/milestone/16)
+
+---
+
+### Event — 2025-10-07 | M2 closed, README roadmap, DB tests workflow
+
+#### Summary
+
+- Closed both M2 milestones and verified acceptance with green tests. Added CLI journal verify tests, corrected error labels, cleaned temp ignores, and hardened SSH parsing. Rewrote README with a weighted milestone progress bar and added milestone focus descriptions. Introduced a manual/weekly GitHub Actions workflow to run DB‑gated integration suites; ensured lint runs before tests.
+
+#### References
+
+- Issues: closed/moved — #67, #68, #70, #30, #117, #121, #9, #10 (closed); #11, #12, #29, #7 (→ M3); #31, #15 (→ M6); #32, #13, #14 (→ M7)
+- PRs: #144 (CLI SSH verify + docs), #145/#146/#142 (deps alignment), #148 (db‑tests workflow + README milestone focus)
+- Files: `server/test/cli.journal.verify.test.js`, `docs/Provenance.md`, `.gitignore`, `server/rpc.js`, `.github/workflows/db-tests.yml`, `README.md`
+
+#### Key Decisions
+
+- M2 is done; provenance/journals shipped with tests and docs.
+- Keep DB‑gated suites behind a dedicated workflow (manual + weekly); lint must run first in that job.
+- README carries a simple, weighted progress bar plus a concise “Milestone Focus” section.
+- No force‑push; resolve forward with additive commits.
+
+#### Action Items
+
+- Monitor the new db‑tests workflow; stabilize if any flakes appear.
+- Kick off M3 (Verification): open issues, define schema/RPCs, add tests and endpoints (see next plan).
+- Keep board hygiene: set new M3 issues to Status=Todo/Workflow=Todo and link them to the project.
+
+#### Notes
+
+- Added `/.tmp*` to `.gitignore` and removed tracked temp files.
+- Corrected docs to use `unsupported_signature_kind`; pinned JCS in SSH tests.
+
+#### Next Moves (Plan — M3 Verification)
+
+- Schema/RPC (DB)
+  - `verification_verdicts` (id, round_id, submission_id/claim_id, verdict enum, rationale, reporter_id, created_at) + indexes + RLS; secure read views.
+  - RPCs: `verify_submit(...)`, `verify_aggregate(...)` with idempotency + bounds.
+  - pgTAP invariants for tables/uniques/RLS and RPC contracts.
+- Server/CLI/UI
+  - Server endpoints: `POST /rpc/verify.submit`, `GET /verify/summary`.
+  - CLI: `db8 verify submit` and `db8 verify summary`.
+  - Web: minimal verification view on the room page.
+- Tests/CI
+  - Unit tests for endpoints/CLI; DB‑gated integration for RPCs end‑to‑end; keep lint first in all jobs.
+- Docs/Board
+  - `docs/Verification.md` guide; README link; track under milestone “M3: Verification”.
+    {"date":"2025-10-08","time":"19:14","summary":"Shipped M3 Verification: added verification verdicts across DB/Server/CLI/Web, made pgTAP + Docker DB suite green, and opened a draft PR.","topics":[{"topic":"Verification DB & RLS","what":"Added verification_verdicts table, RLS policies, and views","why":"M3 requires recording per-claim/per-submission verdicts","context":"Existing M1/M2 schema with submissions/votes and RLS groundwork","issue":"Design idempotency and enforce role/membership for reporters","resolution":"Unique on (round,reporter,submission,claim); verify_submit enforces judge/host and round phase","future_work":"Consider richer claim structure and cross-round carryover","time_percent":25},{"topic":"Server & CLI endpoints","what":"POST /rpc/verify.submit, GET /verify/summary; CLI verify submit/summary","why":"Expose verdict write/read paths to clients","context":"Express RPCs with Zod validation and in-memory fallback patterns","issue":"Consistent validation + idempotency and friendly CLI UX","resolution":"Zod schema + RPC upsert; CLI flags validated; helpful errors","future_work":"Add --json rich summary and grouping in CLI","time_percent":20},{"topic":"pgTAP + Docker DB suite","what":"Installed pgTAP, added invariants, fixed tests for portability","why":"Gate DB invariants and RPC contracts in CI and locally","context":"Manual/weekly db-tests workflow; local docker compose on :54329","issue":"RLS tests under superuser; pgtap version differences; missing seeds","resolution":"Used reader role, relrowsecurity checks, seeded rows; corrected plans; all green","future_work":"Promote more DB-gated tests and stabilize timings","time_percent":30},{"topic":"Flags view pre-publish leakage","what":"Adjusted submissions_with_flags_view to restrict to published","why":"Ensure zero flags appear before publish even with base-table access","context":"submission_flags RLS + aggregated view consumed by server/web","issue":"Pre-publish aggregate showed 1 due to join behavior","resolution":"Join flags through submissions/rounds and filter rr.phase='published'","future_work":"Revisit if we add moderator preview paths","time_percent":10},{"topic":"Repo hygiene & PR","what":"Merged origin/main, created branch, opened Draft PR, created Issue","why":"Follow AGENTS.md discipline (issues, milestones, project, draft PRs)","context":"Project 'db8 Roadmap', milestone 'M3: Verification'","issue":"Ensure board fields, labels, and milestone are set","resolution":"Issue #149, Draft PR #150 with labels/milestone; project updated","future_work":"Kick off db-tests workflow and request reviews","time_percent":15}],"key_decisions":["Use judge/host roles for verify_submit and require published/final rounds","Keep verdict visibility reporter-only until publish; aggregate via view","Adopt JSONL debrief entries appended to AGENTS.md","Open Draft PR and track via Project/Milestone before merge"],"action_items":[{"task":"Run GitHub 'db-tests' workflow and attach results to PR #150","owner":"james"},{"task":"Request reviewers and iterate on feedback for PR #150","owner":"james"},{"task":"Enhance UI with per-claim verdict badges in transcript","owner":"james"}]}

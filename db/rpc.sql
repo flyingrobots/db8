@@ -311,19 +311,22 @@ CREATE OR REPLACE VIEW submissions_with_flags_view AS
   FROM submissions s
   JOIN rounds r ON r.id = s.round_id
   LEFT JOIN (
-    SELECT submission_id,
+    SELECT sf.submission_id,
            COUNT(*) AS flag_count,
            jsonb_agg(
              jsonb_build_object(
-               'reporter_id', reporter_id,
-               'reporter_role', reporter_role,
-               'reason', reason,
-               'created_at', extract(epoch from created_at)::bigint
+               'reporter_id', sf.reporter_id,
+               'reporter_role', sf.reporter_role,
+               'reason', sf.reason,
+               'created_at', extract(epoch from sf.created_at)::bigint
              )
-             ORDER BY created_at DESC
+             ORDER BY sf.created_at DESC
            ) AS flag_details
-      FROM submission_flags
-     GROUP BY submission_id
+      FROM submission_flags sf
+      JOIN submissions s2 ON s2.id = sf.submission_id
+      JOIN rounds rr ON rr.id = s2.round_id
+     WHERE rr.phase = 'published'
+     GROUP BY sf.submission_id
   ) f ON f.submission_id = s.id;
 
 -- Harden views to avoid qual pushdown across RLS boundaries
@@ -483,3 +486,103 @@ BEGIN
   RETURN v_norm;
 END;
 $$;
+
+-- M3: Verification RPCs
+-- verify_submit: upsert a verdict for a (round, reporter, submission, claim)
+CREATE OR REPLACE FUNCTION verify_submit(
+  p_round_id uuid,
+  p_reporter_id uuid,
+  p_submission_id uuid,
+  p_claim_id text,
+  p_verdict text,
+  p_rationale text,
+  p_client_nonce text DEFAULT NULL
+) RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_id uuid;
+  v_phase text;
+  v_room uuid;
+  v_room_r uuid;
+  v_role text;
+BEGIN
+  -- Enforce allowed verdicts (also via CHECK)
+  IF p_verdict NOT IN ('true','false','unclear','needs_work') THEN
+    RAISE EXCEPTION 'invalid_verdict' USING ERRCODE = '22023';
+  END IF;
+
+  -- Ensure submission belongs to the provided round
+  PERFORM 1 FROM submissions s WHERE s.id = p_submission_id AND s.round_id = p_round_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'submission_round_mismatch' USING ERRCODE = '22023';
+  END IF;
+
+  -- Round must be published or final
+  SELECT phase, room_id INTO v_phase, v_room FROM rounds WHERE id = p_round_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'round_not_found' USING ERRCODE = '22023';
+  END IF;
+  IF v_phase NOT IN ('published','final') THEN
+    RAISE EXCEPTION 'round_not_verifiable' USING ERRCODE = '22023';
+  END IF;
+
+  -- Reporter must be a participant in the same room and role judge/host
+  SELECT p.role, r.room_id
+    INTO v_role, v_room_r
+    FROM participants p
+    JOIN rounds r ON r.room_id = p.room_id
+   WHERE p.id = p_reporter_id
+     AND r.id = p_round_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'reporter_not_participant' USING ERRCODE = '42501';
+  END IF;
+  IF v_role NOT IN ('judge','host') THEN
+    RAISE EXCEPTION 'reporter_role_denied' USING ERRCODE = '42501';
+  END IF;
+
+  INSERT INTO verification_verdicts (round_id, submission_id, reporter_id, claim_id, verdict, rationale)
+  VALUES (p_round_id, p_submission_id, p_reporter_id, NULLIF(p_claim_id, ''), p_verdict, NULLIF(p_rationale, ''))
+  ON CONFLICT (round_id, reporter_id, submission_id, coalesce(claim_id, ''))
+  DO UPDATE SET verdict = EXCLUDED.verdict, rationale = COALESCE(EXCLUDED.rationale, verification_verdicts.rationale), created_at = now()
+  RETURNING id INTO v_id;
+  RETURN v_id;
+END;
+$$;
+
+-- verify_summary: aggregated verdict counts per submission and claim within a round
+CREATE OR REPLACE FUNCTION verify_summary(
+  p_round_id uuid
+) RETURNS TABLE (
+  submission_id uuid,
+  claim_id text,
+  true_count int,
+  false_count int,
+  unclear_count int,
+  needs_work_count int,
+  total int
+)
+LANGUAGE sql
+AS $$
+  SELECT
+    v.submission_id,
+    v.claim_id,
+    SUM(CASE WHEN v.verdict = 'true' THEN 1 ELSE 0 END)::int AS true_count,
+    SUM(CASE WHEN v.verdict = 'false' THEN 1 ELSE 0 END)::int AS false_count,
+    SUM(CASE WHEN v.verdict = 'unclear' THEN 1 ELSE 0 END)::int AS unclear_count,
+    SUM(CASE WHEN v.verdict = 'needs_work' THEN 1 ELSE 0 END)::int AS needs_work_count,
+    COUNT(*)::int AS total
+  FROM verification_verdicts v
+  WHERE v.round_id = p_round_id
+  GROUP BY v.submission_id, v.claim_id
+  ORDER BY v.submission_id, v.claim_id NULLS FIRST;
+$$;
+
+-- RLS-friendly view for verification verdicts (read-only)
+CREATE OR REPLACE VIEW verification_verdicts_view AS
+  SELECT v.id, r.room_id, v.round_id, v.submission_id, v.reporter_id, v.claim_id, v.verdict, v.rationale, v.created_at
+  FROM verification_verdicts v
+  JOIN rounds r ON r.id = v.round_id;
+ALTER VIEW verification_verdicts_view SET (security_barrier = true);

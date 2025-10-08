@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-07
+lastUpdated: 2025-10-08
 ---
 
 # db8
@@ -60,6 +60,8 @@ Each milestone marker includes all tasks from prior milestones (e.g., M2 = M1+M2
 - `db/` — Postgres schema, RPCs, RLS, and test helpers
 - `web/` — Next.js demo UI (room snapshot, journal viewer)
 - `docs/` — architecture, feature docs, guides
+
+See also: docs/Verification.md
 
 ## Contributing
 
