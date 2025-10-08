@@ -65,5 +65,7 @@ jobs:
           DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
         run: |
           npx vitest run server/test/rpc.db.postgres.test.js --reporter verbose
+          npx vitest run server/test/rpc.verify.submit.test.js --reporter verbose
+          npx vitest run server/test/rpc.verify.summary.test.js --reporter verbose
           npx vitest run server/test/journal.byidx.test.js --reporter verbose
           npx vitest run server/test/watcher.db.flip.test.js --reporter verbose
