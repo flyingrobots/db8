@@ -24,7 +24,22 @@ BEGIN
     ON CONFLICT DO NOTHING;
 END $$;
 
+-- Create a non-superuser reader and grant minimal privileges for SELECTs through the view
+DO $$
+BEGIN
+  BEGIN
+    CREATE ROLE db8_reader LOGIN;
+  EXCEPTION WHEN duplicate_object THEN
+    -- ignore
+  END;
+  GRANT USAGE ON SCHEMA public TO db8_reader;
+  GRANT SELECT ON submissions TO db8_reader;
+  GRANT SELECT ON rounds TO db8_reader;
+  GRANT SELECT ON submissions_with_flags_view TO db8_reader;
+END $$;
+
 -- During submit: each author sees only their row via submissions_with_flags_view
+SET ROLE db8_reader;
 SELECT set_config('db8.participant_id','30000000-0000-0000-0000-000000000003', false);
 SELECT results_eq(
   $$ SELECT count(*)::int FROM submissions_with_flags_view v JOIN rounds r ON r.id=v.round_id WHERE r.phase='submit' $$,
@@ -40,7 +55,9 @@ SELECT results_eq(
 );
 
 -- After publish: anyone sees both
+RESET ROLE;
 UPDATE rounds SET phase='published', published_at_unix = extract(epoch from now())::bigint WHERE id='30000000-0000-0000-0000-000000000002';
+SET ROLE db8_reader;
 SELECT set_config('db8.participant_id','00000000-0000-0000-0000-000000000000', false);
 SELECT results_eq(
   $$ SELECT count(*)::int FROM submissions_with_flags_view v JOIN rounds r ON r.id=v.round_id WHERE r.phase='published' $$,
