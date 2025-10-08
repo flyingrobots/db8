@@ -10,7 +10,6 @@ let __setDbPool;
 const shouldRun = process.env.RUN_PGTAP === '1' || process.env.DB8_TEST_PG === '1';
 const dbUrl =
   process.env.DB8_TEST_DATABASE_URL || 'postgresql://postgres:test@localhost:54329/db8_test';
-// App imported statically so __setDbPool attaches to the same instance
 
 let testRoomId = '';
 
@@ -35,7 +34,6 @@ suite('GET /journal?room_id&idx', () => {
     const port = server.address().port;
     url = `http://127.0.0.1:${port}`;
     pool = new pg.Pool({ connectionString: dbUrl });
-    // Ensure the app uses the same DB pool for route handlers
     __setDbPool(pool);
   });
 
@@ -69,7 +67,16 @@ suite('GET /journal?room_id&idx', () => {
     ]);
 
     const r = await fetch(`${url}/journal?room_id=${encodeURIComponent(room)}&idx=${idx}`);
-    const body = await r.json().catch(() => ({}));
+    const raw = await r.text();
+    let body = {};
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      /* ignore */
+    }
+    if (r.status !== 200) {
+      console.error('[journal_by_index] expected 200, got', r.status, 'body=', raw);
+    }
     expect(r.status).toBe(200);
     expect(body?.ok).toBe(true);
     expect(body?.journal?.round_idx).toBe(idx);
@@ -82,6 +89,10 @@ suite('GET /journal?room_id&idx', () => {
   it('404s for a missing index', async () => {
     const room = crypto.randomUUID();
     const r = await fetch(`${url}/journal?room_id=${encodeURIComponent(room)}&idx=999`);
+    if (r.status !== 404) {
+      const body = await r.text();
+      console.error('[journal_by_index] expected 404, got', r.status, 'body=', body);
+    }
     expect(r.status).toBe(404);
   });
 });
