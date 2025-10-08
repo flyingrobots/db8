@@ -40,6 +40,8 @@ export default function RoomPage({ params }) {
   const [success, setSuccess] = useState('');
   const [hasNewJournal, setHasNewJournal] = useState(false);
   const [verifyRows, setVerifyRows] = useState([]);
+  const [verifyError, setVerifyError] = useState('');
+  const [verifyShown, setVerifyShown] = useState(50);
   const lastAckIdxRef = useRef(-1);
   const latestIdxRef = useRef(-1);
   const timerRef = useRef(null);
@@ -134,25 +136,96 @@ export default function RoomPage({ params }) {
     state?.ok && state?.round?.phase === 'submit' && isUUID(roomId) && isUUID(participant);
   const transcript = Array.isArray(state?.round?.transcript) ? state.round.transcript : [];
 
-  // Fetch verification summary (read-only) when round_id is known
+  // Fetch verification summary (read-only) when round_id is known with backoff + shape validation
   useEffect(() => {
     const rid = state?.round?.round_id;
-    if (!rid) return;
+    if (!rid) {
+      setVerifyRows([]);
+      setVerifyError('');
+      return;
+    }
     let cancelled = false;
-    async function loadSummary() {
-      try {
-        const r = await fetch(`${apiBase()}/verify/summary?round_id=${encodeURIComponent(rid)}`);
-        const j = await r.json().catch(() => ({}));
-        if (!cancelled && j?.ok && Array.isArray(j.rows)) setVerifyRows(j.rows);
-      } catch {
-        /* ignore */
+    let delay = 5000;
+    let lastSig = '';
+    let controller;
+    const Row = z.object({
+      submission_id: z.string().uuid(),
+      claim_id: z.string().nullable().optional(),
+      true_count: z.number().int(),
+      false_count: z.number().int(),
+      unclear_count: z.number().int(),
+      needs_work_count: z.number().int(),
+      total: z.number().int()
+    });
+    const Rows = z.array(Row);
+    async function loop() {
+      while (!cancelled) {
+        controller = new globalThis.AbortController();
+        let aborted = false;
+        try {
+          const r = await fetch(`${apiBase()}/verify/summary?round_id=${encodeURIComponent(rid)}`, {
+            signal: controller.signal
+          });
+          const j = await r.json().catch(() => ({}));
+          if (cancelled) {
+            break;
+          }
+          if (r.ok && j?.ok && Array.isArray(j.rows)) {
+            const parsed = Rows.safeParse(j.rows);
+            if (parsed.success) {
+              const sig = JSON.stringify(parsed.data);
+              if (sig !== lastSig) {
+                lastSig = sig;
+                if (!cancelled && !controller.signal.aborted) {
+                  setVerifyRows(parsed.data);
+                }
+              }
+              if (!cancelled && !controller.signal.aborted) {
+                setVerifyError('');
+              }
+              delay = 5000; // reset backoff on success
+            } else {
+              lastSig = '';
+              if (!cancelled && !controller.signal.aborted) {
+                setVerifyRows([]);
+                setVerifyError('Invalid verification data');
+              }
+              delay = Math.min(30000, delay * 2);
+            }
+          } else {
+            lastSig = '';
+            if (!cancelled && !controller.signal.aborted) {
+              setVerifyRows([]);
+              setVerifyError(j?.error || `HTTP ${r.status}`);
+            }
+            delay = Math.min(30000, delay * 2);
+          }
+        } catch (e) {
+          aborted =
+            controller?.signal?.aborted ||
+            e?.name === 'AbortError' ||
+            (typeof e?.message === 'string' && e.message.toLowerCase().includes('abort'));
+          if (!aborted && !cancelled) {
+            setVerifyRows([]);
+            setVerifyError(String(e?.message || e));
+            lastSig = '';
+            delay = Math.min(30000, delay * 2);
+          }
+        } finally {
+          controller = null;
+        }
+        if (cancelled || aborted) {
+          break;
+        }
+        await new Promise((res) => globalThis.setTimeout(res, delay));
       }
     }
-    loadSummary();
-    const t = setInterval(loadSummary, 5000);
+    loop();
     return () => {
       cancelled = true;
-      clearInterval(t);
+      controller?.abort();
+      setVerifyRows([]);
+      setVerifyError('');
     };
   }, [state?.round?.round_id]);
 
@@ -421,11 +494,12 @@ export default function RoomPage({ params }) {
               {Array.isArray(verifyRows) ? verifyRows.length : 0} rows
             </Badge>
           </div>
+          {verifyError && <p className="text-sm text-red-600">{verifyError}</p>}
           {!verifyRows || verifyRows.length === 0 ? (
             <p className="text-sm text-muted">No verification verdicts yet.</p>
           ) : (
             <ul className="space-y-2">
-              {verifyRows.map((r, i) => (
+              {verifyRows.slice(0, verifyShown).map((r, i) => (
                 <li key={i} className="text-sm font-mono">
                   <span className="text-muted-foreground">{(r.claim_id ?? '-') + ' '}</span>
                   T:{r.true_count} F:{r.false_count} U:{r.unclear_count} N:{r.needs_work_count} ·
@@ -433,6 +507,13 @@ export default function RoomPage({ params }) {
                 </li>
               ))}
             </ul>
+          )}
+          {verifyRows.length > verifyShown && (
+            <div className="pt-2">
+              <Button size="sm" variant="outline" onClick={() => setVerifyShown((n) => n + 50)}>
+                Show more
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>

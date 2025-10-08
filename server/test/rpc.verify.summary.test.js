@@ -1,5 +1,7 @@
 import request from 'supertest';
-import app, { __setDbPool } from '../rpc.js';
+
+let app;
+let __setDbPool;
 
 const ROOM_ID = '00000000-0000-0000-0000-00000000f101';
 const ROUND_ID = '00000000-0000-0000-0000-00000000f102';
@@ -8,7 +10,15 @@ const RPT_A = '00000000-0000-0000-0000-00000000f104';
 const RPT_B = '00000000-0000-0000-0000-00000000f105';
 
 describe('GET /verify/summary (memory path)', () => {
-  beforeAll(() => __setDbPool(null));
+  beforeAll(async () => {
+    const original = process.env.DATABASE_URL;
+    delete process.env.DATABASE_URL;
+    const mod = await import('../rpc.js');
+    app = mod.default;
+    __setDbPool = mod.__setDbPool;
+    if (original !== undefined) process.env.DATABASE_URL = original;
+    __setDbPool(null);
+  });
 
   it('aggregates per-submission and per-claim verdicts', async () => {
     const issued = await request(app)
@@ -26,7 +36,7 @@ describe('GET /verify/summary (memory path)', () => {
       content: 'Target',
       claims: [{ id: 'c1', text: 'Abc', support: [{ kind: 'logic', ref: 'a' }] }],
       citations: [{ url: 'https://example.com/a' }, { url: 'https://example.com/b' }],
-      client_nonce: issued?.ok ? issued.nonce : 'nonce-sum-1'
+      client_nonce: issued?.ok ? issued.nonce : 'nonce-sum-1' // fallback nonce keeps the memory path under test when issuance fails; we skip asserting issued.ok to allow exercising failure/edge flows
     };
     const sres = await request(app).post('/rpc/submission.create').send(submission).expect(200);
     const sid = sres.body.submission_id;

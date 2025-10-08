@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'node:http';
 import pg from 'pg';
-import app, { __setDbPool } from '../rpc.js';
 import crypto from 'node:crypto';
+
+let app;
+let __setDbPool;
 
 // Only run when DB-backed tests are enabled
 const shouldRun = process.env.RUN_PGTAP === '1' || process.env.DB8_TEST_PG === '1';
@@ -19,6 +21,18 @@ suite('GET /journal?room_id&idx', () => {
   let pool;
 
   beforeAll(async () => {
+    const original = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = dbUrl;
+    // Node caches modules by their resolved specifier, so changing DATABASE_URL
+    // just before import will not reinitialize the pool if ../rpc.js was loaded
+    // earlier in this process. The test instead relies on the exported
+    // __setDbPool helper to inject the test pool after the module loads.
+    const mod = await import('../rpc.js');
+    app = mod.default;
+    __setDbPool = mod.__setDbPool;
+    if (original === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = original;
+
     server = http.createServer(app);
     await new Promise((r) => server.listen(0, r));
     const port = server.address().port;
@@ -36,6 +50,7 @@ suite('GET /journal?room_id&idx', () => {
     } catch (e) {
       void e; // ignore cleanup errors
     }
+    // Detach DB pool from the app and close
     __setDbPool(null);
     if (pool) await pool.end();
     await new Promise((r) => server.close(r));

@@ -11,7 +11,8 @@ const EXIT = {
   RATE: 5,
   PROVENANCE: 6,
   NETWORK: 7,
-  NOT_FOUND: 8
+  NOT_FOUND: 8,
+  FAIL: 9
 };
 
 function print(msg) {
@@ -1051,14 +1052,26 @@ async function main() {
           if (args.json)
             print(JSON.stringify({ ok: false, status: res.status, error: data?.error }));
           else printerr(data?.error || `Server error ${res.status}`);
+          if (res.status === 400) return EXIT.VALIDATION;
+          if (res.status === 401 || res.status === 403) return EXIT.AUTH;
           return EXIT.NETWORK;
         }
         if (args.json) print(JSON.stringify({ ok: true, id: data.id }));
         else print(`ok id=${data.id}`);
         return EXIT.OK;
       } catch (e) {
-        printerr(e?.message || String(e));
-        return EXIT.NETWORK;
+        const msg = e?.message || String(e);
+        printerr(msg);
+        const name = (e && e.name) || '';
+        const code = (e && e.code) || '';
+        if (
+          name === 'FetchError' ||
+          name === 'AbortError' ||
+          (typeof code === 'string' && /^E/.test(code))
+        ) {
+          return EXIT.NETWORK;
+        }
+        return EXIT.FAIL;
       }
     }
     case 'verify:summary': {

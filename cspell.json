@@ -99,7 +99,9 @@
     "upserts",
     "idempotently",
     "sres",
-    "relrowsecurity"
+    "relrowsecurity",
+    "regs",
+    "collab"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }

@@ -510,6 +510,9 @@ app.post('/rpc/verify.submit', async (req, res) => {
       }
     }
     // memory fallback — idempotent by key
+    if (!memSubmissionIndex.has(String(input.submission_id))) {
+      return res.status(404).json({ ok: false, error: 'submission_not_found' });
+    }
     if (memVerifications.has(key)) {
       const existing = memVerifications.get(key);
       existing.verdict = input.verdict;
@@ -550,12 +553,16 @@ app.get('/verify/summary', async (req, res) => {
     const rows = [];
     const counts = new Map(); // key: submission:claim -> aggregate counts
     for (const [k, v] of memVerifications.entries()) {
-      const [r, , s, c] = k.split(':');
+      const parts = String(k || '').split(':');
+      if (parts.length < 3) continue;
+      const r = parts[0] || '';
+      const s = parts[2] || '';
+      const claimId = parts.length > 3 ? parts.slice(3).join(':') : null;
       if (r !== roundId) continue;
-      const ck = `${s}:${c}`;
+      const ck = `${s}:${claimId}`;
       const t = counts.get(ck) || {
         submission_id: s,
-        claim_id: c || null,
+        claim_id: claimId || null,
         true_count: 0,
         false_count: 0,
         unclear_count: 0,

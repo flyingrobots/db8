@@ -25,6 +25,15 @@ suite('Postgres-backed verification RPCs', () => {
     await pool.query(rpcSql);
     await pool.query(rlsSql);
 
+    // Fail fast if critical tables are missing
+    const regs = await pool.query(
+      "select 'verification_verdicts' as name, to_regclass('public.verification_verdicts') as reg union all select 'submissions', to_regclass('public.submissions') union all select 'rounds', to_regclass('public.rounds')"
+    );
+    const missing = regs.rows.filter((r) => !r.reg).map((r) => r.name);
+    if (missing.length > 0) {
+      throw new Error('Missing critical tables: ' + missing.join(', '));
+    }
+
     await pool.query(
       `insert into rooms (id, title)
        values ('30000000-0000-0000-0000-000000000001', 'Verify Room PG')
@@ -58,6 +67,8 @@ suite('Postgres-backed verification RPCs', () => {
     }
     if (existing.length > 0) {
       await pool.query(`TRUNCATE ${existing.join(', ')} RESTART IDENTITY CASCADE;`);
+      // eslint-disable-next-line no-console
+      console.log('[truncate]', existing.join(', '));
     }
   });
 
@@ -87,5 +98,17 @@ suite('Postgres-backed verification RPCs', () => {
     const rows = summary.body.rows || [];
     const overall = rows.find((r) => r.claim_id === null || r.claim_id === undefined);
     expect(overall?.true_count).toBe(1);
+  });
+
+  it('rejects invalid submission_id', async () => {
+    const body = {
+      round_id: '30000000-0000-0000-0000-000000000002',
+      reporter_id: '30000000-0000-0000-0000-000000000004',
+      submission_id: '99999999-9999-9999-9999-999999999999',
+      verdict: 'true',
+      client_nonce: 'pg-ver-invalid'
+    };
+    const res = await request(app).post('/rpc/verify.submit').send(body);
+    expect(res.status).toBeGreaterThanOrEqual(400);
   });
 });

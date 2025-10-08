@@ -543,14 +543,20 @@ BEGIN
     RAISE EXCEPTION 'reporter_role_denied' USING ERRCODE = '42501';
   END IF;
 
-  INSERT INTO verification_verdicts (round_id, submission_id, reporter_id, claim_id, verdict, rationale)
-  VALUES (p_round_id, p_submission_id, p_reporter_id, NULLIF(p_claim_id, ''), p_verdict, NULLIF(p_rationale, ''))
+  INSERT INTO verification_verdicts (round_id, submission_id, reporter_id, claim_id, verdict, rationale, client_nonce)
+  VALUES (p_round_id, p_submission_id, p_reporter_id, NULLIF(p_claim_id, ''), p_verdict, NULLIF(p_rationale, ''), NULLIF(p_client_nonce, ''))
   ON CONFLICT (round_id, reporter_id, submission_id, coalesce(claim_id, ''))
-  DO UPDATE SET verdict = EXCLUDED.verdict, rationale = COALESCE(EXCLUDED.rationale, verification_verdicts.rationale), created_at = now()
+  DO UPDATE SET verdict = EXCLUDED.verdict, rationale = COALESCE(EXCLUDED.rationale, verification_verdicts.rationale)
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
 $$;
+
+CREATE OR REPLACE VIEW verification_verdicts_view AS
+  SELECT v.id, r.room_id, v.round_id, v.submission_id, v.reporter_id, v.claim_id, v.verdict, v.rationale, v.created_at
+  FROM verification_verdicts v
+  JOIN rounds r ON r.id = v.round_id;
+ALTER VIEW verification_verdicts_view SET (security_barrier = true);
 
 -- verify_summary: aggregated verdict counts per submission and claim within a round
 CREATE OR REPLACE FUNCTION verify_summary(
@@ -574,15 +580,8 @@ AS $$
     SUM(CASE WHEN v.verdict = 'unclear' THEN 1 ELSE 0 END)::int AS unclear_count,
     SUM(CASE WHEN v.verdict = 'needs_work' THEN 1 ELSE 0 END)::int AS needs_work_count,
     COUNT(*)::int AS total
-  FROM verification_verdicts v
+  FROM verification_verdicts_view v
   WHERE v.round_id = p_round_id
   GROUP BY v.submission_id, v.claim_id
   ORDER BY v.submission_id, v.claim_id NULLS FIRST;
 $$;
-
--- RLS-friendly view for verification verdicts (read-only)
-CREATE OR REPLACE VIEW verification_verdicts_view AS
-  SELECT v.id, r.room_id, v.round_id, v.submission_id, v.reporter_id, v.claim_id, v.verdict, v.rationale, v.created_at
-  FROM verification_verdicts v
-  JOIN rounds r ON r.id = v.round_id;
-ALTER VIEW verification_verdicts_view SET (security_barrier = true);
