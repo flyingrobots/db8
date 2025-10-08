@@ -44,6 +44,8 @@ jobs:
         with:
           node-version: '20'
       - run: npm ci
+      - name: Install web dependencies
+        run: npm ci --prefix web
       - name: Create test database
         env:
           PGPASSWORD: test
