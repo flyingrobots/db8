@@ -82,6 +82,17 @@ export default [
         document: 'readonly',
         navigator: 'readonly'
       }
+    },
+    settings: {
+      // Treat Next/React web-only imports as core modules for import/no-unresolved
+      'import/core-modules': [
+        'react',
+        'react-dom',
+        'next',
+        'next/link',
+        'next-themes',
+        'class-variance-authority'
+      ]
     }
   },
   // Test files: Vitest globals
