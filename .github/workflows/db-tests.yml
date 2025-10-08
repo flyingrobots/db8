@@ -1,10 +1,27 @@
 name: db-tests
 on:
+  # Manual trigger remains available
   workflow_dispatch:
+  # Run weekly for drift detection
   schedule:
     - cron: '0 6 * * 1'  # weekly Monday 06:00 UTC
+  # Run automatically on PRs when DB‑related files change
+  pull_request:
+    paths:
+      - 'db/**'
+      - 'server/rpc.js'
+      - 'server/journal.js'
+      - 'server/watcher.js'
+      - 'server/schemas.js'
+      - 'bin/db8.js'
+      - 'server/test/**'
+    types: [opened, synchronize, reopened]
 jobs:
   db-integration:
+    # Avoid duplicate concurrent runs for the same PR/branch
+    concurrency:
+      group: db-tests-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     services:
       postgres:
