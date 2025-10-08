@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 msg_file="$1"
 pattern='^(revert: )?(feat|fix|docs|style|refactor|perf|test|build|ci|chore|ops|sec)(\(.+\))?: .+'
- 
+merge_pattern='^Merge (branch|pull request|remote-tracking branch)'
+
 # Allow merge commits (auto-generated messages like "Merge branch ...")
-# Detect an in-progress merge via MERGE_HEAD; if present, skip validation.
-if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+# by checking the message content rather than repository state.
+if grep -Eq "$merge_pattern" "$msg_file"; then
   exit 0
 fi
 
