@@ -1028,6 +1028,8 @@ app.get('/journal', async (req, res) => {
     const journal = await buildLatestJournal(roomId);
     return res.json({ ok: true, journal });
   } catch (e) {
+    // debug log to help identify CI AggregateError
+    console.error('[journal] error:', e);
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
