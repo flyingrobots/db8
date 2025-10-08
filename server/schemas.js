@@ -117,3 +117,14 @@ export const ParticipantFingerprintSet = z
       path: ['fingerprint']
     }
   );
+
+// M3: Verification submit payload
+export const VerifySubmit = z.object({
+  round_id: z.string().uuid(),
+  reporter_id: z.string().uuid(),
+  submission_id: z.string().uuid(),
+  claim_id: z.string().optional(),
+  verdict: z.enum(['true', 'false', 'unclear', 'needs_work']),
+  rationale: z.string().max(2000).optional(),
+  client_nonce: z.string().min(8)
+});

@@ -64,6 +64,8 @@ Commands:
   journal verify       verify journal signature and chain
   provenance enroll    enroll a participant fingerprint (author binding)
   provenance verify    verify a submission signature (ed25519 or ssh)
+  verify submit        record a verification verdict
+  verify summary       show per-claim/per-submission aggregates
 `);
 }
 
@@ -96,7 +98,9 @@ async function main() {
       'journal:pull',
       'journal:verify',
       'provenance:verify',
-      'provenance:enroll'
+      'provenance:enroll',
+      'verify:submit',
+      'verify:summary'
     ]);
 
     // Help handling
@@ -140,6 +144,30 @@ async function main() {
 
     if (args.participant !== undefined && typeof args.participant !== 'string') {
       throw new CLIError('--participant must be a string', EXIT.VALIDATION);
+    }
+
+    if (key === 'verify:submit') {
+      if (!args.round || !args.submission || !args.verdict) {
+        throw new CLIError(
+          'verify submit requires --round <uuid> --submission <uuid> --verdict <true|false|unclear|needs_work>',
+          EXIT.VALIDATION
+        );
+      }
+      const allowedVerdicts = new Set(['true', 'false', 'unclear', 'needs_work']);
+      const v = String(args.verdict).toLowerCase();
+      if (!allowedVerdicts.has(v))
+        throw new CLIError(
+          '--verdict must be one of: true,false,unclear,needs_work',
+          EXIT.VALIDATION
+        );
+      if (args.rationale !== undefined && typeof args.rationale !== 'string')
+        throw new CLIError('--rationale must be a string', EXIT.VALIDATION);
+      if (args.claim !== undefined && typeof args.claim !== 'string')
+        throw new CLIError('--claim must be a string', EXIT.VALIDATION);
+    }
+    if (key === 'verify:summary') {
+      if (!args.round)
+        throw new CLIError('verify summary requires --round <uuid>', EXIT.VALIDATION);
     }
 
     if (key === 'flag:submission') {
@@ -980,6 +1008,83 @@ async function main() {
         }
         if (args.json) print(JSON.stringify({ ok: true, fingerprint: data.fingerprint }));
         else print(data.fingerprint);
+        return EXIT.OK;
+      } catch (e) {
+        printerr(e?.message || String(e));
+        return EXIT.NETWORK;
+      }
+    }
+    case 'verify:submit': {
+      const participantId =
+        args.participant || process.env.DB8_PARTICIPANT_ID || session.participant_id || '';
+      const roundId = String(args.round);
+      const submissionId = String(args.submission);
+      const verdict = String(args.verdict).toLowerCase();
+      const claimId = args.claim ? String(args.claim) : undefined;
+      const rationale = args.rationale ? String(args.rationale) : undefined;
+      const cn = String(args.nonce || randomNonce());
+      if (!participantId) {
+        printerr('verify submit requires --participant (reporter) or configured participant');
+        return EXIT.VALIDATION;
+      }
+      try {
+        const url = `${apiUrl.replace(/\/$/, '')}/rpc/verify.submit`;
+        const body = {
+          round_id: roundId,
+          reporter_id: participantId,
+          submission_id: submissionId,
+          verdict,
+          client_nonce: cn,
+          ...(claimId ? { claim_id: claimId } : {}),
+          ...(rationale ? { rationale } : {})
+        };
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
+          },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.ok) {
+          if (args.json)
+            print(JSON.stringify({ ok: false, status: res.status, error: data?.error }));
+          else printerr(data?.error || `Server error ${res.status}`);
+          return EXIT.NETWORK;
+        }
+        if (args.json) print(JSON.stringify({ ok: true, id: data.id }));
+        else print(`ok id=${data.id}`);
+        return EXIT.OK;
+      } catch (e) {
+        printerr(e?.message || String(e));
+        return EXIT.NETWORK;
+      }
+    }
+    case 'verify:summary': {
+      const roundId = String(args.round);
+      try {
+        const res = await fetch(
+          `${apiUrl.replace(/\/$/, '')}/verify/summary?round_id=${encodeURIComponent(roundId)}`
+        );
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.ok) {
+          if (args.json)
+            print(JSON.stringify({ ok: false, status: res.status, error: data?.error }));
+          else printerr(data?.error || `Server error ${res.status}`);
+          return EXIT.NETWORK;
+        }
+        if (args.json) print(JSON.stringify({ ok: true, rows: data.rows || [] }));
+        else {
+          const rows = data.rows || [];
+          if (rows.length === 0) print('no rows');
+          else
+            rows.forEach((r) =>
+              print(
+                `${r.submission_id} ${r.claim_id ?? '-'} T:${r.true_count} F:${r.false_count} U:${r.unclear_count} N:${r.needs_work_count} Total:${r.total}`
+              )
+            );
+        }
         return EXIT.OK;
       } catch (e) {
         printerr(e?.message || String(e));
