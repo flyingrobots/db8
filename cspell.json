@@ -95,7 +95,10 @@
     "attributioncontrol",
     "orchestratorheartbeat",
     "SPKI",
-    "spki"
+    "spki",
+    "upserts",
+    "idempotently",
+    "sres"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
