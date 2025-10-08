@@ -186,6 +186,7 @@ CREATE TABLE IF NOT EXISTS verification_verdicts (
   claim_id       text,
   verdict        text NOT NULL CHECK (verdict IN ('true','false','unclear','needs_work')),
   rationale      text,
+  client_nonce   text,
   created_at     timestamptz NOT NULL DEFAULT now()
 );
 
