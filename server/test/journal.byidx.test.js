@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'node:http';
 import pg from 'pg';
+import app, { __setDbPool } from '../rpc.js';
 import crypto from 'node:crypto';
 
 // Only run when DB-backed tests are enabled
 const shouldRun = process.env.RUN_PGTAP === '1' || process.env.DB8_TEST_PG === '1';
 const dbUrl =
   process.env.DB8_TEST_DATABASE_URL || 'postgresql://postgres:test@localhost:54329/db8_test';
-const app = (await import('../rpc.js')).default;
+// App imported statically so __setDbPool attaches to the same instance
 
 let testRoomId = '';
 
@@ -24,6 +25,8 @@ suite('GET /journal?room_id&idx', () => {
     const port = server.address().port;
     url = `http://127.0.0.1:${port}`;
     pool = new pg.Pool({ connectionString: dbUrl });
+    // Ensure the app uses the same DB pool for route handlers
+    __setDbPool(pool);
   });
 
   afterAll(async () => {
@@ -35,6 +38,8 @@ suite('GET /journal?room_id&idx', () => {
     } catch (e) {
       void e; // ignore cleanup errors
     }
+    // Detach DB pool from the app and close
+    __setDbPool(null);
     if (pool) await pool.end();
     await new Promise((r) => server.close(r));
   });
