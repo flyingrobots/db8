@@ -57,10 +57,15 @@ jobs:
           DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
           DB8_TEST_OUTPUT: quiet
         run: node scripts/prepare-db.js
-      - name: Run lint
-        run: npm run lint
-      - name: Run DB-gated tests
+      - name: Run lint (server/db only)
+        run: |
+          # Limit lint to non-web paths for this DB-focused job to avoid resolver noise
+          npx eslint . --ignore-pattern web/**
+      - name: Run DB-gated tests (sequential)
         env:
           DB8_TEST_PG: '1'
           DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
-        run: npx vitest run server/test/rpc.db.postgres.test.js server/test/journal.byidx.test.js server/test/watcher.db.flip.test.js --reporter verbose
+        run: |
+          npx vitest run server/test/rpc.db.postgres.test.js --reporter verbose
+          npx vitest run server/test/journal.byidx.test.js --reporter verbose
+          npx vitest run server/test/watcher.db.flip.test.js --reporter verbose
