@@ -58,7 +58,7 @@ jobs:
       - name: Run lint (server/db only)
         run: |
           # Limit lint to non-web paths for this DB-focused job to avoid resolver noise
-          npx eslint . --ignore-pattern web/**
+          npx eslint server bin scripts eslint.config.js vitest.config.js
       - name: Run DB-gated tests (sequential)
         env:
           DB8_TEST_PG: '1'
