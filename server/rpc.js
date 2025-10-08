@@ -554,6 +554,7 @@ app.get('/verify/summary', async (req, res) => {
     const counts = new Map(); // key: submission:claim -> aggregate counts
     for (const [k, v] of memVerifications.entries()) {
       const parts = String(k || '').split(':');
+      if (parts.length < 3) continue;
       const r = parts[0] || '';
       const s = parts[2] || '';
       const claimId = parts.length > 3 ? parts.slice(3).join(':') : null;

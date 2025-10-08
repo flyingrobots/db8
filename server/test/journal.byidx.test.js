@@ -23,6 +23,10 @@ suite('GET /journal?room_id&idx', () => {
   beforeAll(async () => {
     const original = process.env.DATABASE_URL;
     process.env.DATABASE_URL = dbUrl;
+    // Node caches modules by their resolved specifier, so changing DATABASE_URL
+    // just before import will not reinitialize the pool if ../rpc.js was loaded
+    // earlier in this process. The test instead relies on the exported
+    // __setDbPool helper to inject the test pool after the module loads.
     const mod = await import('../rpc.js');
     app = mod.default;
     __setDbPool = mod.__setDbPool;

@@ -147,6 +147,7 @@ export default function RoomPage({ params }) {
     let cancelled = false;
     let delay = 5000;
     let lastSig = '';
+    let controller;
     const Row = z.object({
       submission_id: z.string().uuid(),
       claim_id: z.string().nullable().optional(),
@@ -159,36 +160,62 @@ export default function RoomPage({ params }) {
     const Rows = z.array(Row);
     async function loop() {
       while (!cancelled) {
+        controller = new globalThis.AbortController();
+        let aborted = false;
         try {
-          const r = await fetch(`${apiBase()}/verify/summary?round_id=${encodeURIComponent(rid)}`);
+          const r = await fetch(`${apiBase()}/verify/summary?round_id=${encodeURIComponent(rid)}`, {
+            signal: controller.signal
+          });
           const j = await r.json().catch(() => ({}));
+          if (cancelled) {
+            break;
+          }
           if (r.ok && j?.ok && Array.isArray(j.rows)) {
             const parsed = Rows.safeParse(j.rows);
             if (parsed.success) {
               const sig = JSON.stringify(parsed.data);
               if (sig !== lastSig) {
                 lastSig = sig;
-                setVerifyRows(parsed.data);
+                if (!cancelled && !controller.signal.aborted) {
+                  setVerifyRows(parsed.data);
+                }
               }
-              setVerifyError('');
+              if (!cancelled && !controller.signal.aborted) {
+                setVerifyError('');
+              }
               delay = 5000; // reset backoff on success
             } else {
-              setVerifyRows([]);
-              setVerifyError('Invalid verification data');
               lastSig = '';
+              if (!cancelled && !controller.signal.aborted) {
+                setVerifyRows([]);
+                setVerifyError('Invalid verification data');
+              }
               delay = Math.min(30000, delay * 2);
             }
           } else {
-            setVerifyRows([]);
-            setVerifyError(j?.error || `HTTP ${r.status}`);
             lastSig = '';
+            if (!cancelled && !controller.signal.aborted) {
+              setVerifyRows([]);
+              setVerifyError(j?.error || `HTTP ${r.status}`);
+            }
             delay = Math.min(30000, delay * 2);
           }
         } catch (e) {
-          setVerifyRows([]);
-          setVerifyError(String(e?.message || e));
-          lastSig = '';
-          delay = Math.min(30000, delay * 2);
+          aborted =
+            controller?.signal?.aborted ||
+            e?.name === 'AbortError' ||
+            (typeof e?.message === 'string' && e.message.toLowerCase().includes('abort'));
+          if (!aborted && !cancelled) {
+            setVerifyRows([]);
+            setVerifyError(String(e?.message || e));
+            lastSig = '';
+            delay = Math.min(30000, delay * 2);
+          }
+        } finally {
+          controller = null;
+        }
+        if (cancelled || aborted) {
+          break;
         }
         await new Promise((res) => globalThis.setTimeout(res, delay));
       }
@@ -196,6 +223,7 @@ export default function RoomPage({ params }) {
     loop();
     return () => {
       cancelled = true;
+      controller?.abort();
       setVerifyRows([]);
       setVerifyError('');
     };

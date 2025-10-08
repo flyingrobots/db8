@@ -545,7 +545,7 @@ BEGIN
 
   INSERT INTO verification_verdicts (round_id, submission_id, reporter_id, claim_id, verdict, rationale, client_nonce)
   VALUES (p_round_id, p_submission_id, p_reporter_id, NULLIF(p_claim_id, ''), p_verdict, NULLIF(p_rationale, ''), NULLIF(p_client_nonce, ''))
-  ON CONFLICT (round_id, reporter_id, submission_id, coalesce(claim_id, ''), (COALESCE(NULLIF(client_nonce, ''), '')))
+  ON CONFLICT (round_id, reporter_id, submission_id, coalesce(claim_id, ''))
   DO UPDATE SET verdict = EXCLUDED.verdict, rationale = COALESCE(EXCLUDED.rationale, verification_verdicts.rationale)
   RETURNING id INTO v_id;
   RETURN v_id;
@@ -585,4 +585,3 @@ AS $$
   GROUP BY v.submission_id, v.claim_id
   ORDER BY v.submission_id, v.claim_id NULLS FIRST;
 $$;
-

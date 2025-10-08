@@ -31,7 +31,7 @@ export default [
       'import/resolver': {
         node: {
           extensions: ['.js', '.jsx', '.json'],
-          moduleDirectory: ['node_modules', 'web/node_modules']
+          moduleDirectory: ['node_modules', './node_modules', 'web/node_modules']
         },
         alias: {
           map: [['@', './web']],
@@ -82,20 +82,6 @@ export default [
         document: 'readonly',
         navigator: 'readonly'
       }
-    },
-    settings: {
-      // Treat Next/React web-only imports as core modules for import/no-unresolved
-      'import/core-modules': [
-        'react',
-        'react-dom',
-        'next',
-        'next/link',
-        'next-themes',
-        'class-variance-authority'
-      ]
-    },
-    rules: {
-      // Enforce proper resolution for web imports; fix any genuine issues rather than suppressing globally.
     }
   },
   // Test files: Vitest globals
