@@ -543,10 +543,10 @@ BEGIN
     RAISE EXCEPTION 'reporter_role_denied' USING ERRCODE = '42501';
   END IF;
 
-  INSERT INTO verification_verdicts (round_id, submission_id, reporter_id, claim_id, verdict, rationale)
-  VALUES (p_round_id, p_submission_id, p_reporter_id, NULLIF(p_claim_id, ''), p_verdict, NULLIF(p_rationale, ''))
-  ON CONFLICT (round_id, reporter_id, submission_id, coalesce(claim_id, ''))
-  DO UPDATE SET verdict = EXCLUDED.verdict, rationale = COALESCE(EXCLUDED.rationale, verification_verdicts.rationale), created_at = now()
+  INSERT INTO verification_verdicts (round_id, submission_id, reporter_id, claim_id, verdict, rationale, client_nonce)
+  VALUES (p_round_id, p_submission_id, p_reporter_id, NULLIF(p_claim_id, ''), p_verdict, NULLIF(p_rationale, ''), NULLIF(p_client_nonce, ''))
+  ON CONFLICT (round_id, reporter_id, submission_id, coalesce(claim_id, ''), (COALESCE(NULLIF(client_nonce, ''), '')))
+  DO UPDATE SET verdict = EXCLUDED.verdict, rationale = COALESCE(EXCLUDED.rationale, verification_verdicts.rationale)
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
@@ -574,7 +574,7 @@ AS $$
     SUM(CASE WHEN v.verdict = 'unclear' THEN 1 ELSE 0 END)::int AS unclear_count,
     SUM(CASE WHEN v.verdict = 'needs_work' THEN 1 ELSE 0 END)::int AS needs_work_count,
     COUNT(*)::int AS total
-  FROM verification_verdicts v
+  FROM verification_verdicts_view v
   WHERE v.round_id = p_round_id
   GROUP BY v.submission_id, v.claim_id
   ORDER BY v.submission_id, v.claim_id NULLS FIRST;

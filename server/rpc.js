@@ -510,6 +510,9 @@ app.post('/rpc/verify.submit', async (req, res) => {
       }
     }
     // memory fallback — idempotent by key
+    if (!memSubmissionIndex.has(String(input.submission_id))) {
+      return res.status(404).json({ ok: false, error: 'submission_not_found' });
+    }
     if (memVerifications.has(key)) {
       const existing = memVerifications.get(key);
       existing.verdict = input.verdict;

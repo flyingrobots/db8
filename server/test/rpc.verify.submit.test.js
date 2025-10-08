@@ -63,4 +63,41 @@ describe('POST /rpc/verify.submit (memory path)', () => {
       .expect(200);
     expect(third.body.id).not.toEqual(first.body.id);
   });
+
+  it('rejects invalid verdict enum', async () => {
+    const res = await request(app).post('/rpc/verify.submit').send({
+      round_id: ROUND_ID,
+      reporter_id: REPORTER_ID,
+      submission_id: '00000000-0000-0000-0000-00000000ffff',
+      verdict: 'maybe',
+      client_nonce: 'ver-bad'
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it('rejects malformed UUIDs and missing fields', async () => {
+    const bad = await request(app).post('/rpc/verify.submit').send({ verdict: 'true' });
+    expect(bad.status).toBeGreaterThanOrEqual(400);
+    const badIds = await request(app)
+      .post('/rpc/verify.submit')
+      .send({
+        round_id: 'not-a-uuid',
+        reporter_id: 'x',
+        submission_id: 'y',
+        verdict: 'true',
+        client_nonce: 'v'
+      });
+    expect(badIds.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it('rejects non-existent submission_id', async () => {
+    const res = await request(app).post('/rpc/verify.submit').send({
+      round_id: ROUND_ID,
+      reporter_id: REPORTER_ID,
+      submission_id: '00000000-0000-0000-0000-00000000ffff',
+      verdict: 'true',
+      client_nonce: 'ver-missing'
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
 });
