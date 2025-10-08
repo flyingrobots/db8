@@ -139,7 +139,11 @@ export default function RoomPage({ params }) {
   // Fetch verification summary (read-only) when round_id is known with backoff + shape validation
   useEffect(() => {
     const rid = state?.round?.round_id;
-    if (!rid) return;
+    if (!rid) {
+      setVerifyRows([]);
+      setVerifyError('');
+      return;
+    }
     let cancelled = false;
     let delay = 5000;
     let lastSig = '';
@@ -169,15 +173,21 @@ export default function RoomPage({ params }) {
               setVerifyError('');
               delay = 5000; // reset backoff on success
             } else {
+              setVerifyRows([]);
               setVerifyError('Invalid verification data');
+              lastSig = '';
               delay = Math.min(30000, delay * 2);
             }
           } else {
+            setVerifyRows([]);
             setVerifyError(j?.error || `HTTP ${r.status}`);
+            lastSig = '';
             delay = Math.min(30000, delay * 2);
           }
         } catch (e) {
+          setVerifyRows([]);
           setVerifyError(String(e?.message || e));
+          lastSig = '';
           delay = Math.min(30000, delay * 2);
         }
         await new Promise((res) => globalThis.setTimeout(res, delay));
@@ -186,6 +196,8 @@ export default function RoomPage({ params }) {
     loop();
     return () => {
       cancelled = true;
+      setVerifyRows([]);
+      setVerifyError('');
     };
   }, [state?.round?.round_id]);
 

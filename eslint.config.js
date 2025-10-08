@@ -95,9 +95,7 @@ export default [
       ]
     },
     rules: {
-      // CI lint runs from repo root; resolving into web/node_modules is flaky on GH runners.
-      // Web builds are validated by Next.js; suppress import resolver errors in web subtree.
-      'import/no-unresolved': 'off'
+      // Enforce proper resolution for web imports; fix any genuine issues rather than suppressing globally.
     }
   },
   // Test files: Vitest globals

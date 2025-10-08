@@ -1,5 +1,7 @@
 import request from 'supertest';
-import app, { __setDbPool } from '../rpc.js';
+
+let app;
+let __setDbPool;
 
 const ROOM_ID = '00000000-0000-0000-0000-00000000f101';
 const ROUND_ID = '00000000-0000-0000-0000-00000000f102';
@@ -8,7 +10,15 @@ const RPT_A = '00000000-0000-0000-0000-00000000f104';
 const RPT_B = '00000000-0000-0000-0000-00000000f105';
 
 describe('GET /verify/summary (memory path)', () => {
-  beforeAll(() => __setDbPool(null));
+  beforeAll(async () => {
+    const original = process.env.DATABASE_URL;
+    delete process.env.DATABASE_URL;
+    const mod = await import('../rpc.js');
+    app = mod.default;
+    __setDbPool = mod.__setDbPool;
+    if (original !== undefined) process.env.DATABASE_URL = original;
+    __setDbPool(null);
+  });
 
   it('aggregates per-submission and per-claim verdicts', async () => {
     const issued = await request(app)

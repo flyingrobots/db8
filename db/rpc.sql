@@ -552,7 +552,6 @@ BEGIN
 END;
 $$;
 
--- Ensure the verification verdicts view exists before summary function compiles
 CREATE OR REPLACE VIEW verification_verdicts_view AS
   SELECT v.id, r.room_id, v.round_id, v.submission_id, v.reporter_id, v.claim_id, v.verdict, v.rationale, v.created_at
   FROM verification_verdicts v
@@ -587,9 +586,3 @@ AS $$
   ORDER BY v.submission_id, v.claim_id NULLS FIRST;
 $$;
 
--- (view already ensured above; keep definition for idempotency)
-CREATE OR REPLACE VIEW verification_verdicts_view AS
-  SELECT v.id, r.room_id, v.round_id, v.submission_id, v.reporter_id, v.claim_id, v.verdict, v.rationale, v.created_at
-  FROM verification_verdicts v
-  JOIN rounds r ON r.id = v.round_id;
-ALTER VIEW verification_verdicts_view SET (security_barrier = true);
