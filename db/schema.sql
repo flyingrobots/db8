@@ -175,3 +175,24 @@ CREATE INDEX IF NOT EXISTS idx_admin_audit_id ON admin_audit_log (id);
 
 COMMENT ON TABLE admin_audit_log IS 'Administrative audit log; RLS locked down. Writes via privileged service only.';
 COMMENT ON COLUMN admin_audit_log.actor_context IS 'Additional context about actor (e.g., IP, UA), JSON';
+
+-- M3: Verification verdicts (per-claim/per-submission)
+-- Records fact-check style verdicts from reporters (judges/hosts) about a submission
+CREATE TABLE IF NOT EXISTS verification_verdicts (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  round_id       uuid NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+  submission_id  uuid NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+  reporter_id    uuid NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  claim_id       text,
+  verdict        text NOT NULL CHECK (verdict IN ('true','false','unclear','needs_work')),
+  rationale      text,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+
+-- Idempotency: one row per (round, reporter, submission, claim-coalesced)
+CREATE UNIQUE INDEX IF NOT EXISTS ux_verification_verdicts_unique
+  ON verification_verdicts (round_id, reporter_id, submission_id, coalesce(claim_id, ''));
+
+CREATE INDEX IF NOT EXISTS idx_verification_verdicts_round ON verification_verdicts (round_id);
+CREATE INDEX IF NOT EXISTS idx_verification_verdicts_submission ON verification_verdicts (submission_id);
+CREATE INDEX IF NOT EXISTS idx_verification_verdicts_reporter ON verification_verdicts (reporter_id);
