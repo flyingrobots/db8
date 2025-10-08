@@ -147,6 +147,66 @@ Working style
   the worker.
 - Deterministic behavior: prefer stable hashing, canonical JSON, advisory locks.
 
+Neo4j Shared Memory (Context & Notes)
+
+When to use (simple rules)
+
+- At session start: query memory for James’s profile/interests and active topics.
+- On topic switch: append a short “insight” with what changed and why.
+- After major events: PRs opened/merged, CI status changes, architectural decisions.
+- Before answering complex or longitudinal questions: skim recent links around “James” to maintain continuity.
+
+How to use (quick commands)
+
+- Connection (local dev):
+  - Host: <http://localhost:7474>
+  - User/Pass: neo4j / password123 (override via env if available)
+  - DB: neo4j (default)
+
+- Read (curl examples):
+
+```bash
+# Interests
+curl -s -u neo4j:password123 -H 'Content-Type: application/json' \
+ -X POST http://localhost:7474/db/neo4j/query/v2 \
+ -d '{"statement":"MATCH (j:User {name: \"James\"})-[:INTERESTED_IN]->(i) RETURN i.name,i.category"}'
+
+# Active topics
+curl -s -u neo4j:password123 -H 'Content-Type: application/json' \
+ -X POST http://localhost:7474/db/neo4j/query/v2 \
+ -d '{"statement":"MATCH (t:Topic {status: \"active\"}) RETURN t.name,t.description"}'
+
+# Local context around James
+curl -s -u neo4j:password123 -H 'Content-Type: application/json' \
+ -X POST http://localhost:7474/db/neo4j/query/v2 \
+ -d '{"statement":"MATCH (n)-[r]-(m) WHERE n.name=\"James\" OR m.name=\"James\" RETURN n.name,type(r),m.name LIMIT 10"}'
+```
+
+- Write (append an insight):
+
+```bash
+INSIGHT='Short insight about the session (what changed / decisions / PR links)'
+curl -s -u neo4j:password123 -H 'Content-Type: application/json' \
+ -X POST http://localhost:7474/db/neo4j/query/v2 \
+ -d "{\"statement\": \"MATCH (j:User {name: \\\"James\\\"}) CREATE (x:Insight {content: \\\"${INSIGHT//\"/\\\\\"}\\\", added_by: \\\"Codex\\\", confidence: 0.9, timestamp: datetime()}) CREATE (j)-[:HAS_INSIGHT]->(x) RETURN x\"}"
+```
+
+- Tip: JSONL flow (bulk): write one JSON object per line to /tmp and POST; or prefer the agent-collab CLI in `/Users/james/git/agent-collab/` for cleaner UX.
+
+Private session notes (~/Codex)
+
+- Also keep a parallel Markdown note per session/day:
+  - Path: `~/Codex/YYYY-MM-DD-<topic>.md`
+  - Frontmatter: `lastUpdated: YYYY-MM-DD` (ISO date only)
+  - Include: summary, links (Issues/PRs), CI status, Mermaid diagrams for flows, and “Next”.
+
+Style & guardrails
+
+- Keep insights short and factual; no sensitive tokens.
+- Prefer links to Issues/PRs/Commits for traceability.
+- Use Mermaid/SVG in ~/Codex notes for visual learners.
+- This memory is additive: never delete; append new context as it evolves.
+
 Guardrails (enforced by repo config)
 
 - Node 20+. See .nvmrc.
