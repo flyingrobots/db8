@@ -100,7 +100,8 @@
     "idempotently",
     "sres",
     "relrowsecurity",
-    "regs"
+    "regs",
+    "collab"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
