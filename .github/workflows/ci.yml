@@ -18,7 +18,7 @@ jobs:
           --health-cmd="pg_isready -U postgres" --health-interval=10s
           --health-timeout=5s --health-retries=5
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Block TypeScript files
         run: |
