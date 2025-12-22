@@ -41,7 +41,6 @@ export default function RoomPage({ params }) {
   const [hasNewJournal, setHasNewJournal] = useState(false);
   const [verifyRows, setVerifyRows] = useState([]);
   const [verifyError, setVerifyError] = useState('');
-  const [verifyShown, setVerifyShown] = useState(50);
   const lastAckIdxRef = useRef(-1);
   const latestIdxRef = useRef(-1);
   const timerRef = useRef(null);
@@ -487,36 +486,127 @@ export default function RoomPage({ params }) {
       </Card>
 
       <Card>
-        <CardContent className="p-5 space-y-3">
+        <CardContent className="p-5 space-y-4">
           <div className="flex items-center justify-between">
             <div className="text-lg font-semibold">Verification Summary</div>
             <Badge variant="outline">
-              {Array.isArray(verifyRows) ? verifyRows.length : 0} rows
+              {Array.isArray(verifyRows) ? verifyRows.length : 0} verdicts
             </Badge>
           </div>
           {verifyError && <p className="text-sm text-red-600">{verifyError}</p>}
           {!verifyRows || verifyRows.length === 0 ? (
             <p className="text-sm text-muted">No verification verdicts yet.</p>
           ) : (
-            <ul className="space-y-2">
-              {verifyRows.slice(0, verifyShown).map((r, i) => (
-                <li key={i} className="text-sm font-mono">
-                  <span className="text-muted-foreground">{(r.claim_id ?? '-') + ' '}</span>
-                  T:{r.true_count} F:{r.false_count} U:{r.unclear_count} N:{r.needs_work_count} ·
-                  total {r.total}
-                </li>
+            <div className="space-y-6">
+              {Object.entries(
+                verifyRows.reduce((acc, row) => {
+                  if (!acc[row.submission_id]) acc[row.submission_id] = { main: null, claims: [] };
+                  if (!row.claim_id) acc[row.submission_id].main = row;
+                  else acc[row.submission_id].claims.push(row);
+                  return acc;
+                }, {})
+              ).map(([subId, group]) => (
+                <div
+                  key={subId}
+                  className="space-y-2 border-b border-border pb-4 last:border-0 last:pb-0"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-mono text-muted-foreground">
+                      {subId.slice(0, 8)}...
+                    </div>
+                    {group.main && <ConfidenceBadge row={group.main} />}
+                  </div>
+
+                  {/* If we have a main verdict, show details */}
+                  {group.main && <VerdictBar row={group.main} />}
+
+                  {/* Claims list */}
+                  {group.claims.length > 0 && (
+                    <div className="pl-4 mt-2 space-y-2 border-l-2 border-border/50">
+                      {group.claims.map((claim, i) => (
+                        <div key={i} className="text-sm">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-medium text-xs text-muted-foreground">
+                              Claim: {claim.claim_id}
+                            </span>
+                            <ConfidenceBadge row={claim} size="sm" />
+                          </div>
+                          <VerdictBar row={claim} size="sm" />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ))}
-            </ul>
-          )}
-          {verifyRows.length > verifyShown && (
-            <div className="pt-2">
-              <Button size="sm" variant="outline" onClick={() => setVerifyShown((n) => n + 50)}>
-                Show more
-              </Button>
             </div>
           )}
         </CardContent>
       </Card>
     </main>
+  );
+}
+
+function calculateScore(r) {
+  if (!r || r.total === 0) return 0.5;
+  // (True - False + Total) / (2 * Total)
+  // Range: 0 (all false) to 1 (all true). 0.5 is neutral/unclear.
+  return (r.true_count - r.false_count + r.total) / (2 * r.total);
+}
+
+function ConfidenceBadge({ row, size = 'default' }) {
+  const score = calculateScore(row);
+  let color = 'bg-gray-500';
+  let label = 'Neutral';
+
+  if (score >= 0.75) {
+    color = 'bg-[var(--success)] text-black';
+    label = 'Verified';
+  } else if (score >= 0.6) {
+    color = 'bg-[var(--primary)] text-black';
+    label = 'Likely True';
+  } else if (score <= 0.25) {
+    color = 'bg-[var(--secondary)] text-black';
+    label = 'False';
+  } else if (score <= 0.4) {
+    color = 'bg-orange-400 text-black';
+    label = 'Dubious';
+  }
+
+  const classes = size === 'sm' ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2 py-0.5';
+  return (
+    <span className={`rounded-full font-bold ${classes} ${color}`}>
+      {label} ({Math.round(score * 100)}%)
+    </span>
+  );
+}
+
+function VerdictBar({ row, size = 'default' }) {
+  const total = row.total || 1;
+  const getPct = (n) => `${(n / total) * 100}%`;
+  const h = size === 'sm' ? 'h-1.5' : 'h-2.5';
+
+  return (
+    <div className={`flex w-full ${h} rounded-full overflow-hidden bg-secondary/20`}>
+      <div
+        style={{ width: getPct(row.true_count) }}
+        className="bg-[var(--success)]"
+        title={`True: ${row.true_count}`}
+      />
+      <div
+        style={{ width: getPct(row.false_count) }}
+        className="bg-[var(--secondary)]"
+        title={`False: ${row.false_count}`}
+      />
+      <div
+        style={{ width: getPct(row.unclear_count) }}
+        className="bg-gray-400"
+        title={`Unclear: ${row.unclear_count}`}
+      />
+      <div
+        style={{ width: getPct(row.needs_work_count) }}
+        className="bg-orange-300"
+        title={`Needs Work: ${row.needs_work_count}`}
+      />
+    </div>
   );
 }
