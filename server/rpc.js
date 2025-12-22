@@ -126,6 +126,32 @@ function validateAndConsumeNonceMemory({ round_id, author_id, client_nonce }) {
   return true;
 }
 
+// participant.get — retrieve participant role/info
+app.get('/rpc/participant', async (req, res) => {
+  const roomId = String(req.query.room_id || '');
+  const id = String(req.query.id || '');
+  if (!roomId || !id) return res.status(400).json({ ok: false, error: 'missing_id' });
+
+  if (db) {
+    try {
+      const r = await db.query('select role from participants where room_id = $1 and id = $2', [
+        roomId,
+        id
+      ]);
+      const row = r.rows?.[0];
+      if (!row) return res.status(404).json({ ok: false, error: 'not_found' });
+      return res.json({ ok: true, role: row.role });
+    } catch (e) {
+      console.warn('participant.get db error', e);
+      // fall through
+    }
+  }
+  // Memory fallback: easy convention for testing UI without DB
+  // If id starts with "judge", treat as judge, else debater
+  const role = id.startsWith('judge') ? 'judge' : 'debater';
+  return res.json({ ok: true, role, note: 'db_fallback' });
+});
+
 // Server-issued nonce API (DB preferred)
 app.post('/rpc/nonce.issue', async (req, res) => {
   try {

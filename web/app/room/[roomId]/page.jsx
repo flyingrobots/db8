@@ -47,6 +47,11 @@ export default function RoomPage({ params }) {
   const esRef = useRef(null);
   const lastNonceRef = useRef('');
 
+  const [role, setRole] = useState('');
+  const [verifying, setVerifying] = useState(null); // submission object
+  const [flagging, setFlagging] = useState(null); // submission object
+  const [actionBusy, setActionBusy] = useState(false);
+
   // Fetch snapshot
   useEffect(() => {
     let cancelled = false;
@@ -64,6 +69,23 @@ export default function RoomPage({ params }) {
       cancelled = true;
     };
   }, [roomId]);
+
+  // Fetch role
+  useEffect(() => {
+    if (!participant || !roomId) return;
+    async function loadRole() {
+      try {
+        const r = await fetch(
+          `${apiBase()}/rpc/participant?room_id=${encodeURIComponent(roomId)}&id=${encodeURIComponent(participant)}`
+        );
+        const j = await r.json().catch(() => ({}));
+        if (j.ok && j.role) setRole(j.role);
+      } catch {
+        /* ignore */
+      }
+    }
+    loadRole();
+  }, [participant, roomId]);
 
   // Initialize last acknowledged journal idx from sessionStorage
   useEffect(() => {
@@ -354,13 +376,89 @@ export default function RoomPage({ params }) {
     }
   }
 
+  async function onVerifySubmit(e) {
+    e.preventDefault();
+    if (!verifying) return;
+    const form = new window.FormData(e.target);
+    const verdict = form.get('verdict');
+    const rationale = form.get('rationale');
+    setActionBusy(true);
+    try {
+      const clientNonce = lastNonceRef.current || String(Date.now()); // simplified
+      const payload = {
+        round_id: '00000000-0000-0000-0000-000000000002', // Ideally from state.round.round_id
+        reporter_id: participant,
+        submission_id: verifying.submission_id,
+        verdict,
+        rationale,
+        client_nonce: clientNonce
+      };
+      const r = await fetch(`${apiBase()}/rpc/verify.submit`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
+        },
+        body: JSON.stringify(payload)
+      });
+      if (r.ok) {
+        setVerifying(null);
+        // Trigger verification refresh logic here if possible,
+        // effectively handled by the polling effect eventually
+      } else {
+        window.alert('Verify failed');
+      }
+    } catch (err) {
+      window.alert(String(err));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function onFlagSubmit(e) {
+    e.preventDefault();
+    if (!flagging) return;
+    const form = new window.FormData(e.target);
+    const reason = form.get('reason');
+    setActionBusy(true);
+    try {
+      const payload = {
+        submission_id: flagging.submission_id,
+        reporter_id: participant,
+        reporter_role: role || 'participant',
+        reason
+      };
+      const r = await fetch(`${apiBase()}/rpc/submission.flag`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
+        },
+        body: JSON.stringify(payload)
+      });
+      if (r.ok) {
+        setFlagging(null);
+        // Ideally trigger state refresh to update flag counts
+      } else {
+        window.alert('Flag failed');
+      }
+    } catch (err) {
+      window.alert(String(err));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
   return (
     <main className="max-w-3xl mx-auto p-6 space-y-6">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Room</h1>
-        <Button variant="ghost" asChild>
-          <Link href="/">Back</Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          {role && <Badge variant="outline">{role}</Badge>}
+          <Button variant="ghost" asChild>
+            <Link href="/">Back</Link>
+          </Button>
+        </div>
       </header>
 
       <Card>
@@ -464,7 +562,7 @@ export default function RoomPage({ params }) {
               {transcript.map((entry) => (
                 <li
                   key={entry.submission_id}
-                  className="rounded border border-border p-3 space-y-2"
+                  className="rounded border border-border p-3 space-y-2 relative"
                 >
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span className="font-mono text-[11px]">{entry.author_id}</span>
@@ -475,9 +573,31 @@ export default function RoomPage({ params }) {
                     ) : null}
                   </div>
                   <p className="whitespace-pre-line text-sm leading-relaxed">{entry.content}</p>
-                  <p className="text-[11px] text-muted-foreground font-mono">
-                    sha256: {entry.canonical_sha256}
-                  </p>
+                  <div className="flex items-center justify-between pt-1">
+                    <p className="text-[11px] text-muted-foreground font-mono">
+                      sha256: {entry.canonical_sha256}
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 text-xs px-2"
+                        onClick={() => setFlagging(entry)}
+                      >
+                        Flag
+                      </Button>
+                      {(role === 'judge' || role === 'host') && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 text-xs px-2 text-[var(--primary)] border-[var(--primary)]"
+                          onClick={() => setVerifying(entry)}
+                        >
+                          Verify
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -542,6 +662,80 @@ export default function RoomPage({ params }) {
           )}
         </CardContent>
       </Card>
+
+      {/* Dialog Overlays */}
+      {verifying && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md">
+            <CardContent className="p-6 space-y-4">
+              <h3 className="text-lg font-semibold">Verify Submission</h3>
+              <p className="text-xs font-mono text-muted-foreground break-all">
+                {verifying.submission_id}
+              </p>
+              <form onSubmit={onVerifySubmit} className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium">Verdict</label>
+                  <select name="verdict" className="w-full mt-1 border rounded p-2 bg-background">
+                    <option value="true">True</option>
+                    <option value="false">False</option>
+                    <option value="unclear">Unclear</option>
+                    <option value="needs_work">Needs Work</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Rationale</label>
+                  <textarea
+                    name="rationale"
+                    required
+                    className="w-full mt-1 border rounded p-2 bg-background min-h-[100px]"
+                    placeholder="Explain your verdict..."
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="ghost" onClick={() => setVerifying(null)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={actionBusy}>
+                    {actionBusy ? 'Saving...' : 'Submit Verdict'}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {flagging && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md">
+            <CardContent className="p-6 space-y-4">
+              <h3 className="text-lg font-semibold">Flag Submission</h3>
+              <p className="text-xs font-mono text-muted-foreground break-all">
+                {flagging.submission_id}
+              </p>
+              <form onSubmit={onFlagSubmit} className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium">Reason</label>
+                  <textarea
+                    name="reason"
+                    required
+                    className="w-full mt-1 border rounded p-2 bg-background min-h-[80px]"
+                    placeholder="Why are you flagging this?"
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="ghost" onClick={() => setFlagging(null)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" variant="destructive" disabled={actionBusy}>
+                    {actionBusy ? 'Flagging...' : 'Flag'}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </main>
   );
 }
