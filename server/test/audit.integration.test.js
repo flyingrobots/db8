@@ -1,16 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
+import { __setDbPool } from '../rpc.js';
 
 describe('Audit Trail Integration', () => {
   let pool;
-  const dbUrl = process.env.DATABASE_URL || 'postgresql://postgres:test@localhost:54329/db8_test';
+  const dbUrl =
+    process.env.DB8_TEST_DATABASE_URL ||
+    process.env.DATABASE_URL ||
+    'postgresql://postgres:test@localhost:54329/db8_test';
 
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: dbUrl });
-    // Clear all tables for testing
-    await pool.query(
-      'truncate rooms, participants, rounds, submissions, votes, admin_audit_log cascade'
-    );
+    __setDbPool(pool);
   });
 
   afterAll(async () => {
@@ -18,16 +19,14 @@ describe('Audit Trail Integration', () => {
   });
 
   it('room_create should be audit-logged (implied via watcher or manual call)', async () => {
-    // Note: room_create itself doesn't have the audit call yet, but watcher flips do.
-    // Let's test submission_upsert which I just added.
-    const roomId = '30000000-0000-0000-0000-000000000001';
-    const roundId = '30000000-0000-0000-0000-000000000002';
-    const participantId = '30000000-0000-0000-0000-000000000003';
+    const roomId = '33333333-0000-0000-0000-000000000001';
+    const roundId = '33333333-0000-0000-0000-000000000002';
+    const participantId = '33333333-0000-0000-0000-000000000003';
 
     // Seed data
     await pool.query('insert into rooms(id, title) values ($1, $2) on conflict do nothing', [
       roomId,
-      'Audit Room'
+      'Audit Room Unique'
     ]);
     await pool.query(
       'insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, $3) on conflict do nothing',
@@ -35,7 +34,7 @@ describe('Audit Trail Integration', () => {
     );
     await pool.query(
       'insert into participants(id, room_id, anon_name) values ($1, $2, $3) on conflict do nothing',
-      [participantId, roomId, 'audit_anon']
+      [participantId, roomId, 'audit_anon_unique']
     );
 
     // Call submission_upsert
@@ -46,24 +45,22 @@ describe('Audit Trail Integration', () => {
       '[]',
       '[]',
       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      'audit-nonce-1'
+      'audit-nonce-unique-1'
     ]);
 
     // Check audit log
-    const res = await pool.query('select * from admin_audit_log where entity_type = $1', [
-      'submission'
-    ]);
-    if (res.rows[0]?.action !== 'create') {
-      console.error('Audit Log Rows:', res.rows);
-    }
+    const res = await pool.query(
+      'select * from admin_audit_log where entity_type = $1 and actor_id = $2',
+      ['submission', participantId]
+    );
     expect(res.rows.length).toBeGreaterThan(0);
     expect(res.rows[0].action).toBe('create');
     expect(res.rows[0].actor_id).toBe(participantId);
   });
 
   it('vote_submit should be audit-logged', async () => {
-    const roundId = '30000000-0000-0000-0000-000000000002';
-    const participantId = '30000000-0000-0000-0000-000000000003';
+    const roundId = '33333333-0000-0000-0000-000000000002';
+    const participantId = '33333333-0000-0000-0000-000000000003';
 
     // Set round to published
     await pool.query('update rounds set phase = $1 where id = $2', ['published', roundId]);
@@ -74,24 +71,29 @@ describe('Audit Trail Integration', () => {
       participantId,
       'continue',
       '{"choice": "continue"}',
-      'vote-nonce-1'
+      'vote-nonce-unique-1'
     ]);
 
     // Check audit log
-    const res = await pool.query('select * from admin_audit_log where entity_type = $1', ['vote']);
+    const res = await pool.query(
+      'select * from admin_audit_log where entity_type = $1 and actor_id = $2 and action = $3',
+      ['vote', participantId, 'vote']
+    );
     expect(res.rows.length).toBeGreaterThan(0);
-    expect(res.rows[0].action).toBe('vote');
     expect(res.rows[0].actor_id).toBe(participantId);
   });
 
   it('round_publish_due should be audit-logged', async () => {
-    const roomId = '40000000-0000-0000-0000-000000000001';
-    const roundId = '40000000-0000-0000-0000-000000000002';
+    const roomId = '33333333-0000-0000-0000-000000000010';
+    const roundId = '33333333-0000-0000-0000-000000000011';
 
     // Seed a due round
-    await pool.query('insert into rooms(id, title) values ($1, $2)', [roomId, 'Due Room']);
+    await pool.query('insert into rooms(id, title) values ($1, $2) on conflict do nothing', [
+      roomId,
+      'Due Room Unique'
+    ]);
     await pool.query(
-      'insert into rounds(id, room_id, idx, phase, submit_deadline_unix) values ($1, $2, 0, $3, $4)',
+      'insert into rounds(id, room_id, idx, phase, submit_deadline_unix) values ($1, $2, 0, $3, $4) on conflict do nothing',
       [
         roundId,
         roomId,
@@ -105,8 +107,8 @@ describe('Audit Trail Integration', () => {
 
     // Check audit log
     const res = await pool.query(
-      'select * from admin_audit_log where entity_type = $1 and action = $2',
-      ['round', 'publish']
+      'select * from admin_audit_log where entity_id = $1 and action = $2',
+      [roundId, 'publish']
     );
     expect(res.rows.length).toBeGreaterThan(0);
     expect(res.rows[0].entity_id).toBe(roundId);
