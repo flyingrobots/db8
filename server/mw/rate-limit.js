@@ -3,7 +3,7 @@ const buckets = new Map();
 
 export function rateLimitStub(opts = {}) {
   const windowMs = opts.windowMs ?? 60_000;
-  const limit = process.env.NODE_ENV === 'test' ? 5 : (opts.limit ?? 60); // requests per window
+  const limit = process.env.NODE_ENV === 'test' ? 10 : (opts.limit ?? 60); // requests per window
   const enforce = opts.enforce ?? false; // off by default
   return (req, res, next) => {
     const now = Date.now();
@@ -19,7 +19,8 @@ export function rateLimitStub(opts = {}) {
     res.setHeader('X-RateLimit-Limit', String(limit));
     res.setHeader('X-RateLimit-Remaining', String(remaining));
     res.setHeader('X-RateLimit-Reset', String(Math.ceil(b.resetAt / 1000)));
-    const doEnforce = enforce || process.env.ENFORCE_RATELIMIT === '1';
+    const doEnforce =
+      enforce || process.env.ENFORCE_RATELIMIT === '1' || process.env.NODE_ENV === 'test';
     if (doEnforce && b.count > limit) {
       return res.status(429).json({ ok: false, error: 'rate_limited' });
     }

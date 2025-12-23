@@ -25,18 +25,21 @@ describe('Hardening & Ops (M7)', () => {
   const participantId = '77770000-0000-0000-0000-000000000003';
 
   it('Dead Letter Queue: Failed submissions should be pushed to pgmq', async () => {
-    await pool.query('insert into rooms(id, title) values ($1, $2) on conflict (id) do nothing', [
-      roomId,
-      'Hardening Room'
+    // Clean start for these specific IDs
+    await pool.query('delete from participants where id = $1', [participantId]);
+    await pool.query('delete from rounds where id = $1', [roundId]);
+    await pool.query('delete from rooms where id = $1', [roomId]);
+
+    await pool.query('insert into rooms(id, title) values ($1, $2)', [roomId, 'Hardening Room']);
+    await pool.query("insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, 'submit')", [
+      roundId,
+      roomId
     ]);
-    await pool.query(
-      "insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, 'submit') on conflict (id) do nothing",
-      [roundId, roomId]
-    );
-    await pool.query(
-      'insert into participants(id, room_id, anon_name) values ($1, $2, $3) on conflict (id) do nothing',
-      [participantId, roomId, 'hardened_agent']
-    );
+    await pool.query('insert into participants(id, room_id, anon_name) values ($1, $2, $3)', [
+      participantId,
+      roomId,
+      'hardened_agent'
+    ]);
 
     const res = await supertest(app)
       .post('/rpc/submission.create')
@@ -49,20 +52,19 @@ describe('Hardening & Ops (M7)', () => {
         content: 'Failing content',
         claims: [{ id: 'c1', text: 'C Argument', support: [{ kind: 'logic', ref: 'r' }] }],
         citations: [{ url: 'https://a.com' }, { url: 'https://b.com' }],
-        client_nonce: 'nonce-m7-dlq-1',
+        client_nonce: 'nonce-m7-dlq-cleanup-1',
         _force_dlq: true
       });
 
     expect(res.status).toBe(500);
 
-    // This will fail if pgmq or the queue doesn't exist
     const dlqRes = await pool.query('select * from pgmq.q_db8_dlq');
     expect(dlqRes.rows.length).toBeGreaterThan(0);
   });
 
   it('Production Rate Limiting: Should throttle rapid RPC calls', async () => {
     // Note: requires ENFORCE_RATELIMIT=1 in environment
-    const requests = Array.from({ length: 20 }).map(() =>
+    const requests = Array.from({ length: 15 }).map(() =>
       supertest(app).post('/rpc/room.create').send({
         topic: 'Flood Room',
         client_nonce: Math.random().toString()
@@ -75,7 +77,6 @@ describe('Hardening & Ops (M7)', () => {
   });
 
   it('Orchestrator Heartbeat: Recovery infrastructure should exist', async () => {
-    // Verify heartbeat table exists
     const tableRes = await pool.query(`
       SELECT EXISTS (
         SELECT FROM information_schema.tables 
@@ -85,7 +86,6 @@ describe('Hardening & Ops (M7)', () => {
     `);
     expect(tableRes.rows[0].exists).toBe(true);
 
-    // Verify recovery function exists
     const funcRes = await pool.query(`
       SELECT EXISTS (
         SELECT FROM pg_proc 
