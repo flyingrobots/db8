@@ -7,12 +7,22 @@ import { sha256Hex } from '../utils.js';
  * including canonicalization, hashing, and storage (DB vs Memory).
  */
 export class SubmissionService {
-  constructor({ db, config, memSubmissions, memSubmissionIndex, validateAndConsumeNonceMemory }) {
-    this.db = db;
+  constructor({
+    dbRef,
+    config,
+    memSubmissions,
+    memSubmissionIndex,
+    validateAndConsumeNonceMemory
+  }) {
+    this.dbRef = dbRef;
     this.config = config;
     this.memSubmissions = memSubmissions;
     this.memSubmissionIndex = memSubmissionIndex;
     this.validateAndConsumeNonceMemory = validateAndConsumeNonceMemory;
+  }
+
+  get db() {
+    return this.dbRef.pool;
   }
 
   async create(input, { forceDlq = false } = {}) {

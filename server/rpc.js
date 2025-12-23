@@ -1,1695 +1,236 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import os from 'node:os';
 import { rateLimitStub } from './mw/rate-limit.js';
-import { Buffer } from 'node:buffer';
-import {
-  SubmissionIn,
-  ContinueVote,
-  SubmissionFlag,
-  RoomCreate,
-  SubmissionVerify,
-  ParticipantFingerprintSet,
-  VerifySubmit,
-  AuthChallengeIn,
-  AuthVerifyIn,
-  FinalVote,
-  ScoreSubmit,
-  ScoreGet,
-  ReputationGet,
-  ResearchFetch,
-  ResearchCacheGet
-} from './schemas.js';
-import { sha256Hex, log, getPersistentSigningKeys, LRUMap } from './utils.js';
-import canonicalizer from './canonicalizer.js';
+import { log, getPersistentSigningKeys, LRUMap } from './utils.js';
 import { loadConfig } from './config/config-builder.js';
 import { createSigner, buildJournalCore, finalizeJournal } from './journal.js';
+
+// Services
 import { SubmissionService } from './services/SubmissionService.js';
+import { AuthService } from './services/AuthService.js';
+import { RoomService } from './services/RoomService.js';
+import { VoteService } from './services/VoteService.js';
+import { ScoringService } from './services/ScoringService.js';
+import { VerificationService } from './services/VerificationService.js';
+
+// Routers
+import { createRoomRouter } from './routes/room.js';
+import { createSubmissionRouter } from './routes/submission.js';
+import { createVoteRouter } from './routes/vote.js';
+import { createAuthRouter } from './routes/auth.js';
+import { createJournalRouter } from './routes/journal.js';
+import { createScoringRouter } from './routes/scoring.js';
+import { createVerificationRouter } from './routes/verification.js';
+import { createResearchRouter } from './routes/research.js';
+import { createEventsRouter } from './routes/events.js';
 
 const app = express();
 const config = loadConfig();
 app.use(express.json());
 app.use(rateLimitStub({ enforce: true }));
-// Serve static demo files (public/*) so you can preview UI in a browser
 app.use(express.static('public'));
 
-// Optional DB client (if DATABASE_URL provided)
-let db = null;
+// Global DB Ref to allow swapping (test support)
+const dbRef = { pool: null };
+
 if (config.databaseUrl) {
   try {
-    db = new pg.Pool({ connectionString: config.databaseUrl, max: 2 });
+    dbRef.pool = new pg.Pool({ connectionString: config.databaseUrl, max: 2 });
   } catch (err) {
     log.error('DB pool initialization failed', { error: err.message });
-    db = null;
+    dbRef.pool = null;
   }
 }
 
 export function __setDbPool(pool) {
-  db = pool;
+  dbRef.pool = pool;
 }
 
-// Healthcheck
-app.get('/health', (_req, res) => res.json({ ok: true }));
+function requireDbInProduction(req, res, next) {
+  if (!dbRef.pool && process.env.NODE_ENV === 'production') {
+    return res
+      .status(503)
+      .json({
+        ok: false,
+        error: 'service_unavailable',
+        message: 'Database is required in production mode'
+      });
+  }
+  next();
+}
 
-// In-memory idempotency and submission store (M1 stub / fallback)
-const memSubmissions = new LRUMap(1000); // key -> { id, canonical_sha256, content, author_id, room_id }
-const memSubmissionIndex = new LRUMap(1000); // submission_id -> { room_id }
-const memFlags = new LRUMap(1000); // submission_id -> Map(reporter_id -> { role, reason, created_at })
-// In-memory verification verdicts: key "round:reporter:submission:claim" -> { id, verdict, rationale }
+// Global state for in-memory fallbacks
+const memSubmissions = new LRUMap(1000);
+const memSubmissionIndex = new LRUMap(1000);
+const memFlags = new LRUMap(1000);
 const memVerifications = new LRUMap(2000);
-// In-memory server-issued nonce stores (when DB is unavailable)
-// key "round:author" -> Map(nonce -> expires_unix)
-const memIssuedNonces = new LRUMap(500);
-const memConsumedNonces = new LRUMap(5000); // key "round:author:nonce"
-// Simple per-author issuance rate limiter for fallback path
-// key "round:author" -> { count, window_start_unix, last_cleanup_unix }
-const memNonceIssueRate = new LRUMap(500);
-let memIssuedTotal = 0;
-const NONCE_WINDOW_SEC = 60;
-const NONCE_RATE_LIMIT = 30; // per (round,author) per window
-const PER_AUTHOR_MAX = 200;
-const GLOBAL_NONCE_MAX = 5000;
-const CLEANUP_INTERVAL_SEC = 10;
-// In-memory room state and idempotency for room.create fallback
-const memRooms = new LRUMap(100); // room_id -> { round: { idx, phase, submit_deadline_unix, published_at_unix?, continue_vote_close_unix? } }
-const memRoomNonces = new LRUMap(500); // client_nonce -> room_id
+const memRooms = new LRUMap(100);
+const memRoomNonces = new LRUMap(500);
+const memVotes = new LRUMap(1000);
+const memVoteTotals = new LRUMap(100);
+const memParticipantFingerprints = new LRUMap(1000);
+const memAuthChallenges = new LRUMap(500);
+
+// Initialize Services
+const authService = new AuthService({
+  dbRef,
+  memAuthChallenges,
+  memParticipantFingerprints,
+  config
+});
+const roomService = new RoomService({
+  dbRef,
+  memRooms,
+  memRoomNonces,
+  memSubmissions,
+  memFlags,
+  memVoteTotals,
+  config
+});
+const voteService = new VoteService({ dbRef, memVotes, memVoteTotals });
+const scoringService = new ScoringService({ dbRef });
+const verificationService = new VerificationService({
+  dbRef,
+  memVerifications,
+  memSubmissionIndex
+});
+
+const memIssuedNonces = new LRUMap(5000); // For server-issued nonces in memory mode
+
+function validateAndConsumeNonceMemory(input) {
+  const { round_id, author_id, client_nonce } = input;
+  // Use a key that matches how it was issued (round_id + author_id + nonce)
+  const issueKey = `${round_id}:${author_id}:${client_nonce}`;
+  const issued = memIssuedNonces.get(issueKey);
+
+  if (issued) {
+    const now = Date.now();
+    if (now > issued.expiresAt) {
+      memIssuedNonces.delete(issueKey);
+      return false; // Expired
+    }
+    // Consume it
+    memIssuedNonces.delete(issueKey);
+    return true;
+  }
+
+  return false;
+}
 
 const submissionService = new SubmissionService({
-  get db() {
-    return db;
-  },
+  dbRef,
   config,
   memSubmissions,
   memSubmissionIndex,
   validateAndConsumeNonceMemory
 });
 
-const SUBMIT_WINDOW_SEC = config.submitWindowSec;
-const CONTINUE_WINDOW_SEC = config.continueWindowSec;
-const signer = createSigner({
-  ...getPersistentSigningKeys(),
-  canonMode: config.canonMode
-});
-const memJournalHashes = new LRUMap(1000);
-// In-memory participant fingerprint store when DB is unavailable
-const memParticipantFingerprints = new LRUMap(1000); // participant_id -> fingerprint
-// In-memory auth challenges
-const memAuthChallenges = new LRUMap(500); // nonce -> { room_id, participant_id, expires_at }
-
-function nowSec() {
-  return Math.floor(Date.now() / 1000);
-}
-
-// M7: Production Hardening - Disable in-memory fallback in production
-function requireDbInProduction(req, res, next) {
-  if (!db && process.env.NODE_ENV === 'production') {
-    return res.status(503).json({
-      ok: false,
-      error: 'service_unavailable',
-      message: 'Database is required in production mode'
-    });
-  }
-  next();
-}
-
-// Auth Challenge — return a random nonce for SSH signing
-app.get(
-  '/auth/challenge',
-  rateLimitStub({
-    limit: 5,
-    windowMs: 60000,
-    enforce: process.env.NODE_ENV !== 'test'
-  }),
+// Helper for router mounting
+const context = {
+  authService,
+  roomService,
+  voteService,
+  scoringService,
+  verificationService,
+  submissionService,
+  rateLimitStub,
   requireDbInProduction,
-  (req, res) => {
-    try {
-      const input = AuthChallengeIn.parse(req.query);
-      const nonce = crypto.randomBytes(16).toString('hex');
-      const expires_at = nowSec() + 300; // 5 mins
-      memAuthChallenges.set(nonce, {
-        room_id: input.room_id,
-        participant_id: input.participant_id,
-        expires_at
-      });
-      return res.json({ ok: true, nonce, expires_at, audience: 'db8' });
-    } catch (err) {
-      return res.status(400).json({ ok: false, error: err?.message || String(err) });
-    }
-  }
+  config,
+  memFlags
+};
+
+// Mount Routers at Root
+app.use(createRoomRouter(context));
+app.use(createSubmissionRouter(context));
+app.use(createVoteRouter(context));
+app.use(createAuthRouter(context));
+app.use(createScoringRouter(context));
+app.use(createVerificationRouter(context));
+
+const memResearchCache = new LRUMap(1000);
+const memResearchQuotas = new LRUMap(1000);
+app.use(
+  createResearchRouter({
+    get db() {
+      return dbRef.pool;
+    },
+    requireDbInProduction,
+    memResearchCache,
+    memResearchQuotas
+  })
+);
+app.use(
+  createEventsRouter({
+    get db() {
+      return dbRef.pool;
+    },
+    roomService
+  })
 );
 
-// Auth Verify — verify SSH signature and return a session (JWT)
-app.post(
-  '/auth/verify',
-  rateLimitStub({
-    limit: 5,
-    windowMs: 60000,
-    enforce: process.env.NODE_ENV !== 'test'
-  }),
-  requireDbInProduction,
-  async (req, res) => {
-    try {
-      const input = AuthVerifyIn.parse(req.body);
-      const challenge = memAuthChallenges.get(input.nonce);
-      if (!challenge) return res.status(400).json({ ok: false, error: 'invalid_or_expired_nonce' });
-      if (challenge.expires_at <= nowSec()) {
-        memAuthChallenges.delete(input.nonce);
-        return res.status(400).json({ ok: false, error: 'invalid_or_expired_nonce' });
-      }
-      if (
-        challenge.room_id !== input.room_id ||
-        challenge.participant_id !== input.participant_id
-      ) {
-        return res.status(400).json({ ok: false, error: 'challenge_mismatch' });
-      }
+// Healthcheck
+app.get('/health', (_req, res) => res.json({ ok: true }));
 
-      // Verify signature over the nonce
-      let pubDer;
-      if (input.signature_kind === 'ed25519') {
-        if (!input.public_key_b64)
-          return res.status(400).json({ ok: false, error: 'missing_public_key_b64' });
-        pubDer = Buffer.from(input.public_key_b64, 'base64');
-      } else {
-        if (!input.public_key_ssh)
-          return res.status(400).json({ ok: false, error: 'missing_public_key_ssh' });
-        pubDer = parseOpenSshEd25519ToSpkiDer(input.public_key_ssh);
-      }
-
-      const pubKey = crypto.createPublicKey({ format: 'der', type: 'spki', key: pubDer });
-      const ok = crypto.verify(
-        null,
-        Buffer.from(input.nonce),
-        pubKey,
-        Buffer.from(input.sig_b64, 'base64')
-      );
-
-      if (!ok) {
-        return res.status(400).json({ ok: false, error: 'invalid_signature' });
-      }
-
-      // Check author binding
-      const fpHex = crypto.createHash('sha256').update(pubDer).digest('hex');
-      const gotFp = `sha256:${fpHex}`;
-
-      if (db) {
-        try {
-          const r = await db.query(
-            'select ssh_fingerprint from participants_view where id = $1 and room_id = $2 limit 1',
-            [input.participant_id, input.room_id]
-          );
-          const row = r.rows?.[0];
-          if (!row) {
-            return res.status(404).json({ ok: false, error: 'participant_not_found_in_room' });
-          }
-          const fp = String(row.ssh_fingerprint || '').trim();
-          if (fp) {
-            const expected = fp.toLowerCase().startsWith('sha256:')
-              ? fp.toLowerCase()
-              : `sha256:${fp.toLowerCase()}`;
-            if (expected !== gotFp) {
-              return res.status(400).json({ ok: false, error: 'author_binding_mismatch' });
-            }
-          } else if (config.enforceAuthorBinding) {
-            return res.status(400).json({ ok: false, error: 'author_not_configured' });
-          }
-        } catch (dbErr) {
-          console.warn('[auth.verify] DB lookup failed:', dbErr.message);
-          if (config.enforceAuthorBinding) {
-            throw dbErr; // rethrow to be caught by main catch block
-          }
-        }
-      }
-
-      // Issue session (mock JWT)
-      const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
-      const payload = Buffer.from(
-        JSON.stringify({
-          sub: input.participant_id,
-          room_id: input.room_id,
-          exp: nowSec() + 3600
-        })
-      ).toString('base64url');
-      const jwt = `${header}.${payload}.`;
-
-      memAuthChallenges.delete(input.nonce);
-      return res.json({
-        ok: true,
-        room_id: input.room_id,
-        participant_id: input.participant_id,
-        jwt,
-        expires_at: nowSec() + 3600
-      });
-    } catch (err) {
-      console.error('[auth.verify] error:', err);
-      return res
-        .status(400)
-        .json({ ok: false, error: err?.name || 'error', message: err?.message });
-    }
-  }
-);
-
-const execFileAsync = promisify(execFile);
-
-/**
- * verifySSHSignature verifies an OpenSSH signature using ssh-keygen -Y verify.
- * It uses unique temp files to avoid race conditions.
- */
-async function verifySSHSignature({ canonicalJson, sigB64, principal, allowedSignersPath }) {
-  const requestId = crypto.randomUUID();
-  const tmpDir = os.tmpdir();
-  const msgPath = path.join(tmpDir, `db8-msg-${requestId}`);
-  const sigPath = path.join(tmpDir, `db8-sig-${requestId}`);
-
-  try {
-    const msgBuffer = Buffer.from(canonicalJson);
-    await fs.writeFile(msgPath, msgBuffer);
-    await fs.writeFile(sigPath, Buffer.from(sigB64, 'base64'));
-
-    await execFileAsync(
-      'ssh-keygen',
-      ['-Y', 'verify', '-f', allowedSignersPath, '-I', principal, '-n', 'db8', '-s', sigPath],
-      {
-        input: msgBuffer
-      }
-    );
-    return true;
-  } finally {
-    // Cleanup temp files
-    await fs.unlink(msgPath).catch(() => {});
-    await fs.unlink(sigPath).catch(() => {});
-  }
-}
-
-// Parse OpenSSH ed25519 public key to DER SPKI per RFC 8410.
-// Accepts typical formats like: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... comment"
-function parseOpenSshEd25519ToSpkiDer(pub) {
-  if (typeof pub !== 'string' || pub.trim().length === 0) throw new Error('empty');
-  const parts = pub.trim().split(/\s+/);
-  let b64 = '';
-  if (parts[0] === 'ssh-ed25519' && parts[1]) b64 = parts[1];
-  else {
-    // try to find a base64 token
-    const base64Candidate = parts.find((p) => /^[A-Za-z0-9+/=]+$/.test(p));
-    if (!base64Candidate) throw new Error('no_base64');
-    b64 = base64Candidate;
-  }
-  if (!b64) throw new Error('empty_base64');
-  const buf = Buffer.from(b64, 'base64');
-  let off = 0;
-  const readStr = () => {
-    if (off + 4 > buf.length) throw new Error('short');
-    const len = buf.readUInt32BE(off);
-    off += 4;
-    if (off + len > buf.length) throw new Error('short');
-    const s = buf.slice(off, off + len);
-    off += len;
-    return s;
-  };
-  const type = readStr().toString('ascii');
-  if (type !== 'ssh-ed25519') throw new Error('wrong_type');
-  const key = readStr();
-  if (key.length !== 32) throw new Error('bad_len');
-  // DER SPKI prefix for Ed25519 per RFC 8410: 302a300506032b6570032100 + 32 bytes pubkey
-  const prefix = Buffer.from('302a300506032b6570032100', 'hex');
-  return Buffer.concat([prefix, key]);
-}
-
-function validateAndConsumeNonceMemory({ round_id, author_id, client_nonce }) {
-  const issuedKey = `${round_id}:${author_id}`;
-  const consumeKey = `${round_id}:${author_id}:${client_nonce}`;
-  const issued = memIssuedNonces.get(issuedKey);
-  const UUIDv4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  if (!issued || typeof client_nonce !== 'string' || !UUIDv4.test(client_nonce)) return false;
-  const exp = issued.get(client_nonce);
-  if (!Number.isFinite(exp) || exp <= nowSec()) return false;
-  if (memConsumedNonces.has(consumeKey)) return false;
-  if (issued.delete(client_nonce)) memIssuedTotal = Math.max(0, memIssuedTotal - 1);
-  memConsumedNonces.add(consumeKey);
-  return true;
-}
-
-// participant.get — retrieve participant role/info
-app.get('/rpc/participant', async (req, res) => {
-  const roomId = String(req.query.room_id || '');
-  const id = String(req.query.id || '');
-  if (!roomId || !id) return res.status(400).json({ ok: false, error: 'missing_id' });
-
-  if (db) {
-    try {
-      const r = await db.query(
-        'select role from participants_view where room_id = $1 and id = $2',
-        [roomId, id]
-      );
-      const row = r.rows?.[0];
-      if (!row) return res.status(404).json({ ok: false, error: 'not_found' });
-      return res.json({ ok: true, role: row.role });
-    } catch (e) {
-      console.warn('participant.get db error', e);
-      // fall through
-    }
-  }
-  // Memory fallback: easy convention for testing UI without DB
-  // If id starts with "judge", treat as judge, else debater
-  const role = id.startsWith('judge') ? 'judge' : 'debater';
-  return res.json({ ok: true, role, note: 'db_fallback' });
-});
-
-// Server-issued nonce API (DB preferred)
+// nonce.issue
 app.post('/rpc/nonce.issue', requireDbInProduction, async (req, res) => {
   try {
-    const { round_id, author_id, ttl_sec } = req.body || {};
-    if (!round_id || !author_id)
-      return res.status(400).json({ ok: false, error: 'missing_round_or_author' });
-    if (db) {
-      try {
-        const r = await db.query(
-          'select submission_nonce_issue($1::uuid,$2::uuid,$3::int) as nonce',
-          [round_id, author_id, Math.max(1, Math.floor(Number(ttl_sec ?? 600) || 600))]
-        );
-        const nonce = r.rows?.[0]?.nonce;
-        if (!nonce) throw new Error('nonce_issue_no_value');
-        return res.json({ ok: true, nonce });
-      } catch (e) {
-        const code = e?.code;
-        const msg = String(e?.message || '');
-        if (code === '23503' || code === '23505' || /invalid_/i.test(msg))
-          return res.status(400).json({ ok: false, error: msg || 'nonce_issue_failed' });
-        console.error('[nonce.issue] DB error, falling back to memory:', msg || e);
-      }
-    }
-    const key = `${round_id}:${author_id}`;
-    const rl = memNonceIssueRate.get(key) || { count: 0, window: nowSec(), last_cleanup_unix: 0 };
-    if (nowSec() - rl.window >= NONCE_WINDOW_SEC) {
-      rl.count = 0;
-      rl.window = nowSec();
-    }
-    rl.count += 1;
-    memNonceIssueRate.set(key, rl);
-    if (rl.count > NONCE_RATE_LIMIT)
-      return res.status(429).json({ ok: false, error: 'rate_limited' });
+    const round_id = req.body.round_id || req.body.room_id;
+    const author_id = req.body.author_id;
+    const ttl = req.body.ttl_sec || req.body.ttl || 300;
 
-    const ttl = Math.max(1, Math.floor(Number(ttl_sec ?? 600) || 600));
-    const issued = memIssuedNonces.get(key) || new Map();
-    // Lazy prune occasionally or when large
-    if (
-      nowSec() - (rl.last_cleanup_unix || 0) >= CLEANUP_INTERVAL_SEC ||
-      issued.size > PER_AUTHOR_MAX
-    ) {
-      let pruned = 0;
-      for (const [n, exp] of issued.entries()) {
-        if (!Number.isFinite(exp) || exp <= nowSec()) {
-          issued.delete(n);
-          memIssuedTotal = Math.max(0, memIssuedTotal - 1);
-          pruned++;
-          if (pruned >= 50) break;
-        }
-      }
-      rl.last_cleanup_unix = nowSec();
-      memNonceIssueRate.set(key, rl);
+    if (!round_id || !author_id)
+      return res.status(400).json({ ok: false, error: 'missing_fields' });
+    if (dbRef.pool) {
+      const r = await dbRef.pool.query(
+        'select submission_nonce_issue($1::uuid,$2::uuid,$3::int) as nonce',
+        [round_id, author_id, ttl]
+      );
+      return res.json({ ok: true, nonce: r.rows[0].nonce });
     }
-    if (issued.size >= PER_AUTHOR_MAX)
-      return res.status(429).json({ ok: false, error: 'rate_limited' });
-    // Global sweep for expired nonces before enforcing global cap
-    if (memIssuedTotal >= GLOBAL_NONCE_MAX) {
-      let reduced = 0;
-      for (const [, map] of memIssuedNonces.entries()) {
-        for (const [n, exp] of map.entries()) {
-          if (!Number.isFinite(exp) || exp <= nowSec()) {
-            map.delete(n);
-            memIssuedTotal = Math.max(0, memIssuedTotal - 1);
-            reduced++;
-            if (reduced >= 200) break;
-          }
-        }
-        if (reduced >= 200) break;
-      }
-      if (memIssuedTotal >= GLOBAL_NONCE_MAX)
-        return res.status(429).json({ ok: false, error: 'memory_limit_exceeded' });
-    }
+
+    // Memory fallback
     const nonce = crypto.randomUUID();
-    issued.set(nonce, nowSec() + ttl);
-    memIssuedTotal++;
-    memIssuedNonces.set(key, issued);
+    const issueKey = `${round_id}:${author_id}:${nonce}`;
+    memIssuedNonces.set(issueKey, { expiresAt: Date.now() + ttl * 1000 });
+
     return res.json({ ok: true, nonce, note: 'db_fallback' });
   } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+    return res.status(400).json({ ok: false, error: err.message });
   }
 });
 
-// submission.create
-app.post('/rpc/submission.create', requireDbInProduction, async (req, res) => {
-  try {
-    const input = SubmissionIn.parse(req.body);
-    const result = await submissionService.create(input, { forceDlq: req.body._force_dlq });
-    return res.json({ ok: true, ...result });
-  } catch (err) {
-    if (err.message === 'forced_failure_queued') {
-      return res.status(500).json({ ok: false, error: err.message });
-    }
-    if (err.message === 'deadline_passed' || err.message === 'invalid_nonce') {
-      return res.status(400).json({ ok: false, error: err.message });
-    }
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
+const signer = createSigner({ ...getPersistentSigningKeys(), canonMode: config.canonMode });
 
-// In-memory vote idempotency store and tallies
-const memVotes = new LRUMap(1000); // key -> { id, choice }
-const memVoteTotals = new LRUMap(100); // room_id -> { yes, no }
-
-function addVoteToTotals(roomId, choice) {
-  const key = String(roomId);
-  const t = memVoteTotals.get(key) || { yes: 0, no: 0 };
-  if (choice === 'continue') t.yes += 1;
-  else t.no += 1;
-  memVoteTotals.set(key, t);
-}
-
-// vote.continue
-app.post('/rpc/vote.continue', requireDbInProduction, async (req, res) => {
-  try {
-    const input = ContinueVote.parse(req.body);
-    const key = `${input.round_id}:${input.voter_id}:continue:${input.client_nonce}`;
-    if (db) {
-      try {
-        const r = await db.query(
-          'select vote_submit($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::text) as id',
-          [
-            input.round_id,
-            input.voter_id,
-            'continue',
-            JSON.stringify({ choice: input.choice }),
-            input.client_nonce
-          ]
-        );
-        const vote_id = r.rows?.[0]?.id;
-        if (vote_id) {
-          addVoteToTotals(input.room_id, input.choice);
-          return res.json({ ok: true, vote_id });
-        }
-        throw new Error('vote_submit_missing_id');
-      } catch (e) {
-        if (memVotes.has(key))
-          return res.json({
-            ok: true,
-            vote_id: memVotes.get(key).id,
-            note: 'db_fallback',
-            db_error: e.message
-          });
-        const vote_id = crypto.randomUUID();
-        memVotes.set(key, { id: vote_id, choice: input.choice });
-        addVoteToTotals(input.room_id, input.choice);
-        return res.json({ ok: true, vote_id, note: 'db_fallback', db_error: e.message });
-      }
-    }
-    if (memVotes.has(key)) return res.json({ ok: true, vote_id: memVotes.get(key).id });
-    const vote_id = crypto.randomUUID();
-    memVotes.set(key, { id: vote_id, choice: input.choice });
-    addVoteToTotals(input.room_id, input.choice);
-    return res.json({ ok: true, vote_id });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
-// vote.final
-app.post('/rpc/vote.final', requireDbInProduction, async (req, res) => {
-  try {
-    const input = FinalVote.parse(req.body);
-    if (db) {
-      try {
-        const r = await db.query(
-          'select vote_final_submit($1::uuid,$2::uuid,$3::boolean,$4::jsonb,$5::text) as id',
-          [
-            input.round_id,
-            input.voter_id,
-            input.approval,
-            JSON.stringify(input.ranking || []),
-            input.client_nonce
-          ]
-        );
-        const vote_id = r.rows?.[0]?.id;
-        if (!vote_id) throw new Error('vote_final_submit_missing_id');
-        return res.json({ ok: true, vote_id });
-      } catch (e) {
-        const msg = String(e?.message || '');
-        if (/not a participant/.test(msg)) return res.status(403).json({ ok: false, error: msg });
-        console.warn('[vote.final] DB error, falling back to memory:', msg || e);
-      }
-    }
-    // Memory fallback
-    const vote_id = crypto.randomUUID();
-    return res.json({ ok: true, vote_id, note: 'db_fallback' });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
-// score.submit
-app.post('/rpc/score.submit', requireDbInProduction, async (req, res) => {
-  try {
-    const input = ScoreSubmit.parse(req.body);
-    if (db) {
-      try {
-        const r = await db.query(
-          'select score_submit($1::uuid,$2::uuid,$3::uuid,$4::int,$5::int,$6::int,$7::int,$8::int,$9::text) as id',
-          [
-            input.round_id,
-            input.judge_id,
-            input.participant_id,
-            input.e,
-            input.r,
-            input.c,
-            input.v,
-            input.y,
-            input.client_nonce
-          ]
-        );
-        const score_id = r.rows?.[0]?.id;
-        return res.json({ ok: true, score_id });
-      } catch (e) {
-        const msg = String(e?.message || '');
-        if (/only judges/.test(msg)) return res.status(403).json({ ok: false, error: msg });
-        console.warn('[score.submit] DB error, falling back to memory:', msg || e);
-      }
-    }
-    return res.json({ ok: true, score_id: crypto.randomUUID(), note: 'db_fallback' });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
-// scores.get
-app.get('/rpc/scores.get', async (req, res) => {
-  try {
-    const input = ScoreGet.parse(req.query);
-    if (db) {
-      const r = await db.query('select * from view_score_aggregates where round_id = $1', [
-        input.round_id
-      ]);
-      const rows = (r.rows || []).map((row) => ({
-        ...row,
-        avg_e: Number(row.avg_e),
-        avg_r: Number(row.avg_r),
-        avg_c: Number(row.avg_c),
-        avg_v: Number(row.avg_v),
-        avg_y: Number(row.avg_y),
-        composite_score: Number(row.composite_score),
-        judge_count: Number(row.judge_count)
-      }));
-      return res.json({ ok: true, rows });
-    }
-    // Memory stub
-    return res.json({
-      ok: true,
-      rows: [{ participant_id: '...', composite_score: 85 }],
-      note: 'db_fallback'
-    });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
-// reputation.update
-app.post('/rpc/reputation.update', requireDbInProduction, async (req, res) => {
-  try {
-    const { room_id, round_id } = req.body || {};
-    if (db) {
-      // Find rounds for the room if only room_id provided, or use specific round_id
-      const targetRoundId =
-        round_id ||
-        (
-          await db.query('select id from rounds where room_id = $1 order by idx desc limit 1', [
-            room_id
-          ])
-        ).rows?.[0]?.id;
-      if (targetRoundId) {
-        await db.query('select reputation_update_round($1::uuid)', [targetRoundId]);
-        return res.json({ ok: true });
-      }
-      return res.status(404).json({ ok: false, error: 'round_not_found' });
-    }
-    return res.json({ ok: true, note: 'db_fallback' });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
-// reputation.get
-app.get('/rpc/reputation.get', async (req, res) => {
-  try {
-    const input = ReputationGet.parse(req.query);
-    if (db) {
-      if (input.tag) {
-        const r = await db.query(
-          'select elo from reputation_tag where participant_id = $1 and tag = $2',
-          [input.participant_id, input.tag]
-        );
-        return res.json({
-          ok: true,
-          participant_id: input.participant_id,
-          tag: input.tag,
-          elo: r.rows?.[0]?.elo || 1200.0
-        });
-      }
-      const r = await db.query('select elo from reputation where participant_id = $1', [
-        input.participant_id
-      ]);
-      return res.json({
-        ok: true,
-        participant_id: input.participant_id,
-        elo: r.rows?.[0]?.elo || 1200.0
-      });
-    }
-    return res.json({
-      ok: true,
-      participant_id: input.participant_id,
-      elo: 1200.0,
-      note: 'db_fallback'
-    });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
-// research.fetch
-async function simulateFetch(url) {
-  // CONCEPTUAL: In a real implementation, this would use puppeteer or a library to scrape.
-  // For M6 prototype, we'll return a deterministic mock based on the domain.
-  const domain = new URL(url).hostname;
-  return {
-    title: `Research on ${domain}`,
-    excerpt: `This is a simulated snapshot of the content found at ${url}. It includes key evidence and reasoning patterns relevant to the current debate.`,
-    authors: ['Simulated Researcher'],
-    canonical_url: url,
-    fetched_at: nowSec()
-  };
-}
-
-app.post('/rpc/research.fetch', requireDbInProduction, async (req, res) => {
-  try {
-    const input = ResearchFetch.parse(req.body);
-    const urlHash = sha256Hex(input.url);
-
-    if (db) {
-      try {
-        // 1. Check Cache first
-        const cacheCheck = await db.query(
-          'select snapshot from research_cache where url_hash = $1',
-          [urlHash]
-        );
-        if (cacheCheck.rows.length > 0) {
-          return res.json({
-            ok: true,
-            snapshot: cacheCheck.rows[0].snapshot,
-            url_hash: urlHash,
-            cached: true
-          });
-        }
-
-        // 2. Check and Increment Quota
-        const roomRes = await db.query('select config from rooms where id = $1', [input.room_id]);
-        const maxFetches = Number(roomRes.rows[0]?.config?.max_fetches_per_round || 0);
-
-        await db.query('select research_usage_increment($1::uuid, $2::uuid, $3::int)', [
-          input.room_id,
-          input.round_id,
-          maxFetches
-        ]);
-
-        // 3. Fetch and Snapshot
-        const snapshot = await simulateFetch(input.url);
-
-        // 4. Update Cache
-        await db.query('select research_cache_upsert($1, $2, $3::jsonb)', [
-          input.url,
-          urlHash,
-          JSON.stringify(snapshot)
-        ]);
-
-        return res.json({ ok: true, snapshot, url_hash: urlHash, cached: false });
-      } catch (e) {
-        const msg = String(e?.message || '');
-        if (/quota_exceeded/.test(msg))
-          return res.status(429).json({ ok: false, error: 'quota_exceeded' });
-        console.warn('[research.fetch] DB error, falling back to memory:', msg || e);
-      }
-    }
-    // Memory fallback
-    const snapshot = await simulateFetch(input.url);
-    return res.json({ ok: true, snapshot, url_hash: urlHash, note: 'db_fallback' });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
-// research.cache
-app.get('/rpc/research.cache', async (req, res) => {
-  try {
-    const input = ResearchCacheGet.parse(req.query);
-    const urlHash = sha256Hex(input.url);
-    if (db) {
-      const r = await db.query('select snapshot from research_cache where url_hash = $1', [
-        urlHash
-      ]);
-      if (r.rows.length > 0) {
-        return res.json({ ok: true, snapshot: r.rows[0].snapshot });
-      }
-      return res.status(404).json({ ok: false, error: 'not_found' });
-    }
-    return res.json({ ok: true, snapshot: await simulateFetch(input.url), note: 'db_fallback' });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
-// SLAPS v2 Syscall Interface
-app.post('/slaps/v2/call', async (req, res) => {
-  try {
-    const { method, params: _params } = req.body || {};
-    const syscallId = crypto.randomUUID();
-
-    // Map SLAPS methods to internal RPCs
-    const mapping = {
-      'submission.create': '/rpc/submission.create',
-      'vote.continue': '/rpc/vote.continue',
-      'vote.final': '/rpc/vote.final',
-      'score.submit': '/rpc/score.submit'
-    };
-
-    const target = mapping[method];
-    if (!target) return res.status(404).json({ ok: false, error: 'unknown_syscall_method' });
-
-    // Internal "syscall" redirect
-    // Conceptually we could call the handlers directly, but for M7 we'll return a stub
-    // that proves the interface exists and returns a syscall_id.
-    return res.json({ ok: true, syscall_id: syscallId, method, result: 'acknowledged' });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
-// room.create: seeds room + round 0 (DB) or in-memory fallback
-app.post('/rpc/room.create', requireDbInProduction, async (req, res) => {
-  try {
-    const input = RoomCreate.parse(req.body);
-    const cfg = input.cfg || {};
-    let dbError = null;
-    if (db) {
-      try {
-        const result = await db.query(
-          'select room_create($1::text,$2::jsonb,$3::text) as room_id',
-          [input.topic, JSON.stringify(cfg), input.client_nonce || null]
-        );
-        const room_id = result.rows?.[0]?.room_id;
-        if (!room_id) throw new Error('room_create_missing_id');
-        return res.json({ ok: true, room_id });
-      } catch (e) {
-        dbError = e;
-        console.warn('room.create DB error; using in-memory fallback', e);
-        // fall through to memory path only if DB call fails
-      }
-    }
-    // in-memory: generate a room id and initialize round 0
-    const nonce = input.client_nonce ?? '';
-    if (nonce && memRoomNonces.has(nonce)) {
-      const existing = memRoomNonces.get(nonce);
-      return res.json({
-        ok: true,
-        room_id: existing,
-        note: 'db_fallback',
-        db_error: dbError?.message || undefined
-      });
-    }
-    const room_id = crypto.randomUUID();
-    const now = Math.floor(Date.now() / 1000);
-    memRooms.set(room_id, {
-      round: { idx: 0, phase: 'submit', submit_deadline_unix: now + SUBMIT_WINDOW_SEC }
-    });
-    if (nonce) memRoomNonces.set(nonce, room_id);
-    return res.json({
-      ok: true,
-      room_id,
-      note: 'db_fallback',
-      db_error: dbError?.message || undefined
-    });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
-// submission.flag
-app.post('/rpc/submission.flag', requireDbInProduction, async (req, res) => {
-  try {
-    const input = SubmissionFlag.parse(req.body);
-    const cleanReason = (input.reason || '').trim();
-    if (db) {
-      try {
-        // Upsert the flag row
-        const upsert = await db.query(
-          `insert into submission_flags (submission_id, reporter_id, reporter_role, reason)
-           values ($1, $2, $3, $4)
-           on conflict (submission_id, reporter_id)
-           do update set reporter_role = excluded.reporter_role,
-                         reason = excluded.reason,
-                         created_at = now()
-           returning submission_id as id`,
-          [input.submission_id, input.reporter_id, input.reporter_role, cleanReason]
-        );
-        // When RLS hides the inserted/updated row, RETURNING may yield 0 rows.
-        // Fallback to the known submission_id so the view lookup still works.
-        const sid = upsert.rows?.[0]?.id || input.submission_id;
-        // Read counts via the RLS-safe view (not the base table)
-        const { rows } = await db.query(
-          'select flag_count from submissions_with_flags_view where id = $1',
-          [sid]
-        );
-        const count = Number(rows?.[0]?.flag_count || 0);
-        return res.json({ ok: true, flag_count: count });
-      } catch (e) {
-        if (e?.code === '23503') {
-          return res.status(404).json({ ok: false, error: 'submission_not_found' });
-        }
-        if (e?.code === '23505') {
-          return res.status(200).json({ ok: true, note: 'duplicate_flag' });
-        }
-        // fall back to in-memory store if DB is unreachable or other errors occur
-        const details =
-          e?.message ||
-          (Array.isArray(e?.errors) ? e.errors.map((err) => err.message).join('; ') : String(e));
-        console.warn('submission.flag db error, falling back to memory', details);
-      }
-    }
-
-    if (!memSubmissionIndex.has(input.submission_id)) {
-      return res.status(404).json({ ok: false, error: 'submission_not_found' });
-    }
-    const existing = memFlags.get(input.submission_id) || new Map();
-    const duplicate = existing.has(input.reporter_id);
-    existing.set(input.reporter_id, {
-      reporter_id: input.reporter_id,
-      reporter_role: input.reporter_role,
-      reason: cleanReason,
-      created_at: Math.floor(Date.now() / 1000)
-    });
-    memFlags.set(input.submission_id, existing);
-    const payload = { ok: true, flag_count: existing.size };
-    if (duplicate) payload.note = 'duplicate_flag';
-    return res.json(payload);
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
-// verify.submit — record a verification verdict (DB first, memory fallback)
-app.post('/rpc/verify.submit', requireDbInProduction, async (req, res) => {
-  try {
-    const input = VerifySubmit.parse(req.body || {});
-    const key = `${input.round_id}:${input.reporter_id}:${input.submission_id}:${input.claim_id || ''}`;
-    if (db) {
-      try {
-        const r = await db.query(
-          'select verify_submit($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::text,$7::text) as id',
-          [
-            input.round_id,
-            input.reporter_id,
-            input.submission_id,
-            input.claim_id || null,
-            input.verdict,
-            input.rationale || null,
-            input.client_nonce
-          ]
-        );
-        const id = r.rows?.[0]?.id;
-        if (!id) throw new Error('verify_submit_missing_id');
-        return res.json({ ok: true, id });
-      } catch (e) {
-        const msg = String(e?.message || '');
-        const code = e?.code;
-        if (code === '23503') return res.status(404).json({ ok: false, error: 'not_found' });
-        if (/invalid_verdict|round_not_verifiable|submission_round_mismatch/i.test(msg))
-          return res.status(400).json({ ok: false, error: msg });
-        if (/reporter_not_participant|reporter_role_denied/.test(msg))
-          return res.status(403).json({ ok: false, error: msg });
-        console.warn('[verify.submit] DB error, falling back to memory:', msg || e);
-      }
-    }
-    // memory fallback — idempotent by key
-    if (!memSubmissionIndex.has(String(input.submission_id))) {
-      return res.status(404).json({ ok: false, error: 'submission_not_found' });
-    }
-    if (memVerifications.has(key)) {
-      const existing = memVerifications.get(key);
-      existing.verdict = input.verdict;
-      if (input.rationale) existing.rationale = input.rationale;
-      memVerifications.set(key, existing);
-      return res.json({ ok: true, id: existing.id, note: 'db_fallback' });
-    }
-    const id = crypto.randomUUID();
-    memVerifications.set(key, {
-      id,
-      verdict: input.verdict,
-      rationale: input.rationale || ''
-    });
-    return res.json({ ok: true, id, note: 'db_fallback' });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
-// verify/summary — aggregated verdict counts for a round
-app.get('/verify/summary', async (req, res) => {
-  try {
-    const roundId = String(req.query.round_id || '');
-    if (!/^[0-9a-f-]{8,}$/i.test(roundId))
-      return res.status(400).json({ ok: false, error: 'invalid_round_id' });
-    if (db) {
-      try {
-        const r = await db.query(
-          'select submission_id, claim_id, true_count, false_count, unclear_count, needs_work_count, total from verify_summary($1::uuid) order by submission_id, claim_id nulls first',
-          [roundId]
-        );
-        return res.json({ ok: true, rows: r.rows || [] });
-      } catch (e) {
-        console.warn('[verify.summary] DB error, falling back to memory:', e?.message || e);
-      }
-    }
-    // memory summary
-    const rows = [];
-    const counts = new Map(); // key: submission:claim -> aggregate counts
-    for (const [k, v] of memVerifications.entries()) {
-      const parts = String(k || '').split(':');
-      if (parts.length < 3) continue;
-      const r = parts[0] || '';
-      const s = parts[2] || '';
-      const claimId = parts.length > 3 ? parts.slice(3).join(':') : null;
-      if (r !== roundId) continue;
-      const ck = `${s}:${claimId}`;
-      const t = counts.get(ck) || {
-        submission_id: s,
-        claim_id: claimId || null,
-        true_count: 0,
-        false_count: 0,
-        unclear_count: 0,
-        needs_work_count: 0,
-        total: 0
-      };
-      if (v.verdict === 'true') t.true_count++;
-      else if (v.verdict === 'false') t.false_count++;
-      else if (v.verdict === 'unclear') t.unclear_count++;
-      else if (v.verdict === 'needs_work') t.needs_work_count++;
-      t.total++;
-      counts.set(ck, t);
-    }
-    for (const v of counts.values()) rows.push(v);
-    return res.json({ ok: true, rows, note: 'db_fallback' });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
-// In-memory room/round state and simple time-based transitions
-
-function ensureRoom(roomId) {
-  let r = memRooms.get(roomId);
-  const now = Math.floor(Date.now() / 1000);
-  const justCreated = !r;
-  if (!r) {
-    r = { round: { idx: 0, phase: 'submit', submit_deadline_unix: now + SUBMIT_WINDOW_SEC } };
-    memRooms.set(roomId, r);
-  }
-  const round = r.round;
-  // Simple phase transitions based on time windows (demo only)
-  if (justCreated) return r; // avoid flipping in the same tick as creation
-  if (round.phase === 'submit' && now > round.submit_deadline_unix) {
-    round.phase = 'published';
-    round.published_at_unix = now;
-    round.continue_vote_close_unix = now + CONTINUE_WINDOW_SEC;
-  } else if (
-    round.phase === 'published' &&
-    round.continue_vote_close_unix &&
-    now > round.continue_vote_close_unix
-  ) {
-    const tally = memVoteTotals.get(String(roomId)) || { yes: 0, no: 0 };
-    if (tally.yes > tally.no) {
-      r.round = {
-        idx: round.idx + 1,
-        phase: 'submit',
-        submit_deadline_unix: now + SUBMIT_WINDOW_SEC
-      };
-    } else {
-      round.phase = 'final';
-    }
-  }
-  return r;
-}
-
-// Authoritative state snapshot (enriched)
-app.get('/state', async (req, res) => {
-  const roomId = String(req.query.room_id || 'local');
-  if (db) {
-    try {
-      const roundResult = await db.query(
-        `select room_id, round_id, idx, phase, submit_deadline_unix,
-                published_at_unix, continue_vote_close_unix
-           from view_current_round
-          where room_id = $1
-          order by idx desc
-          limit 1`,
-        [roomId]
-      );
-      const roundRow = roundResult.rows?.[0];
-      if (roundRow) {
-        const [tallyResult, finalTallyResult, submissionsResult, verifyResult] = await Promise.all([
-          db.query(
-            'select yes, no from view_continue_tally where room_id = $1 and round_id = $2 limit 1',
-            [roomId, roundRow.round_id]
-          ),
-          db.query('select approves, rejects from view_final_tally where round_id = $1 limit 1', [
-            roundRow.round_id
-          ]),
-          db.query(
-            `select id,
-                    author_id,
-                    author_anon_name,
-                    content,
-                    canonical_sha256,
-                    submitted_at,
-                    flag_count,
-                    flag_details
-               from submissions_with_flags_view
-              where round_id = $1
-              order by submitted_at asc nulls last, id asc`,
-            [roundRow.round_id]
-          ),
-          db.query(
-            'select submission_id, claim_id, true_count, false_count, unclear_count, needs_work_count, total from verify_summary($1::uuid)',
-            [roundRow.round_id]
-          )
-        ]);
-        const tallyRow = tallyResult.rows?.[0] || { yes: 0, no: 0 };
-        const finalTallyRow = finalTallyResult.rows?.[0] || { approves: 0, rejects: 0 };
-        const transcript = submissionsResult.rows.map((row) => ({
-          submission_id: row.id,
-          author_id: row.author_id,
-          author_anon_name: row.author_anon_name,
-          content: row.content,
-          canonical_sha256: row.canonical_sha256,
-          submitted_at: row.submitted_at ? Math.floor(row.submitted_at.getTime() / 1000) : null,
-          flag_count: Number(row.flag_count || 0),
-          flags: Array.isArray(row.flag_details) ? row.flag_details : []
-        }));
-        const flagged = transcript
-          .filter((entry) => entry.flag_count > 0)
-          .map((entry) => ({ submission_id: entry.submission_id, flag_count: entry.flag_count }));
-        return res.json({
-          ok: true,
-          room_id: roomId,
-          round: {
-            idx: roundRow.idx,
-            phase: roundRow.phase,
-            submit_deadline_unix: roundRow.submit_deadline_unix,
-            published_at_unix: roundRow.published_at_unix,
-            continue_vote_close_unix: roundRow.continue_vote_close_unix,
-            continue_tally: {
-              yes: Number(tallyRow.yes || 0),
-              no: Number(tallyRow.no || 0)
-            },
-            final_tally: {
-              approves: Number(finalTallyRow.approves || 0),
-              rejects: Number(finalTallyRow.rejects || 0)
-            },
-            transcript,
-            verifications: verifyResult.rows || []
-          },
-          flags: flagged
-        });
-      }
-    } catch {
-      // fall through to in-memory state on error
-    }
-  }
-  const state = ensureRoom(roomId);
-  const round = state.round;
-  const tally = memVoteTotals.get(roomId) || { yes: 0, no: 0 };
-  const transcript = Array.from(memSubmissions.entries())
-    .filter(([key]) => key.startsWith(`${roomId}:`))
-    .map(([, value]) => {
-      const flags = memFlags.get(value.id);
-      const flagEntries = flags
-        ? Array.from(flags.entries()).map(([, detail]) => ({
-            reporter_id: detail.reporter_id,
-            reporter_role: detail.reporter_role,
-            reason: detail.reason,
-            created_at: detail.created_at
-          }))
-        : [];
-      return {
-        submission_id: value.id,
-        author_id: value.author_id,
-        content: value.content,
-        canonical_sha256: value.canonical_sha256,
-        submitted_at: null,
-        flag_count: flagEntries.length,
-        flags: flagEntries
-      };
-    });
-  const flagged = transcript
-    .filter((entry) => entry.flag_count > 0)
-    .map((entry) => ({ submission_id: entry.submission_id, flag_count: entry.flag_count }));
-  return res.json({
-    ok: true,
-    room_id: roomId,
-    round: { ...round, continue_tally: tally, transcript },
-    flags: flagged
-  });
-});
-
-// participant.fingerprint.set — enroll/normalize a participant's public-key fingerprint
-app.post('/rpc/participant.fingerprint.set', requireDbInProduction, async (req, res) => {
-  try {
-    const input = ParticipantFingerprintSet.parse(req.body || {});
-    let normalized;
-    if (input.public_key_b64) {
-      try {
-        const der = Buffer.from(String(input.public_key_b64), 'base64');
-        const hex = crypto.createHash('sha256').update(der).digest('hex');
-        normalized = `sha256:${hex}`;
-      } catch {
-        return res.status(400).json({ ok: false, error: 'invalid_public_key_b64' });
-      }
-    } else if (input.fingerprint) {
-      const hex = String(input.fingerprint)
-        .toLowerCase()
-        .replace(/^sha256:/, '');
-      if (!/^[0-9a-f]{64}$/.test(hex))
-        return res.status(400).json({ ok: false, error: 'invalid_fingerprint_format' });
-      normalized = `sha256:${hex}`;
-    } else {
-      return res.status(400).json({ ok: false, error: 'provide_exactly_one' });
-    }
-
-    if (db) {
-      try {
-        const r = await db.query(
-          'select participant_fingerprint_set($1::uuid,$2::text) as fingerprint',
-          [
-            input.participant_id,
-            input.public_key_b64 ? String(input.public_key_b64) : String(normalized)
-          ]
-        );
-        const fp = r.rows?.[0]?.fingerprint;
-        if (!fp) throw new Error('fingerprint_set_no_value');
-        return res.json({ ok: true, fingerprint: String(fp) });
-      } catch (e) {
-        const msg = String(e?.message || '');
-        if (/participant_not_found/.test(msg))
-          return res.status(404).json({ ok: false, error: 'participant_not_found' });
-        if (/invalid_fingerprint_or_key/.test(msg))
-          return res.status(400).json({ ok: false, error: 'invalid_fingerprint_or_key' });
-        return res.status(500).json({ ok: false, error: 'db_error', detail: msg });
-      }
-    }
-    // Memory fallback path
-    memParticipantFingerprints.set(String(input.participant_id), normalized);
-    return res.json({ ok: true, fingerprint: normalized, note: 'db_fallback' });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
-// SSE: timer events. Streams { t:'timer', room_id, ends_unix, round_idx, phase } every 1s.
-app.get('/events', async (req, res) => {
-  const roomId = String(req.query.room_id || 'local');
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders?.();
-
-  // If DB is configured, drive events from DB state + LISTEN/NOTIFY.
-  let currentRound = null;
-  let listenerClient = null;
-  let closed = false;
-
-  async function loadCurrentRound() {
-    if (!db) return null;
-    const r = await db.query(
-      `select room_id, round_id, idx, phase, submit_deadline_unix,
-              published_at_unix, continue_vote_close_unix
-         from view_current_round
-        where room_id = $1
-        order by idx desc
-        limit 1`,
-      [roomId]
-    );
-    currentRound = r.rows?.[0] || null;
-    return currentRound;
-  }
-
-  function endsUnixFromRound(roundRow) {
-    const now = Math.floor(Date.now() / 1000);
-    if (!roundRow) return now;
-    if (roundRow.phase === 'submit' && roundRow.submit_deadline_unix)
-      return Number(roundRow.submit_deadline_unix);
-    if (roundRow.phase === 'published' && roundRow.continue_vote_close_unix)
-      return Number(roundRow.continue_vote_close_unix);
-    return now;
-  }
-
-  function sendTimer() {
-    const now = Math.floor(Date.now() / 1000);
-    const round = currentRound || ensureRoom(roomId).round;
-    const payload = JSON.stringify({
-      t: 'timer',
-      room_id: roomId,
-      ends_unix: endsUnixFromRound(currentRound) || now,
-      round_idx: round.idx ?? currentRound?.idx ?? 0,
-      phase: round.phase ?? currentRound?.phase ?? 'submit'
-    });
-    res.write(`event: timer\n`);
-    res.write(`data: ${payload}\n\n`);
-  }
-
-  // Start timer tick now; DB listener will update currentRound and emit 'phase'.
-  const iv = setInterval(() => {
-    try {
-      if (!closed) sendTimer();
-    } catch {
-      /* ignore */
-    }
-  }, 1000);
-
-  try {
-    if (db) {
-      await loadCurrentRound();
-      listenerClient = await db.connect();
-      await listenerClient.query('LISTEN db8_rounds');
-      await listenerClient.query('LISTEN db8_journal');
-      await listenerClient.query('LISTEN db8_verdict');
-      await listenerClient.query('LISTEN db8_final_vote');
-      const onNotification = (msg) => {
-        if (closed) return;
-        try {
-          const payload = JSON.parse(msg.payload || '{}');
-          if (!payload || (payload.room_id !== roomId && payload.t !== 'final_vote')) return;
-
-          if (msg.channel === 'db8_rounds') {
-            // Update cached round and emit a phase event immediately
-            currentRound = {
-              room_id: payload.room_id,
-              round_id: payload.round_id,
-              idx: payload.idx,
-              phase: payload.phase,
-              submit_deadline_unix: payload.submit_deadline_unix,
-              published_at_unix: payload.published_at_unix,
-              continue_vote_close_unix: payload.continue_vote_close_unix
-            };
-            res.write(`event: phase\n`);
-            res.write(`data: ${JSON.stringify({ t: 'phase', ...currentRound })}\n\n`);
-            return;
-          }
-          if (msg.channel === 'db8_journal') {
-            // Emit a lightweight journal event
-            const j = {
-              t: 'journal',
-              room_id: payload.room_id,
-              idx: payload.idx,
-              hash: payload.hash
-            };
-            res.write(`event: journal\n`);
-            res.write(`data: ${JSON.stringify(j)}\n\n`);
-            return;
-          }
-          if (msg.channel === 'db8_verdict') {
-            res.write(`event: verdict\n`);
-            res.write(`data: ${JSON.stringify(payload)}\n\n`);
-            return;
-          }
-          if (msg.channel === 'db8_final_vote') {
-            res.write(`event: vote\n`);
-            res.write(`data: ${JSON.stringify({ kind: 'final', ...payload })}\n\n`);
-            return;
-          }
-        } catch {
-          // ignore bad payloads
-        }
-      };
-      listenerClient.on('notification', onNotification);
-      // Attach to underlying pg Client to get notifications
-      listenerClient.connection?.stream?.on?.('error', () => {});
-
-      // Ensure cleanup
-      req.on('close', async () => {
-        closed = true;
-        clearInterval(iv);
-        try {
-          if (listenerClient) {
-            listenerClient.removeListener('notification', onNotification);
-            try {
-              await listenerClient.query('UNLISTEN db8_rounds');
-            } catch {
-              /* ignore */
-            }
-            try {
-              await listenerClient.query('UNLISTEN db8_journal');
-            } catch {
-              /* ignore */
-            }
-            try {
-              await listenerClient.query('UNLISTEN db8_verdict');
-            } catch {
-              /* ignore */
-            }
-            try {
-              await listenerClient.query('UNLISTEN db8_final_vote');
-            } catch {
-              /* ignore */
-            }
-            listenerClient.release();
-          }
-        } catch {
-          /* ignore */
-        }
-        res.end();
-      });
-
-      // send initial timer frame promptly
-      sendTimer();
-      return;
-    }
-  } catch {
-    // If DB path fails, fall back to in-memory
-  }
-
-  // Fallback to in-memory authority when DB is unavailable
-  req.on('close', () => {
-    closed = true;
-    clearInterval(iv);
-    res.end();
-  });
-  sendTimer();
-});
-
-async function buildLatestJournal(roomId) {
-  let roundRow = null;
-  let transcriptHashes = [];
-  let tally = { yes: 0, no: 0 };
-  let prevHash = null;
-  if (db) {
-    try {
-      const r = await db.query(
-        `select room_id, round_id, idx, phase, submit_deadline_unix,
-                published_at_unix, continue_vote_close_unix
-           from view_current_round
-          where room_id = $1
-          order by idx desc
-          limit 1`,
-        [roomId]
-      );
-      roundRow = r.rows?.[0] || null;
-      if (roundRow) {
-        const [tallyResult, submissionsResult] = await Promise.all([
-          db.query(
-            'select yes, no from view_continue_tally where room_id = $1 and round_id = $2 limit 1',
-            [roomId, roundRow.round_id]
-          ),
-          db.query(
-            `select canonical_sha256 from submissions_with_flags_view where round_id = $1 order by submitted_at asc nulls last, id asc`,
-            [roundRow.round_id]
-          )
-        ]);
-        tally = tallyResult.rows?.[0] || { yes: 0, no: 0 };
-        transcriptHashes = submissionsResult.rows.map((r) => String(r.canonical_sha256));
-        // Load previous journal hash for chain linking for the core
-        try {
-          const prevRes = await db.query(
-            'select hash from journals where room_id = $1 and round_idx = $2',
-            [roomId, Number(roundRow.idx || 0) - 1]
-          );
-          prevHash = prevRes.rows?.[0]?.hash || null;
-        } catch {
-          prevHash = null;
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-  if (!roundRow) {
-    const state = ensureRoom(roomId);
-    const r = state.round;
-    roundRow = {
-      room_id: roomId,
-      round_id: `mem-${roomId}-${r.idx}`,
-      idx: r.idx,
-      phase: r.phase,
-      submit_deadline_unix: r.submit_deadline_unix,
-      published_at_unix: r.published_at_unix,
-      continue_vote_close_unix: r.continue_vote_close_unix
-    };
-    tally = memVoteTotals.get(roomId) || { yes: 0, no: 0 };
-    transcriptHashes = Array.from(memSubmissions.entries())
-      .filter(([key]) => key.startsWith(`${roomId}:`))
-      .map(([, v]) => v.canonical_sha256);
-  }
-  const prev = prevHash || memJournalHashes.get(`${roomId}:${Number(roundRow.idx) - 1}`) || null;
+async function buildLatestJournalWrapper(roomId) {
+  const state = await roomService.getRoomState(roomId);
+  if (!state.ok || !state.round) return null;
+  const rnd = state.round;
   const core = buildJournalCore({
-    room_id: roundRow.room_id,
-    round_id: roundRow.round_id,
-    idx: Number(roundRow.idx || 0),
-    phase: roundRow.phase,
-    submit_deadline_unix: roundRow.submit_deadline_unix,
-    published_at_unix: roundRow.published_at_unix,
-    continue_vote_close_unix: roundRow.continue_vote_close_unix,
-    continue_tally: tally,
-    transcript_hashes: transcriptHashes,
-    prev_hash: prev
+    room_id: roomId,
+    round_id: rnd.round_id,
+    idx: rnd.idx,
+    phase: rnd.phase,
+    submit_deadline_unix: rnd.submit_deadline_unix,
+    published_at_unix: rnd.published_at_unix,
+    continue_vote_close_unix: rnd.continue_vote_close_unix,
+    continue_tally: rnd.continue_tally,
+    transcript_hashes: (rnd.transcript || []).map((s) => s.canonical_sha256),
+    prev_hash: null
   });
-  const journal = finalizeJournal({ core, signer });
-  memJournalHashes.set(`${roomId}:${core.idx}`, journal.hash);
-  return journal;
+  return finalizeJournal({ core, signer });
 }
-
-app.get('/journal', async (req, res) => {
-  const roomId = String(req.query.room_id || 'local');
-  const idxRaw = req.query.idx;
-  try {
-    // Journal by index (DB preferred)
-    if (idxRaw !== undefined) {
-      const idx = Number(idxRaw);
-      if (!Number.isFinite(idx) || idx < 0) {
-        return res.status(400).json({ ok: false, error: 'invalid_idx' });
-      }
-      if (db) {
-        const r = await db.query(
-          'select room_id, round_idx, hash, signature, core, created_at from journals where room_id = $1 and round_idx = $2 limit 1',
-          [roomId, idx | 0]
-        );
-        const row = r.rows?.[0] || null;
-        if (!row) return res.status(404).json({ ok: false, error: 'not_found' });
-        return res.json({ ok: true, journal: row });
-      }
-      // Memory: only latest can be synthesized; other indexes are not stored
-      const latest = await buildLatestJournal(roomId).catch(() => null);
-      if (latest && Number(latest?.core?.idx || -1) === (idx | 0))
-        return res.json({ ok: true, journal: latest });
-      return res.status(404).json({ ok: false, error: 'not_found' });
-    }
-    // Latest journal
-    const journal = await buildLatestJournal(roomId);
-    return res.json({ ok: true, journal });
-  } catch (e) {
-    // debug log to help identify CI AggregateError
-    console.error('[journal] error:', e);
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
-  }
-});
-
-// Journal history — returns stored journals (DB). Memory path returns latest only.
-app.get('/journal/history', async (req, res) => {
-  const roomId = String(req.query.room_id || 'local');
-  try {
-    if (db) {
-      const r = await db.query(
-        'select room_id, round_idx, hash, signature, core, created_at from journals where room_id = $1 order by round_idx asc',
-        [roomId]
-      );
-      return res.json({ ok: true, journals: r.rows });
-    }
-    // Memory: synthesize latest directly
-    const latest = await buildLatestJournal(roomId).catch(() => null);
-    if (latest) return res.json({ ok: true, journals: [latest] });
-    return res.json({ ok: true, journals: [] });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
-  }
-});
-
-// Provenance: verify submission signature (ed25519 and OpenSSH ed25519)
-app.post('/rpc/provenance.verify', async (req, res) => {
-  try {
-    const input = SubmissionVerify.parse(req.body);
-    // Canonicalize the provided document using server canon mode for consistency
-    const canon = canonicalizer(input.doc);
-    const hashHex = sha256Hex(canon);
-
-    if (input.signature_kind === 'ssh') {
-      try {
-        const ssh = input.public_key_ssh;
-        if (!ssh) return res.status(400).json({ ok: false, error: 'missing_public_key_ssh' });
-
-        // 1. Determine Principal (author binding)
-        // For db8, we expect principal to be participantId@roomId or similar
-        // For the verify call, we use the fingerprint as the principal mapping if allowed_signers is built that way.
-        // Conceptually, for M7 we'll use a temporary allowed_signers file for the verify call itself
-        // if no global one is provided.
-        const tmpSignersPath = path.join(os.tmpdir(), `db8-signers-${crypto.randomUUID()}`);
-        const sigInputB64 = input.sig_b64 || input.signature_b64 || '';
-        let pubDer;
-        try {
-          pubDer = parseOpenSshEd25519ToSpkiDer(ssh);
-        } catch {
-          return res.status(400).json({ ok: false, error: 'invalid_ssh_public_key' });
-        }
-        const fpHex = crypto.createHash('sha256').update(pubDer).digest('hex');
-        const fingerprint = `sha256:${fpHex}`;
-        const principal = 'db8-signer';
-
-        // Create a transient allowed_signers for this one-off verify call
-        await fs.writeFile(tmpSignersPath, `${principal} ${ssh}\n`);
-
-        try {
-          await verifySSHSignature({
-            canonicalJson: canon,
-            sigB64: sigInputB64,
-            principal,
-            allowedSignersPath: tmpSignersPath
-          });
-        } catch (sshErr) {
-          // If ssh-keygen fails, try fallback to pure-JS crypto.verify for ed25519 signatures
-          try {
-            const pubKey = crypto.createPublicKey({ format: 'der', type: 'spki', key: pubDer });
-            const ok = crypto.verify(
-              null,
-              Buffer.from(hashHex, 'hex'),
-              pubKey,
-              Buffer.from(sigInputB64, 'base64')
-            );
-            if (!ok) throw sshErr;
-          } catch {
-            throw sshErr;
-          }
-        } finally {
-          await fs.unlink(tmpSignersPath).catch(() => {});
-        }
-
-        const payload = { ok: true, hash: hashHex, public_key_fingerprint: fingerprint };
-        // Author binding check...
-        if (db && input?.doc?.author_id) {
-          const r = await db.query(
-            'select ssh_fingerprint from participants_view where id = $1 and room_id = $2 limit 1',
-            [input.participant_id, input.room_id]
-          );
-          const row = r.rows?.[0];
-          if (!row)
-            return res.status(404).json({ ok: false, error: 'participant_not_found_in_room' });
-          const fp = String(row.ssh_fingerprint || '').trim();
-          if (fp) {
-            const expected = fp.toLowerCase().startsWith('sha256:')
-              ? fp.toLowerCase()
-              : `sha256:${fp.toLowerCase()}`;
-            if (expected !== fingerprint)
-              return res.status(400).json({
-                ok: false,
-                error: 'author_binding_mismatch',
-                expected_fingerprint: expected,
-                got_fingerprint: fingerprint
-              });
-            payload.author_binding = 'match';
-          } else if (config.enforceAuthorBinding) {
-            return res.status(400).json({ ok: false, error: 'author_not_configured' });
-          }
-        }
-        return res.json(payload);
-      } catch (e) {
-        return res.status(400).json({
-          ok: false,
-          error: 'invalid_public_key_or_signature',
-          detail: String(e?.message || e)
-        });
-      }
-    }
-
-    if (input.signature_kind === 'ed25519') {
-      try {
-        const pub = input.public_key_b64;
-        if (!pub) return res.status(400).json({ ok: false, error: 'missing_public_key_b64' });
-        const pubDer = Buffer.from(pub, 'base64');
-        const pubKey = crypto.createPublicKey({ format: 'der', type: 'spki', key: pubDer });
-        const sigInputB64 = input.sig_b64 || input.signature_b64 || '';
-
-        const ok = crypto.verify(
-          null,
-          Buffer.from(hashHex, 'hex'),
-          pubKey,
-          Buffer.from(sigInputB64, 'base64')
-        );
-        if (!ok)
-          return res.status(400).json({ ok: false, error: 'invalid_public_key_or_signature' });
-
-        const fpHex = crypto.createHash('sha256').update(pubDer).digest('hex');
-        const fingerprint = `sha256:${fpHex}`;
-        const payload = { ok: true, hash: hashHex, public_key_fingerprint: fingerprint };
-
-        // Author binding check for ed25519
-        if (db && input?.doc?.author_id) {
-          const r = await db.query(
-            'select ssh_fingerprint from participants_view where id = $1 limit 1',
-            [input.doc.author_id]
-          );
-          const row = r.rows?.[0];
-          const fp = String(row?.ssh_fingerprint || '').trim();
-          if (fp) {
-            const expected = fp.toLowerCase().startsWith('sha256:')
-              ? fp.toLowerCase()
-              : `sha256:${fp.toLowerCase()}`;
-            if (expected !== fingerprint)
-              return res.status(400).json({
-                ok: false,
-                error: 'author_binding_mismatch',
-                expected_fingerprint: expected,
-                got_fingerprint: fingerprint
-              });
-            payload.author_binding = 'match';
-          } else if (config.enforceAuthorBinding) {
-            return res.status(400).json({ ok: false, error: 'author_not_configured' });
-          }
-        }
-        return res.json(payload);
-      } catch (e) {
-        return res.status(400).json({
-          ok: false,
-          error: 'invalid_public_key_or_signature',
-          detail: String(e?.message || e)
-        });
-      }
-    }
-    return res.status(501).json({ ok: false, error: 'unsupported_signature_kind' });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
+app.use(
+  createJournalRouter({
+    get db() {
+      return dbRef.pool;
+    },
+    buildLatestJournal: buildLatestJournalWrapper
+  })
+);
 
 export default app;
 
-// If invoked directly, start server
 if (config.nodeEnv !== 'test' && import.meta.url === `file://${process.argv[1]}`) {
-  const port = config.port;
-  app.listen(port, () => console.error(`rpc listening on ${port}`));
+  app.listen(config.port, () => console.error(`rpc listening on ${config.port}`));
 }

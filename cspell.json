@@ -133,7 +133,8 @@
     "milliwatts",
     "disanalogy",
     "Flink",
-    "interruptible"
+    "interruptible",
+    "SSHSIG"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
