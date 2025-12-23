@@ -24,6 +24,10 @@ pnpm-debug.log*
 .env.local
 .env.*.local
 
+# db8 signing keys (local-only; never commit)
+.db8_signing_key
+.db8_signing_key.pub
+
 # Next.js / Frontend
 .next/
 out/

@@ -1,2 +1,10 @@
 #!/usr/bin/env bash
+set -euo pipefail
+
+# Never allow signing key material into the repo (even with `git add -f`).
+if git diff --cached --name-only | grep -Eq '(^|/)\\.db8_signing_key(\\.pub)?$'; then
+  echo "✖ Refusing to commit signing key material (.db8_signing_key)" >&2
+  exit 1
+fi
+
 npx --yes lint-staged

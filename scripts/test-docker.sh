@@ -36,4 +36,4 @@ if [ ! -t 0 ]; then
   DOCKER_TTY="-T"
 fi
 
-docker compose -f "$COMPOSE_FILE" run $DOCKER_TTY --rm tests bash -lc 'npm ci && npm run test:prepare-db && npm run test:inner'
+docker compose -f "$COMPOSE_FILE" run $DOCKER_TTY --rm tests bash -lc 'node ./scripts/ensure-signing-keys.js && npm ci && npm run test:prepare-db && npm run test:inner'

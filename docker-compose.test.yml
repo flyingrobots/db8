@@ -2,7 +2,7 @@ name: db8-test
 
 services:
   db:
-    image: quay.io/tembo/pg16-pgmq:latest
+    image: quay.io/tembo/pg16-pgmq@sha256:7f80d046257d585d1af9d19cf28bd355a4b854b0a7d643c02ebbe6b84457868a
     environment:
       POSTGRES_PASSWORD: test
       POSTGRES_DB: db8_test
@@ -21,6 +21,8 @@ services:
       NODE_ENV: test
       DATABASE_URL: postgresql://postgres:test@db:5432/db8_test
       DB8_TEST_DATABASE_URL: postgresql://postgres:test@db:5432/db8_test
+      SIGNING_PRIVATE_KEY_PATH: /tmp/db8_signing_key
+      SIGNING_PUBLIC_KEY_PATH: /tmp/db8_signing_key.pub
     container_name: db8-test-tests
     volumes:
       - ./:/app
