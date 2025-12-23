@@ -7,12 +7,8 @@ alter table if exists submissions enable row level security;
 alter table if exists votes enable row level security;
 alter table if exists admin_audit_log enable row level security;
 alter table if exists submission_flags enable row level security;
-
--- Helper: current participant id from session (set via set_config('db8.participant_id', uuid, false))
-create or replace function db8_current_participant_id()
-returns uuid language sql stable as $$
-  select nullif(current_setting('db8.participant_id', true), '')::uuid
-$$;
+alter table if exists verification_verdicts enable row level security;
+alter table if exists final_votes enable row level security;
 
 -- Minimal read policy on submissions:
 --  - During 'submit': only the author can read their own row
@@ -102,6 +98,51 @@ using (
 
 drop policy if exists submission_flags_no_write_policy on submission_flags;
 create policy submission_flags_no_write_policy on submission_flags
+for all to public
+using (false)
+with check (false);
+
+-- Verification verdicts: readable after publish, or by the reporting participant
+drop policy if exists verification_verdicts_read_policy on verification_verdicts;
+create policy verification_verdicts_read_policy on verification_verdicts
+for select to public
+using (
+  (
+    exists (
+      select 1
+        from rounds r
+       where r.id = verification_verdicts.round_id
+         and r.phase in ('published','final')
+    )
+  )
+  or verification_verdicts.reporter_id = db8_current_participant_id()
+);
+
+-- Deny writes by default; writes occur via SECURITY DEFINER RPC
+drop policy if exists verification_verdicts_no_write_policy on verification_verdicts;
+create policy verification_verdicts_no_write_policy on verification_verdicts
+for all to public
+using (false)
+with check (false);
+
+-- Final votes: readable by voter, or by anyone after publish/final
+drop policy if exists final_votes_read_policy on final_votes;
+create policy final_votes_read_policy on final_votes
+for select to public
+using (
+  (
+    exists (
+      select 1
+        from rounds r
+       where r.id = final_votes.round_id
+         and r.phase in ('published','final')
+    )
+  )
+  or final_votes.voter_id = db8_current_participant_id()
+);
+
+drop policy if exists final_votes_no_write_policy on final_votes;
+create policy final_votes_no_write_policy on final_votes
 for all to public
 using (false)
 with check (false);

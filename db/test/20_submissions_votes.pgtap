@@ -55,6 +55,21 @@ DECLARE
   n text := 'nonce-rt-1';
   id1 uuid;
 BEGIN
+  -- seed prerequisite rows if missing
+  PERFORM 1 FROM rooms WHERE id = '00000000-0000-0000-0000-0000000000a0';
+  IF NOT FOUND THEN
+    INSERT INTO rooms (id, title) VALUES ('00000000-0000-0000-0000-0000000000a0', 'pgtap room');
+  END IF;
+  PERFORM 1 FROM rounds WHERE id = r;
+  IF NOT FOUND THEN
+    INSERT INTO rounds (id, room_id, idx, phase, submit_deadline_unix)
+    VALUES (r, '00000000-0000-0000-0000-0000000000a0', 0, 'submit', 0);
+  END IF;
+  PERFORM 1 FROM participants WHERE id = a;
+  IF NOT FOUND THEN
+    INSERT INTO participants (id, room_id, anon_name, role)
+    VALUES (a, '00000000-0000-0000-0000-0000000000a0', 'pgtap_author', 'debater');
+  END IF;
   INSERT INTO submissions (round_id, author_id, content, claims, citations, canonical_sha256, client_nonce)
   VALUES (r, a, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', n)
   RETURNING id INTO id1;

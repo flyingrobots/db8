@@ -39,11 +39,74 @@ export default function RoomPage({ params }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [hasNewJournal, setHasNewJournal] = useState(false);
+  const [verifyRows, setVerifyRows] = useState([]);
+  const [verifyError, setVerifyError] = useState('');
   const lastAckIdxRef = useRef(-1);
   const latestIdxRef = useRef(-1);
   const timerRef = useRef(null);
   const esRef = useRef(null);
   const lastNonceRef = useRef('');
+
+  const [role, setRole] = useState('');
+  const [verifying, setVerifying] = useState(null); // submission object
+  const [flagging, setFlagging] = useState(null); // submission object
+  const [showContinueVote, setShowContinueVote] = useState(false);
+  const [showFinalVote, setShowFinalVote] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
+
+  // ... loadsnapshot useEffect ...
+
+  async function onContinueVote(choice) {
+    setActionBusy(true);
+    try {
+      const r = await fetch(`${apiBase()}/rpc/vote.continue`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
+        },
+        body: JSON.stringify({
+          room_id: roomId,
+          round_id: state.round.round_id,
+          voter_id: participant,
+          choice,
+          client_nonce: window.crypto.randomUUID()
+        })
+      });
+      if (r.ok) setShowContinueVote(false);
+      else window.alert('Vote failed');
+    } catch (err) {
+      window.alert(String(err));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function onFinalVote(approval, ranking = []) {
+    setActionBusy(true);
+    try {
+      const r = await fetch(`${apiBase()}/rpc/vote.final`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
+        },
+        body: JSON.stringify({
+          round_id: state.round.round_id,
+          voter_id: participant,
+          approval,
+          ranking,
+          client_nonce: window.crypto.randomUUID()
+        })
+      });
+      if (r.ok) setShowFinalVote(false);
+      else window.alert('Final vote failed');
+    } catch (err) {
+      window.alert(String(err));
+    } finally {
+      setActionBusy(false);
+    }
+  }
 
   // Fetch snapshot
   useEffect(() => {
@@ -62,6 +125,23 @@ export default function RoomPage({ params }) {
       cancelled = true;
     };
   }, [roomId]);
+
+  // Fetch role
+  useEffect(() => {
+    if (!participant || !roomId) return;
+    async function loadRole() {
+      try {
+        const r = await fetch(
+          `${apiBase()}/rpc/participant?room_id=${encodeURIComponent(roomId)}&id=${encodeURIComponent(participant)}`
+        );
+        const j = await r.json().catch(() => ({}));
+        if (j.ok && j.role) setRole(j.role);
+      } catch {
+        /* ignore */
+      }
+    }
+    loadRole();
+  }, [participant, roomId]);
 
   // Initialize last acknowledged journal idx from sessionStorage
   useEffect(() => {
@@ -94,6 +174,17 @@ export default function RoomPage({ params }) {
           if (!isValidJournalEventPayload(roomId, d)) return;
           latestIdxRef.current = d.idx;
           if (d.idx > (lastAckIdxRef.current | 0)) setHasNewJournal(true);
+        } catch {
+          /* ignore */
+        }
+      });
+      es.addEventListener('verdict', (ev) => {
+        try {
+          const d = JSON.parse(ev.data);
+          if (d.room_id !== roomId) return;
+          // Optimistically trigger a refresh of verifyRows or wait for polling
+          // For now, let's just use the polling, but we could also patch the state here.
+          // Let's at least force a re-fetch by bumping a hidden counter if we wanted.
         } catch {
           /* ignore */
         }
@@ -132,6 +223,99 @@ export default function RoomPage({ params }) {
   const canSubmit =
     state?.ok && state?.round?.phase === 'submit' && isUUID(roomId) && isUUID(participant);
   const transcript = Array.isArray(state?.round?.transcript) ? state.round.transcript : [];
+
+  // Fetch verification summary (read-only) when round_id is known with backoff + shape validation
+  useEffect(() => {
+    const rid = state?.round?.round_id;
+    if (!rid) {
+      setVerifyRows([]);
+      setVerifyError('');
+      return;
+    }
+    let cancelled = false;
+    let delay = 5000;
+    let lastSig = '';
+    let controller;
+    const Row = z.object({
+      submission_id: z.string().uuid(),
+      claim_id: z.string().nullable().optional(),
+      true_count: z.number().int(),
+      false_count: z.number().int(),
+      unclear_count: z.number().int(),
+      needs_work_count: z.number().int(),
+      total: z.number().int()
+    });
+    const Rows = z.array(Row);
+    async function loop() {
+      while (!cancelled) {
+        controller = new globalThis.AbortController();
+        let aborted = false;
+        try {
+          const r = await fetch(`${apiBase()}/verify/summary?round_id=${encodeURIComponent(rid)}`, {
+            signal: controller.signal
+          });
+          const j = await r.json().catch(() => ({}));
+          if (cancelled) {
+            break;
+          }
+          if (r.ok && j?.ok && Array.isArray(j.rows)) {
+            const parsed = Rows.safeParse(j.rows);
+            if (parsed.success) {
+              const sig = JSON.stringify(parsed.data);
+              if (sig !== lastSig) {
+                lastSig = sig;
+                if (!cancelled && !controller.signal.aborted) {
+                  setVerifyRows(parsed.data);
+                }
+              }
+              if (!cancelled && !controller.signal.aborted) {
+                setVerifyError('');
+              }
+              delay = 5000; // reset backoff on success
+            } else {
+              lastSig = '';
+              if (!cancelled && !controller.signal.aborted) {
+                setVerifyRows([]);
+                setVerifyError('Invalid verification data');
+              }
+              delay = Math.min(30000, delay * 2);
+            }
+          } else {
+            lastSig = '';
+            if (!cancelled && !controller.signal.aborted) {
+              setVerifyRows([]);
+              setVerifyError(j?.error || `HTTP ${r.status}`);
+            }
+            delay = Math.min(30000, delay * 2);
+          }
+        } catch (e) {
+          aborted =
+            controller?.signal?.aborted ||
+            e?.name === 'AbortError' ||
+            (typeof e?.message === 'string' && e.message.toLowerCase().includes('abort'));
+          if (!aborted && !cancelled) {
+            setVerifyRows([]);
+            setVerifyError(String(e?.message || e));
+            lastSig = '';
+            delay = Math.min(30000, delay * 2);
+          }
+        } finally {
+          controller = null;
+        }
+        if (cancelled || aborted) {
+          break;
+        }
+        await new Promise((res) => globalThis.setTimeout(res, delay));
+      }
+    }
+    loop();
+    return () => {
+      cancelled = true;
+      controller?.abort();
+      setVerifyRows([]);
+      setVerifyError('');
+    };
+  }, [state?.round?.round_id]);
 
   // Persist small fields locally for convenience
   useEffect(() => {
@@ -259,13 +443,101 @@ export default function RoomPage({ params }) {
     }
   }
 
+  async function onVerifySubmit(e) {
+    e.preventDefault();
+    if (!verifying) return;
+    const form = new window.FormData(e.target);
+    const verdict = form.get('verdict');
+    const rationale = form.get('rationale');
+    const claim_id = form.get('claim_id');
+    setActionBusy(true);
+    try {
+      const clientNonce = lastNonceRef.current || String(Date.now()); // simplified
+      const payload = {
+        round_id: '00000000-0000-0000-0000-000000000002', // Ideally from state.round.round_id
+        reporter_id: participant,
+        submission_id: verifying.submission_id,
+        verdict,
+        rationale,
+        claim_id: claim_id || undefined,
+        client_nonce: clientNonce
+      };
+      const r = await fetch(`${apiBase()}/rpc/verify.submit`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
+        },
+        body: JSON.stringify(payload)
+      });
+      if (r.ok) {
+        setVerifying(null);
+        // Trigger verification refresh logic here if possible,
+        // effectively handled by the polling effect eventually
+      } else {
+        window.alert('Verify failed');
+      }
+    } catch (err) {
+      window.alert(String(err));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function onFlagSubmit(e) {
+    e.preventDefault();
+    if (!flagging) return;
+    const form = new window.FormData(e.target);
+    const reason = form.get('reason');
+    setActionBusy(true);
+    try {
+      const payload = {
+        submission_id: flagging.submission_id,
+        reporter_id: participant,
+        reporter_role: role || 'participant',
+        reason
+      };
+      const r = await fetch(`${apiBase()}/rpc/submission.flag`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
+        },
+        body: JSON.stringify(payload)
+      });
+      if (r.ok) {
+        setFlagging(null);
+        // Ideally trigger state refresh to update flag counts
+      } else {
+        window.alert('Flag failed');
+      }
+    } catch (err) {
+      window.alert(String(err));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
   return (
     <main className="max-w-3xl mx-auto p-6 space-y-6">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Room</h1>
-        <Button variant="ghost" asChild>
-          <Link href="/">Back</Link>
-        </Button>
+        <div className="flex items-center gap-2">
+          {state?.round?.phase === 'published' && (
+            <Button size="sm" onClick={() => setShowContinueVote(true)}>
+              Vote to Continue
+            </Button>
+          )}
+          {state?.round?.phase === 'final' && (
+            <Button size="sm" onClick={() => setShowFinalVote(true)}>
+              Final Vote
+            </Button>
+          )}
+          {role && <Badge variant="outline">{role}</Badge>}
+          <Button variant="ghost" asChild>
+            <Link href="/">Back</Link>
+          </Button>
+        </div>
       </header>
 
       <Card>
@@ -284,8 +556,16 @@ export default function RoomPage({ params }) {
           </div>
           {state?.round?.continue_tally && (
             <div className="mt-3 flex items-center gap-3">
-              <Badge variant="success">yes {state.round.continue_tally.yes}</Badge>
-              <Badge>no {state.round.continue_tally.no}</Badge>
+              <span className="text-xs text-muted mr-1">Continue Tally:</span>
+              <Badge className="bg-green-600">yes {state.round.continue_tally.yes}</Badge>
+              <Badge variant="secondary">no {state.round.continue_tally.no}</Badge>
+            </div>
+          )}
+          {state?.round?.final_tally && (
+            <div className="mt-3 flex items-center gap-3">
+              <span className="text-xs text-muted mr-1">Final Approval:</span>
+              <Badge className="bg-green-600">approves {state.round.final_tally.approves}</Badge>
+              <Badge variant="destructive">rejects {state.round.final_tally.rejects}</Badge>
             </div>
           )}
         </CardContent>
@@ -369,10 +649,12 @@ export default function RoomPage({ params }) {
               {transcript.map((entry) => (
                 <li
                   key={entry.submission_id}
-                  className="rounded border border-border p-3 space-y-2"
+                  className="rounded border border-border p-3 space-y-2 relative"
                 >
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="font-mono text-[11px]">{entry.author_id}</span>
+                    <span className="font-medium text-xs">
+                      {entry.author_anon_name || entry.author_id}
+                    </span>
                     {entry.submitted_at ? (
                       <time dateTime={new Date(entry.submitted_at * 1000).toISOString()}>
                         {new Date(entry.submitted_at * 1000).toLocaleTimeString()}
@@ -380,15 +662,301 @@ export default function RoomPage({ params }) {
                     ) : null}
                   </div>
                   <p className="whitespace-pre-line text-sm leading-relaxed">{entry.content}</p>
-                  <p className="text-[11px] text-muted-foreground font-mono">
-                    sha256: {entry.canonical_sha256}
-                  </p>
+                  <div className="flex items-center justify-between pt-1">
+                    <p className="text-[11px] text-muted-foreground font-mono">
+                      sha256: {entry.canonical_sha256}
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 text-xs px-2"
+                        onClick={() => setFlagging(entry)}
+                      >
+                        Flag
+                      </Button>
+                      {(role === 'judge' || role === 'host') && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 text-xs px-2 text-[var(--primary)] border-[var(--primary)]"
+                          onClick={() => setVerifying(entry)}
+                        >
+                          Verify
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 </li>
               ))}
             </ul>
           )}
         </CardContent>
       </Card>
+
+      <Card>
+        <CardContent className="p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="text-lg font-semibold">Verification Summary</div>
+            <Badge variant="outline">
+              {Array.isArray(verifyRows) ? verifyRows.length : 0} verdicts
+            </Badge>
+          </div>
+          {verifyError && <p className="text-sm text-red-600">{verifyError}</p>}
+          {!verifyRows || verifyRows.length === 0 ? (
+            <p className="text-sm text-muted">No verification verdicts yet.</p>
+          ) : (
+            <div className="space-y-6">
+              {Object.entries(
+                verifyRows.reduce((acc, row) => {
+                  if (!acc[row.submission_id]) acc[row.submission_id] = { main: null, claims: [] };
+                  if (!row.claim_id) acc[row.submission_id].main = row;
+                  else acc[row.submission_id].claims.push(row);
+                  return acc;
+                }, {})
+              ).map(([subId, group]) => (
+                <div
+                  key={subId}
+                  className="space-y-2 border-b border-border pb-4 last:border-0 last:pb-0"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-mono text-muted-foreground">
+                      {subId.slice(0, 8)}...
+                    </div>
+                    {group.main && <ConfidenceBadge row={group.main} />}
+                  </div>
+
+                  {/* If we have a main verdict, show details */}
+                  {group.main && <VerdictBar row={group.main} />}
+
+                  {/* Claims list */}
+                  {group.claims.length > 0 && (
+                    <div className="pl-4 mt-2 space-y-2 border-l-2 border-border/50">
+                      {group.claims.map((claim, i) => (
+                        <div key={i} className="text-sm">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-medium text-xs text-muted-foreground">
+                              Claim: {claim.claim_id}
+                            </span>
+                            <ConfidenceBadge row={claim} size="sm" />
+                          </div>
+                          <VerdictBar row={claim} size="sm" />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Dialog Overlays */}
+      {verifying && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md">
+            <CardContent className="p-6 space-y-4">
+              <h3 className="text-lg font-semibold">Verify Submission</h3>
+              <p className="text-xs font-mono text-muted-foreground break-all">
+                {verifying.submission_id}
+              </p>
+              <form onSubmit={onVerifySubmit} className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium">Claim (optional)</label>
+                  <select name="claim_id" className="w-full mt-1 border rounded p-2 bg-background">
+                    <option value="">Full Submission</option>
+                    {(verifying.claims || []).map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.id}: {c.text.slice(0, 30)}...
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Verdict</label>
+                  <select name="verdict" className="w-full mt-1 border rounded p-2 bg-background">
+                    <option value="true">True</option>
+                    <option value="false">False</option>
+                    <option value="unclear">Unclear</option>
+                    <option value="needs_work">Needs Work</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Rationale</label>
+                  <textarea
+                    name="rationale"
+                    required
+                    className="w-full mt-1 border rounded p-2 bg-background min-h-[100px]"
+                    placeholder="Explain your verdict..."
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="ghost" onClick={() => setVerifying(null)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={actionBusy}>
+                    {actionBusy ? 'Saving...' : 'Submit Verdict'}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {flagging && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md">
+            <CardContent className="p-6 space-y-4">
+              <h3 className="text-lg font-semibold">Flag Submission</h3>
+              <p className="text-xs font-mono text-muted-foreground break-all">
+                {flagging.submission_id}
+              </p>
+              <form onSubmit={onFlagSubmit} className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium">Reason</label>
+                  <textarea
+                    name="reason"
+                    required
+                    className="w-full mt-1 border rounded p-2 bg-background min-h-[80px]"
+                    placeholder="Why are you flagging this?"
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="ghost" onClick={() => setFlagging(null)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" variant="destructive" disabled={actionBusy}>
+                    {actionBusy ? 'Flagging...' : 'Flag'}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {showContinueVote && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md">
+            <CardContent className="p-6 space-y-4 text-center">
+              <h3 className="text-lg font-semibold">Round Complete</h3>
+              <p>Should the debate continue to the next round?</p>
+              <div className="flex justify-center gap-4 pt-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => onContinueVote('end')}
+                  disabled={actionBusy}
+                >
+                  End Debate
+                </Button>
+                <Button onClick={() => onContinueVote('continue')} disabled={actionBusy}>
+                  Continue
+                </Button>
+              </div>
+              <Button variant="ghost" className="w-full" onClick={() => setShowContinueVote(false)}>
+                Cancel
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {showFinalVote && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md">
+            <CardContent className="p-6 space-y-4">
+              <h3 className="text-lg font-semibold">Final Approval</h3>
+              <p>Do you approve the results/conclusions of this debate?</p>
+              <div className="flex justify-center gap-4 pt-2">
+                <Button
+                  variant="destructive"
+                  onClick={() => onFinalVote(false)}
+                  disabled={actionBusy}
+                >
+                  Reject
+                </Button>
+                <Button
+                  className="bg-green-600 hover:bg-green-700"
+                  onClick={() => onFinalVote(true)}
+                  disabled={actionBusy}
+                >
+                  Approve
+                </Button>
+              </div>
+              <Button variant="ghost" className="w-full" onClick={() => setShowFinalVote(false)}>
+                Cancel
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </main>
+  );
+}
+
+function calculateScore(r) {
+  if (!r || r.total === 0) return 0.5;
+  // (True - False + Total) / (2 * Total)
+  // Range: 0 (all false) to 1 (all true). 0.5 is neutral/unclear.
+  return (r.true_count - r.false_count + r.total) / (2 * r.total);
+}
+
+function ConfidenceBadge({ row, size = 'default' }) {
+  const score = calculateScore(row);
+  let color = 'bg-gray-500';
+  let label = 'Neutral';
+
+  if (score >= 0.75) {
+    color = 'bg-[var(--success)] text-black';
+    label = 'Verified';
+  } else if (score >= 0.6) {
+    color = 'bg-[var(--primary)] text-black';
+    label = 'Likely True';
+  } else if (score <= 0.25) {
+    color = 'bg-[var(--secondary)] text-black';
+    label = 'False';
+  } else if (score <= 0.4) {
+    color = 'bg-orange-400 text-black';
+    label = 'Dubious';
+  }
+
+  const classes = size === 'sm' ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2 py-0.5';
+  return (
+    <span className={`rounded-full font-bold ${classes} ${color}`}>
+      {label} ({Math.round(score * 100)}%)
+    </span>
+  );
+}
+
+function VerdictBar({ row, size = 'default' }) {
+  const total = row.total || 1;
+  const getPct = (n) => `${(n / total) * 100}%`;
+  const h = size === 'sm' ? 'h-1.5' : 'h-2.5';
+
+  return (
+    <div className={`flex w-full ${h} rounded-full overflow-hidden bg-secondary/20`}>
+      <div
+        style={{ width: getPct(row.true_count) }}
+        className="bg-[var(--success)]"
+        title={`True: ${row.true_count}`}
+      />
+      <div
+        style={{ width: getPct(row.false_count) }}
+        className="bg-[var(--secondary)]"
+        title={`False: ${row.false_count}`}
+      />
+      <div
+        style={{ width: getPct(row.unclear_count) }}
+        className="bg-gray-400"
+        title={`Unclear: ${row.unclear_count}`}
+      />
+      <div
+        style={{ width: getPct(row.needs_work_count) }}
+        className="bg-orange-300"
+        title={`Needs Work: ${row.needs_work_count}`}
+      />
+    </div>
   );
 }

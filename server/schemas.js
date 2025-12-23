@@ -117,3 +117,38 @@ export const ParticipantFingerprintSet = z
       path: ['fingerprint']
     }
   );
+
+// M3: Verification submit payload
+export const VerifySubmit = z.object({
+  round_id: z.string().uuid(),
+  reporter_id: z.string().uuid(),
+  submission_id: z.string().uuid(),
+  claim_id: z.string().optional(),
+  verdict: z.enum(['true', 'false', 'unclear', 'needs_work']),
+  rationale: z.string().max(2000).optional(),
+  client_nonce: z.string().min(8)
+});
+
+export const FinalVote = z.object({
+  round_id: z.string().uuid(),
+  voter_id: z.string().uuid(),
+  approval: z.boolean(),
+  ranking: z.array(z.string().uuid()).optional(),
+  client_nonce: z.string().min(8).optional()
+});
+
+// SSH Auth schemas
+export const AuthChallengeIn = z.object({
+  room_id: z.string().uuid(),
+  participant_id: z.string().uuid()
+});
+
+export const AuthVerifyIn = z.object({
+  room_id: z.string().uuid(),
+  participant_id: z.string().uuid(),
+  nonce: z.string().min(8),
+  signature_kind: z.enum(['ed25519', 'ssh']),
+  sig_b64: z.string().min(1),
+  public_key_ssh: z.string().optional(),
+  public_key_b64: z.string().optional()
+});
