@@ -128,3 +128,19 @@ export const VerifySubmit = z.object({
   rationale: z.string().max(2000).optional(),
   client_nonce: z.string().min(8)
 });
+
+// SSH Auth schemas
+export const AuthChallengeIn = z.object({
+  room_id: z.string().uuid(),
+  participant_id: z.string().uuid()
+});
+
+export const AuthVerifyIn = z.object({
+  room_id: z.string().uuid(),
+  participant_id: z.string().uuid(),
+  nonce: z.string().min(8),
+  signature_kind: z.enum(['ed25519', 'ssh']),
+  sig_b64: z.string().min(1),
+  public_key_ssh: z.string().optional(),
+  public_key_b64: z.string().optional()
+});
