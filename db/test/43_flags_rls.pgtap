@@ -25,7 +25,22 @@ BEGIN
     ON CONFLICT DO NOTHING;
 END $$;
 
+-- Create reader role and grant minimal permissions for SELECTs
+DO $$
+BEGIN
+  BEGIN
+    CREATE ROLE db8_reader LOGIN;
+  EXCEPTION WHEN duplicate_object THEN
+  END;
+  GRANT USAGE ON SCHEMA public TO db8_reader;
+  GRANT SELECT ON submission_flags TO db8_reader;
+  GRANT SELECT ON submissions TO db8_reader;
+  GRANT SELECT ON rounds TO db8_reader;
+  GRANT SELECT ON submissions_with_flags_view TO db8_reader;
+END $$;
+
 -- Pre-publish: direct table read should be denied by policy (0 visible rows)
+SET ROLE db8_reader;
 SELECT results_eq(
   $$ SELECT count(*)::int
        FROM submission_flags sf
@@ -46,11 +61,13 @@ SELECT results_eq(
 );
 
 -- Flip to published
+RESET ROLE;
 UPDATE rounds
    SET phase='published', published_at_unix = extract(epoch from now())::bigint
  WHERE id = '40000000-0000-0000-0000-000000000002';
 
 -- Post-publish: direct table read now visible (1 row)
+SET ROLE db8_reader;
 SELECT results_eq(
   $$ SELECT count(*)::int
        FROM submission_flags sf

@@ -4,10 +4,18 @@
 -- UUID generation
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- Helper: current participant id from session (set via set_config('db8.participant_id', uuid, false))
+create or replace function db8_current_participant_id()
+returns uuid language sql stable as $$
+  select nullif(current_setting('db8.participant_id', true), '')::uuid
+$$;
+
 -- Rooms and Rounds (minimal M1)
 CREATE TABLE IF NOT EXISTS rooms (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   title       text,
+  status      text NOT NULL DEFAULT 'active' CHECK (status IN ('init','active','closed')),
+  config      jsonb NOT NULL DEFAULT '{}'::jsonb,
   client_nonce  text UNIQUE,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
@@ -90,6 +98,54 @@ CREATE TABLE IF NOT EXISTS votes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_votes_round_kind ON votes (round_id, kind);
+
+-- Final votes (M4): approval + optional ranked tie-break
+CREATE TABLE IF NOT EXISTS final_votes (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  round_id      uuid        NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+  voter_id      uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  approval      boolean     NOT NULL, -- true if approves of the round/result
+  ranking       jsonb       DEFAULT '[]'::jsonb, -- optional ranked list of participant ids
+  client_nonce  text        NOT NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (round_id, voter_id, client_nonce)
+);
+
+CREATE INDEX IF NOT EXISTS idx_final_votes_round ON final_votes (round_id);
+
+-- Scoring (M5): per-judge rubric inputs
+CREATE TABLE IF NOT EXISTS scores (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  round_id        uuid        NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+  judge_id        uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  participant_id  uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  e               integer     NOT NULL CHECK (e >= 0 AND e <= 100), -- Evidence
+  r               integer     NOT NULL CHECK (r >= 0 AND r <= 100), -- Reasoning
+  c               integer     NOT NULL CHECK (c >= 0 AND c <= 100), -- Clarity
+  v               integer     NOT NULL CHECK (v >= 0 AND v <= 100), -- Validity
+  y               integer     NOT NULL CHECK (y >= 0 AND y <= 100), -- Yield
+  client_nonce    text        NOT NULL,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (round_id, judge_id, participant_id, client_nonce)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scores_round ON scores (round_id);
+CREATE INDEX IF NOT EXISTS idx_scores_participant ON scores (participant_id);
+
+-- Reputation (M5): Elo ratings
+CREATE TABLE IF NOT EXISTS reputation (
+  participant_id  uuid        PRIMARY KEY REFERENCES participants(id) ON DELETE CASCADE,
+  elo             float       NOT NULL DEFAULT 1200.0,
+  updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS reputation_tag (
+  participant_id  uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  tag             text        NOT NULL,
+  elo             float       NOT NULL DEFAULT 1200.0,
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (participant_id, tag)
+);
 
 -- Submission flags: allow participants/moderators/viewers to report content
 CREATE TABLE IF NOT EXISTS submission_flags (
@@ -175,3 +231,34 @@ CREATE INDEX IF NOT EXISTS idx_admin_audit_id ON admin_audit_log (id);
 
 COMMENT ON TABLE admin_audit_log IS 'Administrative audit log; RLS locked down. Writes via privileged service only.';
 COMMENT ON COLUMN admin_audit_log.actor_context IS 'Additional context about actor (e.g., IP, UA), JSON';
+
+-- M3: Verification verdicts (per-claim/per-submission)
+-- Records fact-check style verdicts from reporters (judges/hosts) about a submission
+CREATE TABLE IF NOT EXISTS verification_verdicts (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  round_id       uuid NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+  submission_id  uuid NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+  reporter_id    uuid NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  claim_id       text,
+  verdict        text NOT NULL CHECK (verdict IN ('true','false','unclear','needs_work')),
+  rationale      text,
+  client_nonce   text,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+
+-- Idempotency: include client_nonce to allow multiple rows for the same tuple when nonce differs
+-- Drop legacy unique if present to avoid conflicts
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='ux_verification_verdicts_unique') THEN
+    EXECUTE 'DROP INDEX IF EXISTS ux_verification_verdicts_unique';
+  END IF;
+END $$;
+
+-- New uniqueness covers (round, reporter, submission, claim-coalesced, client_nonce)
+CREATE UNIQUE INDEX IF NOT EXISTS ux_verification_verdicts_unique_nonce
+  ON verification_verdicts (round_id, reporter_id, submission_id, coalesce(claim_id, ''), (COALESCE(NULLIF(client_nonce, ''), '')));
+
+CREATE INDEX IF NOT EXISTS idx_verification_verdicts_round ON verification_verdicts (round_id);
+CREATE INDEX IF NOT EXISTS idx_verification_verdicts_submission ON verification_verdicts (submission_id);
+CREATE INDEX IF NOT EXISTS idx_verification_verdicts_reporter ON verification_verdicts (reporter_id);

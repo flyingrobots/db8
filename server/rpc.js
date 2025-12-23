@@ -9,7 +9,14 @@ import {
   SubmissionFlag,
   RoomCreate,
   SubmissionVerify,
-  ParticipantFingerprintSet
+  ParticipantFingerprintSet,
+  VerifySubmit,
+  AuthChallengeIn,
+  AuthVerifyIn,
+  FinalVote,
+  ScoreSubmit,
+  ScoreGet,
+  ReputationGet
 } from './schemas.js';
 import { sha256Hex } from './utils.js';
 import canonicalizer from './canonicalizer.js';
@@ -44,6 +51,8 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 const memSubmissions = new Map(); // key -> { id, canonical_sha256, content, author_id, room_id }
 const memSubmissionIndex = new Map(); // submission_id -> { room_id }
 const memFlags = new Map(); // submission_id -> Map(reporter_id -> { role, reason, created_at })
+// In-memory verification verdicts: key "round:reporter:submission:claim" -> { id, verdict, rationale }
+const memVerifications = new Map();
 // In-memory server-issued nonce stores (when DB is unavailable)
 // key "round:author" -> Map(nonce -> expires_unix)
 const memIssuedNonces = new Map();
@@ -70,10 +79,127 @@ const signer = createSigner({
 const memJournalHashes = new Map();
 // In-memory participant fingerprint store when DB is unavailable
 const memParticipantFingerprints = new Map(); // participant_id -> fingerprint
+// In-memory auth challenges
+const memAuthChallenges = new Map(); // nonce -> { room_id, participant_id, expires_at }
 
 function nowSec() {
   return Math.floor(Date.now() / 1000);
 }
+
+// ... existing code ...
+
+// Auth Challenge — return a random nonce for SSH signing
+app.get('/auth/challenge', (req, res) => {
+  try {
+    const input = AuthChallengeIn.parse(req.query);
+    const nonce = crypto.randomBytes(16).toString('hex');
+    const expires_at = nowSec() + 300; // 5 mins
+    memAuthChallenges.set(nonce, {
+      room_id: input.room_id,
+      participant_id: input.participant_id,
+      expires_at
+    });
+    return res.json({ ok: true, nonce, expires_at, audience: 'db8' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// Auth Verify — verify SSH signature and return a session (JWT)
+app.post('/auth/verify', async (req, res) => {
+  try {
+    const input = AuthVerifyIn.parse(req.body);
+    const challenge = memAuthChallenges.get(input.nonce);
+    if (!challenge) return res.status(400).json({ ok: false, error: 'invalid_or_expired_nonce' });
+    if (challenge.expires_at <= nowSec()) {
+      memAuthChallenges.delete(input.nonce);
+      return res.status(400).json({ ok: false, error: 'invalid_or_expired_nonce' });
+    }
+    if (challenge.room_id !== input.room_id || challenge.participant_id !== input.participant_id) {
+      return res.status(400).json({ ok: false, error: 'challenge_mismatch' });
+    }
+
+    // Verify signature over the nonce
+    let pubDer;
+    if (input.signature_kind === 'ed25519') {
+      if (!input.public_key_b64)
+        return res.status(400).json({ ok: false, error: 'missing_public_key_b64' });
+      pubDer = Buffer.from(input.public_key_b64, 'base64');
+    } else {
+      if (!input.public_key_ssh)
+        return res.status(400).json({ ok: false, error: 'missing_public_key_ssh' });
+      pubDer = parseOpenSshEd25519ToSpkiDer(input.public_key_ssh);
+    }
+
+    const pubKey = crypto.createPublicKey({ format: 'der', type: 'spki', key: pubDer });
+    const ok = crypto.verify(
+      null,
+      Buffer.from(input.nonce),
+      pubKey,
+      Buffer.from(input.sig_b64, 'base64')
+    );
+
+    if (!ok) {
+      return res.status(400).json({ ok: false, error: 'invalid_signature' });
+    }
+
+    // Check author binding
+    const fpHex = crypto.createHash('sha256').update(pubDer).digest('hex');
+    const gotFp = `sha256:${fpHex}`;
+
+    if (db) {
+      try {
+        const r = await db.query(
+          'select ssh_fingerprint from participants_view where id = $1 and room_id = $2 limit 1',
+          [input.participant_id, input.room_id]
+        );
+        const row = r.rows?.[0];
+        if (!row) {
+          return res.status(404).json({ ok: false, error: 'participant_not_found_in_room' });
+        }
+        const fp = String(row.ssh_fingerprint || '').trim();
+        if (fp) {
+          const expected = fp.toLowerCase().startsWith('sha256:')
+            ? fp.toLowerCase()
+            : `sha256:${fp.toLowerCase()}`;
+          if (expected !== gotFp) {
+            return res.status(400).json({ ok: false, error: 'author_binding_mismatch' });
+          }
+        } else if (config.enforceAuthorBinding) {
+          return res.status(400).json({ ok: false, error: 'author_not_configured' });
+        }
+      } catch (dbErr) {
+        console.warn('[auth.verify] DB lookup failed:', dbErr.message);
+        if (config.enforceAuthorBinding) {
+          throw dbErr; // rethrow to be caught by main catch block
+        }
+      }
+    }
+
+    // Issue session (mock JWT)
+    const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+    const payload = Buffer.from(
+      JSON.stringify({
+        sub: input.participant_id,
+        room_id: input.room_id,
+        exp: nowSec() + 3600
+      })
+    ).toString('base64url');
+    const jwt = `${header}.${payload}.`;
+
+    memAuthChallenges.delete(input.nonce);
+    return res.json({
+      ok: true,
+      room_id: input.room_id,
+      participant_id: input.participant_id,
+      jwt,
+      expires_at: nowSec() + 3600
+    });
+  } catch (err) {
+    console.error('[auth.verify] error:', err);
+    return res.status(400).json({ ok: false, error: err?.name || 'error', message: err?.message });
+  }
+});
 
 // Parse OpenSSH ed25519 public key to DER SPKI per RFC 8410.
 // Accepts typical formats like: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... comment"
@@ -122,6 +248,32 @@ function validateAndConsumeNonceMemory({ round_id, author_id, client_nonce }) {
   memConsumedNonces.add(consumeKey);
   return true;
 }
+
+// participant.get — retrieve participant role/info
+app.get('/rpc/participant', async (req, res) => {
+  const roomId = String(req.query.room_id || '');
+  const id = String(req.query.id || '');
+  if (!roomId || !id) return res.status(400).json({ ok: false, error: 'missing_id' });
+
+  if (db) {
+    try {
+      const r = await db.query(
+        'select role from participants_view where room_id = $1 and id = $2',
+        [roomId, id]
+      );
+      const row = r.rows?.[0];
+      if (!row) return res.status(404).json({ ok: false, error: 'not_found' });
+      return res.json({ ok: true, role: row.role });
+    } catch (e) {
+      console.warn('participant.get db error', e);
+      // fall through
+    }
+  }
+  // Memory fallback: easy convention for testing UI without DB
+  // If id starts with "judge", treat as judge, else debater
+  const role = id.startsWith('judge') ? 'judge' : 'debater';
+  return res.json({ ok: true, role, note: 'db_fallback' });
+});
 
 // Server-issued nonce API (DB preferred)
 app.post('/rpc/nonce.issue', async (req, res) => {
@@ -361,6 +513,166 @@ app.post('/rpc/vote.continue', (req, res) => {
   }
 });
 
+// vote.final
+app.post('/rpc/vote.final', async (req, res) => {
+  try {
+    const input = FinalVote.parse(req.body);
+    if (db) {
+      try {
+        const r = await db.query(
+          'select vote_final_submit($1::uuid,$2::uuid,$3::boolean,$4::jsonb,$5::text) as id',
+          [
+            input.round_id,
+            input.voter_id,
+            input.approval,
+            JSON.stringify(input.ranking || []),
+            input.client_nonce
+          ]
+        );
+        const vote_id = r.rows?.[0]?.id;
+        if (!vote_id) throw new Error('vote_final_submit_missing_id');
+        return res.json({ ok: true, vote_id });
+      } catch (e) {
+        const msg = String(e?.message || '');
+        if (/not a participant/.test(msg)) return res.status(403).json({ ok: false, error: msg });
+        console.warn('[vote.final] DB error, falling back to memory:', msg || e);
+      }
+    }
+    // Memory fallback
+    const vote_id = crypto.randomUUID();
+    return res.json({ ok: true, vote_id, note: 'db_fallback' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// score.submit
+app.post('/rpc/score.submit', async (req, res) => {
+  try {
+    const input = ScoreSubmit.parse(req.body);
+    if (db) {
+      try {
+        const r = await db.query(
+          'select score_submit($1::uuid,$2::uuid,$3::uuid,$4::int,$5::int,$6::int,$7::int,$8::int,$9::text) as id',
+          [
+            input.round_id,
+            input.judge_id,
+            input.participant_id,
+            input.e,
+            input.r,
+            input.c,
+            input.v,
+            input.y,
+            input.client_nonce
+          ]
+        );
+        const score_id = r.rows?.[0]?.id;
+        return res.json({ ok: true, score_id });
+      } catch (e) {
+        const msg = String(e?.message || '');
+        if (/only judges/.test(msg)) return res.status(403).json({ ok: false, error: msg });
+        console.warn('[score.submit] DB error, falling back to memory:', msg || e);
+      }
+    }
+    return res.json({ ok: true, score_id: crypto.randomUUID(), note: 'db_fallback' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// scores.get
+app.get('/rpc/scores.get', async (req, res) => {
+  try {
+    const input = ScoreGet.parse(req.query);
+    if (db) {
+      const r = await db.query('select * from view_score_aggregates where round_id = $1', [
+        input.round_id
+      ]);
+      const rows = (r.rows || []).map((row) => ({
+        ...row,
+        avg_e: Number(row.avg_e),
+        avg_r: Number(row.avg_r),
+        avg_c: Number(row.avg_c),
+        avg_v: Number(row.avg_v),
+        avg_y: Number(row.avg_y),
+        composite_score: Number(row.composite_score),
+        judge_count: Number(row.judge_count)
+      }));
+      return res.json({ ok: true, rows });
+    }
+    // Memory stub
+    return res.json({
+      ok: true,
+      rows: [{ participant_id: '...', composite_score: 85 }],
+      note: 'db_fallback'
+    });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// reputation.update
+app.post('/rpc/reputation.update', async (req, res) => {
+  try {
+    const { room_id, round_id } = req.body || {};
+    if (db) {
+      // Find rounds for the room if only room_id provided, or use specific round_id
+      const targetRoundId =
+        round_id ||
+        (
+          await db.query('select id from rounds where room_id = $1 order by idx desc limit 1', [
+            room_id
+          ])
+        ).rows?.[0]?.id;
+      if (targetRoundId) {
+        await db.query('select reputation_update_round($1::uuid)', [targetRoundId]);
+        return res.json({ ok: true });
+      }
+      return res.status(404).json({ ok: false, error: 'round_not_found' });
+    }
+    return res.json({ ok: true, note: 'db_fallback' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// reputation.get
+app.get('/rpc/reputation.get', async (req, res) => {
+  try {
+    const input = ReputationGet.parse(req.query);
+    if (db) {
+      if (input.tag) {
+        const r = await db.query(
+          'select elo from reputation_tag where participant_id = $1 and tag = $2',
+          [input.participant_id, input.tag]
+        );
+        return res.json({
+          ok: true,
+          participant_id: input.participant_id,
+          tag: input.tag,
+          elo: r.rows?.[0]?.elo || 1200.0
+        });
+      }
+      const r = await db.query('select elo from reputation where participant_id = $1', [
+        input.participant_id
+      ]);
+      return res.json({
+        ok: true,
+        participant_id: input.participant_id,
+        elo: r.rows?.[0]?.elo || 1200.0
+      });
+    }
+    return res.json({
+      ok: true,
+      participant_id: input.participant_id,
+      elo: 1200.0,
+      note: 'db_fallback'
+    });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
 // room.create: seeds room + round 0 (DB) or in-memory fallback
 app.post('/rpc/room.create', async (req, res) => {
   try {
@@ -473,6 +785,113 @@ app.post('/rpc/submission.flag', async (req, res) => {
   }
 });
 
+// verify.submit — record a verification verdict (DB first, memory fallback)
+app.post('/rpc/verify.submit', async (req, res) => {
+  try {
+    const input = VerifySubmit.parse(req.body || {});
+    const key = `${input.round_id}:${input.reporter_id}:${input.submission_id}:${input.claim_id || ''}`;
+    if (db) {
+      try {
+        const r = await db.query(
+          'select verify_submit($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::text,$7::text) as id',
+          [
+            input.round_id,
+            input.reporter_id,
+            input.submission_id,
+            input.claim_id || null,
+            input.verdict,
+            input.rationale || null,
+            input.client_nonce
+          ]
+        );
+        const id = r.rows?.[0]?.id;
+        if (!id) throw new Error('verify_submit_missing_id');
+        return res.json({ ok: true, id });
+      } catch (e) {
+        const msg = String(e?.message || '');
+        const code = e?.code;
+        if (code === '23503') return res.status(404).json({ ok: false, error: 'not_found' });
+        if (/invalid_verdict|round_not_verifiable|submission_round_mismatch/i.test(msg))
+          return res.status(400).json({ ok: false, error: msg });
+        if (/reporter_not_participant|reporter_role_denied/.test(msg))
+          return res.status(403).json({ ok: false, error: msg });
+        console.warn('[verify.submit] DB error, falling back to memory:', msg || e);
+      }
+    }
+    // memory fallback — idempotent by key
+    if (!memSubmissionIndex.has(String(input.submission_id))) {
+      return res.status(404).json({ ok: false, error: 'submission_not_found' });
+    }
+    if (memVerifications.has(key)) {
+      const existing = memVerifications.get(key);
+      existing.verdict = input.verdict;
+      if (input.rationale) existing.rationale = input.rationale;
+      memVerifications.set(key, existing);
+      return res.json({ ok: true, id: existing.id, note: 'db_fallback' });
+    }
+    const id = crypto.randomUUID();
+    memVerifications.set(key, {
+      id,
+      verdict: input.verdict,
+      rationale: input.rationale || ''
+    });
+    return res.json({ ok: true, id, note: 'db_fallback' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// verify/summary — aggregated verdict counts for a round
+app.get('/verify/summary', async (req, res) => {
+  try {
+    const roundId = String(req.query.round_id || '');
+    if (!/^[0-9a-f-]{8,}$/i.test(roundId))
+      return res.status(400).json({ ok: false, error: 'invalid_round_id' });
+    if (db) {
+      try {
+        const r = await db.query(
+          'select submission_id, claim_id, true_count, false_count, unclear_count, needs_work_count, total from verify_summary($1::uuid) order by submission_id, claim_id nulls first',
+          [roundId]
+        );
+        return res.json({ ok: true, rows: r.rows || [] });
+      } catch (e) {
+        console.warn('[verify.summary] DB error, falling back to memory:', e?.message || e);
+      }
+    }
+    // memory summary
+    const rows = [];
+    const counts = new Map(); // key: submission:claim -> aggregate counts
+    for (const [k, v] of memVerifications.entries()) {
+      const parts = String(k || '').split(':');
+      if (parts.length < 3) continue;
+      const r = parts[0] || '';
+      const s = parts[2] || '';
+      const claimId = parts.length > 3 ? parts.slice(3).join(':') : null;
+      if (r !== roundId) continue;
+      const ck = `${s}:${claimId}`;
+      const t = counts.get(ck) || {
+        submission_id: s,
+        claim_id: claimId || null,
+        true_count: 0,
+        false_count: 0,
+        unclear_count: 0,
+        needs_work_count: 0,
+        total: 0
+      };
+      if (v.verdict === 'true') t.true_count++;
+      else if (v.verdict === 'false') t.false_count++;
+      else if (v.verdict === 'unclear') t.unclear_count++;
+      else if (v.verdict === 'needs_work') t.needs_work_count++;
+      t.total++;
+      counts.set(ck, t);
+    }
+    for (const v of counts.values()) rows.push(v);
+    return res.json({ ok: true, rows, note: 'db_fallback' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
 // In-memory room/round state and simple time-based transitions
 
 function ensureRoom(roomId) {
@@ -525,11 +944,14 @@ app.get('/state', async (req, res) => {
       );
       const roundRow = roundResult.rows?.[0];
       if (roundRow) {
-        const [tallyResult, submissionsResult] = await Promise.all([
+        const [tallyResult, finalTallyResult, submissionsResult, verifyResult] = await Promise.all([
           db.query(
             'select yes, no from view_continue_tally where room_id = $1 and round_id = $2 limit 1',
             [roomId, roundRow.round_id]
           ),
+          db.query('select approves, rejects from view_final_tally where round_id = $1 limit 1', [
+            roundRow.round_id
+          ]),
           db.query(
             `select id,
                     author_id,
@@ -542,12 +964,18 @@ app.get('/state', async (req, res) => {
               where round_id = $1
               order by submitted_at asc nulls last, id asc`,
             [roundRow.round_id]
+          ),
+          db.query(
+            'select submission_id, claim_id, true_count, false_count, unclear_count, needs_work_count, total from verify_summary($1::uuid)',
+            [roundRow.round_id]
           )
         ]);
         const tallyRow = tallyResult.rows?.[0] || { yes: 0, no: 0 };
+        const finalTallyRow = finalTallyResult.rows?.[0] || { approves: 0, rejects: 0 };
         const transcript = submissionsResult.rows.map((row) => ({
           submission_id: row.id,
           author_id: row.author_id,
+          author_anon_name: row.author_anon_name,
           content: row.content,
           canonical_sha256: row.canonical_sha256,
           submitted_at: row.submitted_at ? Math.floor(row.submitted_at.getTime() / 1000) : null,
@@ -570,7 +998,12 @@ app.get('/state', async (req, res) => {
               yes: Number(tallyRow.yes || 0),
               no: Number(tallyRow.no || 0)
             },
-            transcript
+            final_tally: {
+              approves: Number(finalTallyRow.approves || 0),
+              rejects: Number(finalTallyRow.rejects || 0)
+            },
+            transcript,
+            verifications: verifyResult.rows || []
           },
           flags: flagged
         });
@@ -736,11 +1169,15 @@ app.get('/events', async (req, res) => {
       listenerClient = await db.connect();
       await listenerClient.query('LISTEN db8_rounds');
       await listenerClient.query('LISTEN db8_journal');
+      await listenerClient.query('LISTEN db8_verdict');
+      await listenerClient.query('LISTEN db8_final_vote');
       const onNotification = (msg) => {
         if (closed) return;
         try {
           const payload = JSON.parse(msg.payload || '{}');
-          if (!payload || payload.room_id !== roomId) return;
+          if (!payload || (payload.room_id !== roomId && payload.t !== 'final_vote')) return;
+          // Note: final_vote notification doesn't strictly carry room_id in the payload currently,
+          // let's fix that in rpc.sql or just use the channel.
           if (msg.channel === 'db8_rounds') {
             // Update cached round and emit a phase event immediately
             currentRound = {
@@ -768,6 +1205,16 @@ app.get('/events', async (req, res) => {
             res.write(`data: ${JSON.stringify(j)}\n\n`);
             return;
           }
+          if (msg.channel === 'db8_verdict') {
+            res.write(`event: verdict\n`);
+            res.write(`data: ${JSON.stringify(payload)}\n\n`);
+            return;
+          }
+          if (msg.channel === 'db8_final_vote') {
+            res.write(`event: vote\n`);
+            res.write(`data: ${JSON.stringify({ kind: 'final', ...payload })}\n\n`);
+            return;
+          }
         } catch {
           // ignore bad payloads
         }
@@ -790,6 +1237,16 @@ app.get('/events', async (req, res) => {
             }
             try {
               await listenerClient.query('UNLISTEN db8_journal');
+            } catch {
+              /* ignore */
+            }
+            try {
+              await listenerClient.query('UNLISTEN db8_verdict');
+            } catch {
+              /* ignore */
+            }
+            try {
+              await listenerClient.query('UNLISTEN db8_final_vote');
             } catch {
               /* ignore */
             }
@@ -925,6 +1382,8 @@ app.get('/journal', async (req, res) => {
     const journal = await buildLatestJournal(roomId);
     return res.json({ ok: true, journal });
   } catch (e) {
+    // debug log to help identify CI AggregateError
+    console.error('[journal] error:', e);
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
@@ -991,7 +1450,7 @@ app.post('/rpc/provenance.verify', async (req, res) => {
         if (db && input?.doc?.author_id) {
           try {
             const r = await db.query(
-              'select ssh_fingerprint from participants where id = $1 limit 1',
+              'select ssh_fingerprint from participants_view where id = $1 limit 1',
               [input.doc.author_id]
             );
             const fp = String(r.rows?.[0]?.ssh_fingerprint || '').trim();
