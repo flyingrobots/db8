@@ -29,6 +29,7 @@ import { sha256Hex, log, getPersistentSigningKeys } from './utils.js';
 import canonicalizer from './canonicalizer.js';
 import { loadConfig } from './config/config-builder.js';
 import { createSigner, buildJournalCore, finalizeJournal } from './journal.js';
+import { SubmissionService } from './services/SubmissionService.js';
 
 const app = express();
 const config = loadConfig();
@@ -77,6 +78,16 @@ const CLEANUP_INTERVAL_SEC = 10;
 // In-memory room state and idempotency for room.create fallback
 const memRooms = new Map(); // room_id -> { round: { idx, phase, submit_deadline_unix, published_at_unix?, continue_vote_close_unix? } }
 const memRoomNonces = new Map(); // client_nonce -> room_id
+
+const submissionService = new SubmissionService({
+  get db() {
+    return db;
+  },
+  config,
+  memSubmissions,
+  memSubmissionIndex,
+  validateAndConsumeNonceMemory
+});
 
 const SUBMIT_WINDOW_SEC = config.submitWindowSec;
 const CONTINUE_WINDOW_SEC = config.continueWindowSec;
@@ -411,102 +422,15 @@ app.post('/rpc/nonce.issue', requireDbInProduction, async (req, res) => {
 app.post('/rpc/submission.create', requireDbInProduction, async (req, res) => {
   try {
     const input = SubmissionIn.parse(req.body);
-
-    if (req.body._force_dlq && db) {
-      await db.query('select dlq_push($1::jsonb)', [JSON.stringify(req.body)]);
-      return res.status(500).json({ ok: false, error: 'forced_failure_queued' });
-    }
-
-    // Optional server nonce enforcement when enabled
-    if (!db && config.enforceServerNonces) {
-      if (!validateAndConsumeNonceMemory(input))
-        return res.status(400).json({ ok: false, error: 'invalid_nonce' });
-    }
-    const canon = canonicalizer({
-      room_id: input.room_id,
-      round_id: input.round_id,
-      author_id: input.author_id,
-      phase: input.phase,
-      deadline_unix: input.deadline_unix,
-      content: input.content,
-      claims: input.claims,
-      citations: input.citations,
-      client_nonce: input.client_nonce
-    });
-    const canonical_sha256 = sha256Hex(canon);
-    // Enforce deadline if provided (> 0)
-    const now = Math.floor(Date.now() / 1000);
-    if (input.deadline_unix && input.deadline_unix > 0 && now > input.deadline_unix) {
-      return res.status(400).json({ ok: false, error: 'deadline_passed' });
-    }
-
-    const key = `${input.room_id}:${input.round_id}:${input.author_id}:${input.client_nonce}`;
-    if (db) {
-      // Use atomic RPC when enforcing server nonces; otherwise plain upsert
-      const upsertSql = config.enforceServerNonces
-        ? 'select submission_upsert_with_nonce($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id'
-        : 'select submission_upsert($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id';
-      return db
-        .query(upsertSql, [
-          input.round_id,
-          input.author_id,
-          input.content,
-          JSON.stringify(input.claims),
-          JSON.stringify(input.citations),
-          canonical_sha256,
-          input.client_nonce
-        ])
-        .then((r) => {
-          const submission_id = r.rows?.[0]?.id;
-          if (submission_id) return res.json({ ok: true, submission_id, canonical_sha256 });
-          throw new Error('submission_upsert_missing_id');
-        })
-        .catch((e) => {
-          const msg = String(e?.message || '');
-          if (/invalid_nonce/i.test(msg))
-            return res.status(400).json({ ok: false, error: 'invalid_nonce' });
-          // Log DB error and fall back to memory (except invalid_nonce handled above)
-          console.error('[submission.create] DB error, falling back to memory:', e, e?.message);
-          if (config.enforceServerNonces && !validateAndConsumeNonceMemory(input))
-            return res.status(400).json({ ok: false, error: 'invalid_nonce' });
-          let submission_id;
-          if (memSubmissions.has(key)) {
-            submission_id = memSubmissions.get(key).id;
-          } else {
-            submission_id = crypto.randomUUID();
-            memSubmissions.set(key, {
-              id: submission_id,
-              canonical_sha256,
-              content: input.content,
-              author_id: input.author_id,
-              room_id: input.room_id
-            });
-            memSubmissionIndex.set(submission_id, { room_id: input.room_id });
-          }
-          return res.json({
-            ok: true,
-            submission_id,
-            canonical_sha256,
-            note: 'db_fallback',
-            db_error: e.message
-          });
-        });
-    }
-    if (memSubmissions.has(key)) {
-      const found = memSubmissions.get(key);
-      return res.json({ ok: true, submission_id: found.id, canonical_sha256 });
-    }
-    const submission_id = crypto.randomUUID();
-    memSubmissions.set(key, {
-      id: submission_id,
-      canonical_sha256,
-      content: input.content,
-      author_id: input.author_id,
-      room_id: input.room_id
-    });
-    memSubmissionIndex.set(submission_id, { room_id: input.room_id });
-    return res.json({ ok: true, submission_id, canonical_sha256 });
+    const result = await submissionService.create(input, { forceDlq: req.body._force_dlq });
+    return res.json({ ok: true, ...result });
   } catch (err) {
+    if (err.message === 'forced_failure_queued') {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+    if (err.message === 'deadline_passed' || err.message === 'invalid_nonce') {
+      return res.status(400).json({ ok: false, error: err.message });
+    }
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
   }
 });
@@ -1668,13 +1592,11 @@ app.post('/rpc/provenance.verify', async (req, res) => {
         }
         return res.json(payload);
       } catch (e) {
-        return res
-          .status(400)
-          .json({
-            ok: false,
-            error: 'invalid_public_key_or_signature',
-            detail: String(e?.message || e)
-          });
+        return res.status(400).json({
+          ok: false,
+          error: 'invalid_public_key_or_signature',
+          detail: String(e?.message || e)
+        });
       }
     }
 
@@ -1725,13 +1647,11 @@ app.post('/rpc/provenance.verify', async (req, res) => {
         }
         return res.json(payload);
       } catch (e) {
-        return res
-          .status(400)
-          .json({
-            ok: false,
-            error: 'invalid_public_key_or_signature',
-            detail: String(e?.message || e)
-          });
+        return res.status(400).json({
+          ok: false,
+          error: 'invalid_public_key_or_signature',
+          detail: String(e?.message || e)
+        });
       }
     }
     return res.status(501).json({ ok: false, error: 'unsupported_signature_kind' });
