@@ -34,7 +34,7 @@ import { SubmissionService } from './services/SubmissionService.js';
 const app = express();
 const config = loadConfig();
 app.use(express.json());
-app.use(rateLimitStub({ enforce: config.enforceRateLimit }));
+app.use(rateLimitStub({ enforce: true }));
 // Serve static demo files (public/*) so you can preview UI in a browser
 app.use(express.static('public'));
 
@@ -118,117 +118,140 @@ function requireDbInProduction(req, res, next) {
 }
 
 // Auth Challenge — return a random nonce for SSH signing
-app.get('/auth/challenge', requireDbInProduction, (req, res) => {
-  try {
-    const input = AuthChallengeIn.parse(req.query);
-    const nonce = crypto.randomBytes(16).toString('hex');
-    const expires_at = nowSec() + 300; // 5 mins
-    memAuthChallenges.set(nonce, {
-      room_id: input.room_id,
-      participant_id: input.participant_id,
-      expires_at
-    });
-    return res.json({ ok: true, nonce, expires_at, audience: 'db8' });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+app.get(
+  '/auth/challenge',
+  rateLimitStub({
+    limit: 5,
+    windowMs: 60000,
+    enforce: process.env.NODE_ENV !== 'test'
+  }),
+  requireDbInProduction,
+  (req, res) => {
+    try {
+      const input = AuthChallengeIn.parse(req.query);
+      const nonce = crypto.randomBytes(16).toString('hex');
+      const expires_at = nowSec() + 300; // 5 mins
+      memAuthChallenges.set(nonce, {
+        room_id: input.room_id,
+        participant_id: input.participant_id,
+        expires_at
+      });
+      return res.json({ ok: true, nonce, expires_at, audience: 'db8' });
+    } catch (err) {
+      return res.status(400).json({ ok: false, error: err?.message || String(err) });
+    }
   }
-});
+);
 
 // Auth Verify — verify SSH signature and return a session (JWT)
-app.post('/auth/verify', requireDbInProduction, async (req, res) => {
-  try {
-    const input = AuthVerifyIn.parse(req.body);
-    const challenge = memAuthChallenges.get(input.nonce);
-    if (!challenge) return res.status(400).json({ ok: false, error: 'invalid_or_expired_nonce' });
-    if (challenge.expires_at <= nowSec()) {
-      memAuthChallenges.delete(input.nonce);
-      return res.status(400).json({ ok: false, error: 'invalid_or_expired_nonce' });
-    }
-    if (challenge.room_id !== input.room_id || challenge.participant_id !== input.participant_id) {
-      return res.status(400).json({ ok: false, error: 'challenge_mismatch' });
-    }
+app.post(
+  '/auth/verify',
+  rateLimitStub({
+    limit: 5,
+    windowMs: 60000,
+    enforce: process.env.NODE_ENV !== 'test'
+  }),
+  requireDbInProduction,
+  async (req, res) => {
+    try {
+      const input = AuthVerifyIn.parse(req.body);
+      const challenge = memAuthChallenges.get(input.nonce);
+      if (!challenge) return res.status(400).json({ ok: false, error: 'invalid_or_expired_nonce' });
+      if (challenge.expires_at <= nowSec()) {
+        memAuthChallenges.delete(input.nonce);
+        return res.status(400).json({ ok: false, error: 'invalid_or_expired_nonce' });
+      }
+      if (
+        challenge.room_id !== input.room_id ||
+        challenge.participant_id !== input.participant_id
+      ) {
+        return res.status(400).json({ ok: false, error: 'challenge_mismatch' });
+      }
 
-    // Verify signature over the nonce
-    let pubDer;
-    if (input.signature_kind === 'ed25519') {
-      if (!input.public_key_b64)
-        return res.status(400).json({ ok: false, error: 'missing_public_key_b64' });
-      pubDer = Buffer.from(input.public_key_b64, 'base64');
-    } else {
-      if (!input.public_key_ssh)
-        return res.status(400).json({ ok: false, error: 'missing_public_key_ssh' });
-      pubDer = parseOpenSshEd25519ToSpkiDer(input.public_key_ssh);
-    }
+      // Verify signature over the nonce
+      let pubDer;
+      if (input.signature_kind === 'ed25519') {
+        if (!input.public_key_b64)
+          return res.status(400).json({ ok: false, error: 'missing_public_key_b64' });
+        pubDer = Buffer.from(input.public_key_b64, 'base64');
+      } else {
+        if (!input.public_key_ssh)
+          return res.status(400).json({ ok: false, error: 'missing_public_key_ssh' });
+        pubDer = parseOpenSshEd25519ToSpkiDer(input.public_key_ssh);
+      }
 
-    const pubKey = crypto.createPublicKey({ format: 'der', type: 'spki', key: pubDer });
-    const ok = crypto.verify(
-      null,
-      Buffer.from(input.nonce),
-      pubKey,
-      Buffer.from(input.sig_b64, 'base64')
-    );
+      const pubKey = crypto.createPublicKey({ format: 'der', type: 'spki', key: pubDer });
+      const ok = crypto.verify(
+        null,
+        Buffer.from(input.nonce),
+        pubKey,
+        Buffer.from(input.sig_b64, 'base64')
+      );
 
-    if (!ok) {
-      return res.status(400).json({ ok: false, error: 'invalid_signature' });
-    }
+      if (!ok) {
+        return res.status(400).json({ ok: false, error: 'invalid_signature' });
+      }
 
-    // Check author binding
-    const fpHex = crypto.createHash('sha256').update(pubDer).digest('hex');
-    const gotFp = `sha256:${fpHex}`;
+      // Check author binding
+      const fpHex = crypto.createHash('sha256').update(pubDer).digest('hex');
+      const gotFp = `sha256:${fpHex}`;
 
-    if (db) {
-      try {
-        const r = await db.query(
-          'select ssh_fingerprint from participants_view where id = $1 and room_id = $2 limit 1',
-          [input.participant_id, input.room_id]
-        );
-        const row = r.rows?.[0];
-        if (!row) {
-          return res.status(404).json({ ok: false, error: 'participant_not_found_in_room' });
-        }
-        const fp = String(row.ssh_fingerprint || '').trim();
-        if (fp) {
-          const expected = fp.toLowerCase().startsWith('sha256:')
-            ? fp.toLowerCase()
-            : `sha256:${fp.toLowerCase()}`;
-          if (expected !== gotFp) {
-            return res.status(400).json({ ok: false, error: 'author_binding_mismatch' });
+      if (db) {
+        try {
+          const r = await db.query(
+            'select ssh_fingerprint from participants_view where id = $1 and room_id = $2 limit 1',
+            [input.participant_id, input.room_id]
+          );
+          const row = r.rows?.[0];
+          if (!row) {
+            return res.status(404).json({ ok: false, error: 'participant_not_found_in_room' });
           }
-        } else if (config.enforceAuthorBinding) {
-          return res.status(400).json({ ok: false, error: 'author_not_configured' });
-        }
-      } catch (dbErr) {
-        console.warn('[auth.verify] DB lookup failed:', dbErr.message);
-        if (config.enforceAuthorBinding) {
-          throw dbErr; // rethrow to be caught by main catch block
+          const fp = String(row.ssh_fingerprint || '').trim();
+          if (fp) {
+            const expected = fp.toLowerCase().startsWith('sha256:')
+              ? fp.toLowerCase()
+              : `sha256:${fp.toLowerCase()}`;
+            if (expected !== gotFp) {
+              return res.status(400).json({ ok: false, error: 'author_binding_mismatch' });
+            }
+          } else if (config.enforceAuthorBinding) {
+            return res.status(400).json({ ok: false, error: 'author_not_configured' });
+          }
+        } catch (dbErr) {
+          console.warn('[auth.verify] DB lookup failed:', dbErr.message);
+          if (config.enforceAuthorBinding) {
+            throw dbErr; // rethrow to be caught by main catch block
+          }
         }
       }
-    }
 
-    // Issue session (mock JWT)
-    const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
-    const payload = Buffer.from(
-      JSON.stringify({
-        sub: input.participant_id,
+      // Issue session (mock JWT)
+      const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+      const payload = Buffer.from(
+        JSON.stringify({
+          sub: input.participant_id,
+          room_id: input.room_id,
+          exp: nowSec() + 3600
+        })
+      ).toString('base64url');
+      const jwt = `${header}.${payload}.`;
+
+      memAuthChallenges.delete(input.nonce);
+      return res.json({
+        ok: true,
         room_id: input.room_id,
-        exp: nowSec() + 3600
-      })
-    ).toString('base64url');
-    const jwt = `${header}.${payload}.`;
-
-    memAuthChallenges.delete(input.nonce);
-    return res.json({
-      ok: true,
-      room_id: input.room_id,
-      participant_id: input.participant_id,
-      jwt,
-      expires_at: nowSec() + 3600
-    });
-  } catch (err) {
-    console.error('[auth.verify] error:', err);
-    return res.status(400).json({ ok: false, error: err?.name || 'error', message: err?.message });
+        participant_id: input.participant_id,
+        jwt,
+        expires_at: nowSec() + 3600
+      });
+    } catch (err) {
+      console.error('[auth.verify] error:', err);
+      return res
+        .status(400)
+        .json({ ok: false, error: err?.name || 'error', message: err?.message });
+    }
   }
-});
+);
 
 const execFileAsync = promisify(execFile);
 

@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import supertest from 'supertest';
 import app, { __setDbPool } from '../rpc.js';
 import pg from 'pg';
+import crypto from 'node:crypto';
+import { resetRateLimits } from '../mw/rate-limit.js';
 
 describe('Hardening & Ops (M7)', () => {
   let pool;
@@ -18,6 +20,10 @@ describe('Hardening & Ops (M7)', () => {
   afterAll(async () => {
     __setDbPool(null);
     await pool.end();
+  });
+
+  beforeEach(() => {
+    resetRateLimits();
   });
 
   const roomId = '77770000-0000-0000-0000-000000000001';
@@ -63,17 +69,35 @@ describe('Hardening & Ops (M7)', () => {
   });
 
   it('Production Rate Limiting: Should throttle rapid RPC calls', async () => {
-    // Note: requires ENFORCE_RATELIMIT=1 in environment
-    const requests = Array.from({ length: 15 }).map(() =>
-      supertest(app).post('/rpc/room.create').send({
-        topic: 'Flood Room',
-        client_nonce: Math.random().toString()
-      })
-    );
+    const oldEnv = process.env.ENFORCE_RATELIMIT;
+    process.env.ENFORCE_RATELIMIT = '1';
 
-    const responses = await Promise.all(requests);
-    const throttled = responses.filter((r) => r.status === 429);
-    expect(throttled.length).toBeGreaterThan(0);
+    // Unique headers for isolation
+    const rid = crypto.randomUUID();
+    const pid = crypto.randomUUID();
+
+    try {
+      // The default limit is 60, but since we are specifically testing throttling,
+      // let's do a loop until we hit it or exceed a reasonable count.
+      let got429 = false;
+      for (let i = 0; i < 70; i++) {
+        const r = await supertest(app)
+          .post('/rpc/room.create')
+          .set('x-room-id', rid)
+          .set('x-participant-id', pid)
+          .send({
+            topic: 'Flood Room',
+            client_nonce: crypto.randomUUID()
+          });
+        if (r.status === 429) {
+          got429 = true;
+          break;
+        }
+      }
+      expect(got429).toBe(true);
+    } finally {
+      process.env.ENFORCE_RATELIMIT = oldEnv;
+    }
   });
 
   it('Orchestrator Heartbeat: Recovery infrastructure should exist', async () => {

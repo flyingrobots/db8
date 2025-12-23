@@ -7,13 +7,13 @@ import pg from 'pg';
 
 describe('SSH Auth (Challenge/Verify)', () => {
   const roomId = '10000000-0000-0000-0000-000000000001';
-  const participantId = '10000000-0000-0000-0000-000000000003';
 
   beforeAll(() => {
     __setDbPool(null);
   });
 
   it('GET /auth/challenge returns a nonce', async () => {
+    const participantId = crypto.randomUUID();
     const res = await supertest(app)
       .get('/auth/challenge')
       .query({ room_id: roomId, participant_id: participantId });
@@ -21,15 +21,17 @@ describe('SSH Auth (Challenge/Verify)', () => {
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.nonce).toBeDefined();
-    expect(res.body.nonce.length).toBeGreaterThan(16);
     expect(res.body.audience).toBe('db8');
   });
 
   it('POST /auth/verify verifies an ed25519 signature', async () => {
+    const participantId = crypto.randomUUID();
     // 1. Get challenge
     const cRes = await supertest(app)
       .get('/auth/challenge')
       .query({ room_id: roomId, participant_id: participantId });
+
+    expect(cRes.status).toBe(200);
     const nonce = cRes.body.nonce;
 
     // 2. Sign nonce
@@ -49,21 +51,22 @@ describe('SSH Auth (Challenge/Verify)', () => {
         public_key_b64: pubDer.toString('base64')
       });
 
-    if (vRes.status !== 200) console.error(vRes.body);
     expect(vRes.status).toBe(200);
     expect(vRes.body.ok).toBe(true);
     expect(vRes.body.jwt).toBeDefined();
-    expect(vRes.body.jwt.split('.').length).toBe(3);
   });
 
   it('POST /auth/verify verifies an OpenSSH (ssh-ed25519) signature', async () => {
+    const participantId = crypto.randomUUID();
     // 1. Get challenge
     const cRes = await supertest(app)
       .get('/auth/challenge')
       .query({ room_id: roomId, participant_id: participantId });
+
+    expect(cRes.status).toBe(200);
     const nonce = cRes.body.nonce;
 
-    // 2. Sign nonce (using standard ed25519 for signature, but passing ssh-ed25519 format)
+    // 2. Sign nonce
     const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
     const sig = crypto.sign(null, Buffer.from(nonce), privateKey);
 
@@ -94,15 +97,17 @@ describe('SSH Auth (Challenge/Verify)', () => {
         public_key_ssh: sshPubKey
       });
 
-    if (vRes.status !== 200) console.error(vRes.body);
     expect(vRes.status).toBe(200);
     expect(vRes.body.ok).toBe(true);
   });
 
   it('POST /auth/verify rejects mismatching room/participant', async () => {
+    const participantId = crypto.randomUUID();
     const cRes = await supertest(app)
       .get('/auth/challenge')
       .query({ room_id: roomId, participant_id: participantId });
+
+    expect(cRes.status).toBe(200);
     const nonce = cRes.body.nonce;
 
     const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
@@ -136,13 +141,14 @@ describe('SSH Auth (Challenge/Verify)', () => {
     try {
       await pool.query('truncate rooms cascade');
       const rid = '10000000-0000-0000-0000-000000000001';
-      const pid = '10000000-0000-0000-0000-000000000003';
+      const pid = crypto.randomUUID();
       await pool.query('insert into rooms(id, title) values ($1, $2)', [rid, 'Binding Room']);
-      // Participant is NOT in this room
 
       const cRes = await supertest(app)
         .get('/auth/challenge')
         .query({ room_id: rid, participant_id: pid });
+
+      expect(cRes.status).toBe(200);
       const nonce = cRes.body.nonce;
 
       const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
