@@ -296,6 +296,14 @@ CREATE OR REPLACE VIEW votes_view AS
   FROM votes v
   JOIN rounds r ON r.id = v.round_id;
 
+CREATE OR REPLACE VIEW participants_view AS
+  SELECT id, room_id, anon_name, role, ssh_fingerprint, created_at
+  FROM participants;
+
+CREATE OR REPLACE VIEW rounds_view AS
+  SELECT id, room_id, idx, phase, submit_deadline_unix, published_at_unix, continue_vote_close_unix
+  FROM rounds;
+
 -- Aggregated submissions with flags for secure consumption
 CREATE OR REPLACE VIEW submissions_with_flags_view AS
   SELECT
@@ -332,6 +340,8 @@ CREATE OR REPLACE VIEW submissions_with_flags_view AS
 -- Harden views to avoid qual pushdown across RLS boundaries
 ALTER VIEW submissions_view SET (security_barrier = true);
 ALTER VIEW votes_view SET (security_barrier = true);
+ALTER VIEW participants_view SET (security_barrier = true);
+ALTER VIEW rounds_view SET (security_barrier = true);
 ALTER VIEW submissions_with_flags_view SET (security_barrier = true);
 
 -- Notify function

@@ -134,10 +134,10 @@ app.get('/rpc/participant', async (req, res) => {
 
   if (db) {
     try {
-      const r = await db.query('select role from participants where room_id = $1 and id = $2', [
-        roomId,
-        id
-      ]);
+      const r = await db.query(
+        'select role from participants_view where room_id = $1 and id = $2',
+        [roomId, id]
+      );
       const row = r.rows?.[0];
       if (!row) return res.status(404).json({ ok: false, error: 'not_found' });
       return res.json({ ok: true, role: row.role });
@@ -1129,7 +1129,7 @@ app.post('/rpc/provenance.verify', async (req, res) => {
         if (db && input?.doc?.author_id) {
           try {
             const r = await db.query(
-              'select ssh_fingerprint from participants where id = $1 limit 1',
+              'select ssh_fingerprint from participants_view where id = $1 limit 1',
               [input.doc.author_id]
             );
             const fp = String(r.rows?.[0]?.ssh_fingerprint || '').trim();
