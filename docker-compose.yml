@@ -1,6 +1,7 @@
 services:
   db:
-    image: postgres:16
+    image: quay.io/tembo/pg16-pgmq:latest
+    restart: always
     environment:
       POSTGRES_PASSWORD: test
       POSTGRES_DB: db8_test

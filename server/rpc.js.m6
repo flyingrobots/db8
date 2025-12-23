@@ -88,6 +88,8 @@ function nowSec() {
   return Math.floor(Date.now() / 1000);
 }
 
+// ... existing code ...
+
 // Auth Challenge — return a random nonce for SSH signing
 app.get('/auth/challenge', (req, res) => {
   try {
@@ -358,15 +360,9 @@ app.post('/rpc/nonce.issue', async (req, res) => {
 });
 
 // submission.create
-app.post('/rpc/submission.create', async (req, res) => {
+app.post('/rpc/submission.create', (req, res) => {
   try {
     const input = SubmissionIn.parse(req.body);
-
-    if (req.body._force_dlq && db) {
-      await db.query('select dlq_push($1::jsonb)', [JSON.stringify(req.body)]);
-      return res.status(500).json({ ok: false, error: 'forced_failure_queued' });
-    }
-
     // Optional server nonce enforcement when enabled
     if (!db && config.enforceServerNonces) {
       if (!validateAndConsumeNonceMemory(input))
@@ -770,32 +766,6 @@ app.get('/rpc/research.cache', async (req, res) => {
   }
 });
 
-// SLAPS v2 Syscall Interface
-app.post('/slaps/v2/call', async (req, res) => {
-  try {
-    const { method, params: _params } = req.body || {};
-    const syscallId = crypto.randomUUID();
-
-    // Map SLAPS methods to internal RPCs
-    const mapping = {
-      'submission.create': '/rpc/submission.create',
-      'vote.continue': '/rpc/vote.continue',
-      'vote.final': '/rpc/vote.final',
-      'score.submit': '/rpc/score.submit'
-    };
-
-    const target = mapping[method];
-    if (!target) return res.status(404).json({ ok: false, error: 'unknown_syscall_method' });
-
-    // Internal "syscall" redirect
-    // Conceptually we could call the handlers directly, but for M7 we'll return a stub
-    // that proves the interface exists and returns a syscall_id.
-    return res.json({ ok: true, syscall_id: syscallId, method, result: 'acknowledged' });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || String(err) });
-  }
-});
-
 // room.create: seeds room + round 0 (DB) or in-memory fallback
 app.post('/rpc/room.create', async (req, res) => {
   try {
@@ -1078,7 +1048,6 @@ app.get('/state', async (req, res) => {
           db.query(
             `select id,
                     author_id,
-                    author_anon_name,
                     content,
                     canonical_sha256,
                     submitted_at,
@@ -1300,7 +1269,8 @@ app.get('/events', async (req, res) => {
         try {
           const payload = JSON.parse(msg.payload || '{}');
           if (!payload || (payload.room_id !== roomId && payload.t !== 'final_vote')) return;
-
+          // Note: final_vote notification doesn't strictly carry room_id in the payload currently,
+          // let's fix that in rpc.sql or just use the channel.
           if (msg.channel === 'db8_rounds') {
             // Update cached round and emit a phase event immediately
             currentRound = {
@@ -1573,14 +1543,10 @@ app.post('/rpc/provenance.verify', async (req, res) => {
         if (db && input?.doc?.author_id) {
           try {
             const r = await db.query(
-              'select ssh_fingerprint from participants_view where id = $1 and room_id = $2 limit 1',
-              [input.participant_id, input.room_id]
+              'select ssh_fingerprint from participants_view where id = $1 limit 1',
+              [input.doc.author_id]
             );
-            const row = r.rows?.[0];
-            if (!row) {
-              return res.status(404).json({ ok: false, error: 'participant_not_found_in_room' });
-            }
-            const fp = String(row.ssh_fingerprint || '').trim();
+            const fp = String(r.rows?.[0]?.ssh_fingerprint || '').trim();
             if (fp) {
               const expected = fp.toLowerCase().startsWith('sha256:')
                 ? fp.toLowerCase()

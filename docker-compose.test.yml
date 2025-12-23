@@ -2,7 +2,7 @@ name: db8-test
 
 services:
   db:
-    image: postgres:16
+    image: quay.io/tembo/pg16-pgmq:latest
     environment:
       POSTGRES_PASSWORD: test
       POSTGRES_DB: db8_test

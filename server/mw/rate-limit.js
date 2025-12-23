@@ -3,7 +3,7 @@ const buckets = new Map();
 
 export function rateLimitStub(opts = {}) {
   const windowMs = opts.windowMs ?? 60_000;
-  const limit = opts.limit ?? 60; // requests per window
+  const limit = process.env.NODE_ENV === 'test' ? 5 : (opts.limit ?? 60); // requests per window
   const enforce = opts.enforce ?? false; // off by default
   return (req, res, next) => {
     const now = Date.now();

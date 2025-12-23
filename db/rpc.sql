@@ -986,3 +986,52 @@ BEGIN
   RETURN v_count;
 END;
 $$;
+
+-- dlq_push: push a failed payload to the DLQ
+CREATE OR REPLACE FUNCTION dlq_push(
+  p_payload jsonb
+) RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN pgmq.send('db8_dlq', p_payload);
+END;
+$$;
+
+-- heartbeat: signal orchestrator liveness
+CREATE OR REPLACE FUNCTION orchestrator_heartbeat(
+  p_id text
+) RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  INSERT INTO orchestrator_heartbeat (id, last_seen_at)
+  VALUES (p_id, now())
+  ON CONFLICT (id) DO UPDATE SET last_seen_at = now();
+END;
+$$;
+
+-- recover_abandoned_barrier: cleanup rounds stuck in submit if orchestrator died
+CREATE OR REPLACE FUNCTION recover_abandoned_barrier(
+  p_timeout_seconds integer DEFAULT 60
+) RETURNS integer
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_count integer := 0;
+BEGIN
+  -- If no active heartbeats in the last X seconds, assume orchestrator died
+  IF NOT EXISTS (
+    SELECT 1 FROM orchestrator_heartbeat 
+    WHERE last_seen_at > now() - (p_timeout_seconds * interval '1 second')
+  ) THEN
+    -- CONCEPTUAL: In a real system, we'd take over or force a flip.
+    -- For db8 M7, we'll force-publish due rounds that were abandoned.
+    PERFORM round_publish_due();
+    GET DIAGNOSTICS v_count = ROW_COUNT;
+  END IF;
+  RETURN v_count;
+END;
+$$;

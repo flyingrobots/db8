@@ -3,6 +3,7 @@
 
 -- UUID generation
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pgmq CASCADE;
 
 -- Helper: current participant id from session (set via set_config('db8.participant_id', uuid, false))
 create or replace function db8_current_participant_id()
@@ -278,3 +279,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verification_verdicts_unique_nonce
 CREATE INDEX IF NOT EXISTS idx_verification_verdicts_round ON verification_verdicts (round_id);
 CREATE INDEX IF NOT EXISTS idx_verification_verdicts_submission ON verification_verdicts (submission_id);
 CREATE INDEX IF NOT EXISTS idx_verification_verdicts_reporter ON verification_verdicts (reporter_id);
+
+-- Orchestrator Heartbeat (M7)
+CREATE TABLE IF NOT EXISTS orchestrator_heartbeat (
+  id            text        PRIMARY KEY,
+  last_seen_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Initialize DLQ
+SELECT pgmq.create('db8_dlq');
