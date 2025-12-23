@@ -25,7 +25,7 @@ import {
   ResearchFetch,
   ResearchCacheGet
 } from './schemas.js';
-import { sha256Hex, log, getPersistentSigningKeys } from './utils.js';
+import { sha256Hex, log, getPersistentSigningKeys, LRUMap } from './utils.js';
 import canonicalizer from './canonicalizer.js';
 import { loadConfig } from './config/config-builder.js';
 import { createSigner, buildJournalCore, finalizeJournal } from './journal.js';
@@ -57,18 +57,18 @@ export function __setDbPool(pool) {
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // In-memory idempotency and submission store (M1 stub / fallback)
-const memSubmissions = new Map(); // key -> { id, canonical_sha256, content, author_id, room_id }
-const memSubmissionIndex = new Map(); // submission_id -> { room_id }
-const memFlags = new Map(); // submission_id -> Map(reporter_id -> { role, reason, created_at })
+const memSubmissions = new LRUMap(1000); // key -> { id, canonical_sha256, content, author_id, room_id }
+const memSubmissionIndex = new LRUMap(1000); // submission_id -> { room_id }
+const memFlags = new LRUMap(1000); // submission_id -> Map(reporter_id -> { role, reason, created_at })
 // In-memory verification verdicts: key "round:reporter:submission:claim" -> { id, verdict, rationale }
-const memVerifications = new Map();
+const memVerifications = new LRUMap(2000);
 // In-memory server-issued nonce stores (when DB is unavailable)
 // key "round:author" -> Map(nonce -> expires_unix)
-const memIssuedNonces = new Map();
-const memConsumedNonces = new Set(); // key "round:author:nonce"
+const memIssuedNonces = new LRUMap(500);
+const memConsumedNonces = new LRUMap(5000); // key "round:author:nonce"
 // Simple per-author issuance rate limiter for fallback path
 // key "round:author" -> { count, window_start_unix, last_cleanup_unix }
-const memNonceIssueRate = new Map();
+const memNonceIssueRate = new LRUMap(500);
 let memIssuedTotal = 0;
 const NONCE_WINDOW_SEC = 60;
 const NONCE_RATE_LIMIT = 30; // per (round,author) per window
@@ -76,8 +76,8 @@ const PER_AUTHOR_MAX = 200;
 const GLOBAL_NONCE_MAX = 5000;
 const CLEANUP_INTERVAL_SEC = 10;
 // In-memory room state and idempotency for room.create fallback
-const memRooms = new Map(); // room_id -> { round: { idx, phase, submit_deadline_unix, published_at_unix?, continue_vote_close_unix? } }
-const memRoomNonces = new Map(); // client_nonce -> room_id
+const memRooms = new LRUMap(100); // room_id -> { round: { idx, phase, submit_deadline_unix, published_at_unix?, continue_vote_close_unix? } }
+const memRoomNonces = new LRUMap(500); // client_nonce -> room_id
 
 const submissionService = new SubmissionService({
   get db() {
@@ -95,11 +95,11 @@ const signer = createSigner({
   ...getPersistentSigningKeys(),
   canonMode: config.canonMode
 });
-const memJournalHashes = new Map();
+const memJournalHashes = new LRUMap(1000);
 // In-memory participant fingerprint store when DB is unavailable
-const memParticipantFingerprints = new Map(); // participant_id -> fingerprint
+const memParticipantFingerprints = new LRUMap(1000); // participant_id -> fingerprint
 // In-memory auth challenges
-const memAuthChallenges = new Map(); // nonce -> { room_id, participant_id, expires_at }
+const memAuthChallenges = new LRUMap(500); // nonce -> { room_id, participant_id, expires_at }
 
 function nowSec() {
   return Math.floor(Date.now() / 1000);
@@ -436,8 +436,8 @@ app.post('/rpc/submission.create', requireDbInProduction, async (req, res) => {
 });
 
 // In-memory vote idempotency store and tallies
-const memVotes = new Map(); // key -> { id, choice }
-const memVoteTotals = new Map(); // room_id -> { yes, no }
+const memVotes = new LRUMap(1000); // key -> { id, choice }
+const memVoteTotals = new LRUMap(100); // room_id -> { yes, no }
 
 function addVoteToTotals(roomId, choice) {
   const key = String(roomId);

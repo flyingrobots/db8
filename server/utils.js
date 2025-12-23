@@ -80,3 +80,37 @@ export function getPersistentSigningKeys() {
 export function sha256Hex(s) {
   return crypto.createHash('sha256').update(s).digest('hex');
 }
+
+/**
+ * LRUMap is a simple Map-like object with a fixed capacity.
+ * When the capacity is reached, the least recently used entry is removed.
+ */
+export class LRUMap extends Map {
+  constructor(limit) {
+    super();
+    this.limit = limit;
+  }
+
+  set(key, value) {
+    super.delete(key);
+    super.set(key, value);
+    if (this.size > this.limit) {
+      const firstKey = this.keys().next().value;
+      super.delete(firstKey);
+    }
+    return this;
+  }
+
+  get(key) {
+    const value = super.get(key);
+    if (value !== undefined) {
+      super.delete(key);
+      super.set(key, value);
+    }
+    return value;
+  }
+
+  add(key) {
+    return this.set(key, true);
+  }
+}
