@@ -94,4 +94,24 @@ describe('Hardening & Ops (M7)', () => {
     `);
     expect(funcRes.rows[0].exists).toBe(true);
   });
+
+  it('Production Hardening: Should return 503 if DB is missing in production', async () => {
+    // Temporarily unset DB pool to simulate outage
+    __setDbPool(null);
+    const originalEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+
+    try {
+      const res = await supertest(app)
+        .post('/rpc/room.create')
+        .send({ topic: 'Production Fail', client_nonce: 'prod-nonce-1' });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toBe('service_unavailable');
+    } finally {
+      // Restore
+      process.env.NODE_ENV = originalEnv;
+      __setDbPool(pool);
+    }
+  });
 });

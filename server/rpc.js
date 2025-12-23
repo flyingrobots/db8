@@ -89,8 +89,20 @@ function nowSec() {
   return Math.floor(Date.now() / 1000);
 }
 
+// M7: Production Hardening - Disable in-memory fallback in production
+function requireDbInProduction(req, res, next) {
+  if (!db && process.env.NODE_ENV === 'production') {
+    return res.status(503).json({
+      ok: false,
+      error: 'service_unavailable',
+      message: 'Database is required in production mode'
+    });
+  }
+  next();
+}
+
 // Auth Challenge — return a random nonce for SSH signing
-app.get('/auth/challenge', (req, res) => {
+app.get('/auth/challenge', requireDbInProduction, (req, res) => {
   try {
     const input = AuthChallengeIn.parse(req.query);
     const nonce = crypto.randomBytes(16).toString('hex');
@@ -107,7 +119,7 @@ app.get('/auth/challenge', (req, res) => {
 });
 
 // Auth Verify — verify SSH signature and return a session (JWT)
-app.post('/auth/verify', async (req, res) => {
+app.post('/auth/verify', requireDbInProduction, async (req, res) => {
   try {
     const input = AuthVerifyIn.parse(req.body);
     const challenge = memAuthChallenges.get(input.nonce);
@@ -277,7 +289,7 @@ app.get('/rpc/participant', async (req, res) => {
 });
 
 // Server-issued nonce API (DB preferred)
-app.post('/rpc/nonce.issue', async (req, res) => {
+app.post('/rpc/nonce.issue', requireDbInProduction, async (req, res) => {
   try {
     const { round_id, author_id, ttl_sec } = req.body || {};
     if (!round_id || !author_id)
@@ -359,7 +371,7 @@ app.post('/rpc/nonce.issue', async (req, res) => {
 });
 
 // submission.create
-app.post('/rpc/submission.create', async (req, res) => {
+app.post('/rpc/submission.create', requireDbInProduction, async (req, res) => {
   try {
     const input = SubmissionIn.parse(req.body);
 
@@ -475,7 +487,7 @@ function addVoteToTotals(roomId, choice) {
 }
 
 // vote.continue
-app.post('/rpc/vote.continue', (req, res) => {
+app.post('/rpc/vote.continue', requireDbInProduction, (req, res) => {
   try {
     const input = ContinueVote.parse(req.body);
     const key = `${input.round_id}:${input.voter_id}:continue:${input.client_nonce}`;
@@ -521,7 +533,7 @@ app.post('/rpc/vote.continue', (req, res) => {
 });
 
 // vote.final
-app.post('/rpc/vote.final', async (req, res) => {
+app.post('/rpc/vote.final', requireDbInProduction, async (req, res) => {
   try {
     const input = FinalVote.parse(req.body);
     if (db) {
@@ -554,7 +566,7 @@ app.post('/rpc/vote.final', async (req, res) => {
 });
 
 // score.submit
-app.post('/rpc/score.submit', async (req, res) => {
+app.post('/rpc/score.submit', requireDbInProduction, async (req, res) => {
   try {
     const input = ScoreSubmit.parse(req.body);
     if (db) {
@@ -619,7 +631,7 @@ app.get('/rpc/scores.get', async (req, res) => {
 });
 
 // reputation.update
-app.post('/rpc/reputation.update', async (req, res) => {
+app.post('/rpc/reputation.update', requireDbInProduction, async (req, res) => {
   try {
     const { room_id, round_id } = req.body || {};
     if (db) {
@@ -694,7 +706,7 @@ async function simulateFetch(url) {
   };
 }
 
-app.post('/rpc/research.fetch', async (req, res) => {
+app.post('/rpc/research.fetch', requireDbInProduction, async (req, res) => {
   try {
     const input = ResearchFetch.parse(req.body);
     const urlHash = sha256Hex(input.url);
@@ -798,7 +810,7 @@ app.post('/slaps/v2/call', async (req, res) => {
 });
 
 // room.create: seeds room + round 0 (DB) or in-memory fallback
-app.post('/rpc/room.create', async (req, res) => {
+app.post('/rpc/room.create', requireDbInProduction, async (req, res) => {
   try {
     const input = RoomCreate.parse(req.body);
     const cfg = input.cfg || {};
@@ -847,7 +859,7 @@ app.post('/rpc/room.create', async (req, res) => {
 });
 
 // submission.flag
-app.post('/rpc/submission.flag', async (req, res) => {
+app.post('/rpc/submission.flag', requireDbInProduction, async (req, res) => {
   try {
     const input = SubmissionFlag.parse(req.body);
     const cleanReason = (input.reason || '').trim();
@@ -910,7 +922,7 @@ app.post('/rpc/submission.flag', async (req, res) => {
 });
 
 // verify.submit — record a verification verdict (DB first, memory fallback)
-app.post('/rpc/verify.submit', async (req, res) => {
+app.post('/rpc/verify.submit', requireDbInProduction, async (req, res) => {
   try {
     const input = VerifySubmit.parse(req.body || {});
     const key = `${input.round_id}:${input.reporter_id}:${input.submission_id}:${input.claim_id || ''}`;
@@ -1174,7 +1186,7 @@ app.get('/state', async (req, res) => {
 });
 
 // participant.fingerprint.set — enroll/normalize a participant's public-key fingerprint
-app.post('/rpc/participant.fingerprint.set', async (req, res) => {
+app.post('/rpc/participant.fingerprint.set', requireDbInProduction, async (req, res) => {
   try {
     const input = ParticipantFingerprintSet.parse(req.body || {});
     let normalized;
