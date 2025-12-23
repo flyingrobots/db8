@@ -59,11 +59,22 @@ describe('Audit Trail Integration', () => {
   });
 
   it('vote_submit should be audit-logged', async () => {
-    const roundId = '33373337-0000-0000-0000-000000000002';
-    const participantId = '33373337-0000-0000-0000-000000000003';
+    const roomId = '33373337-0000-0000-0000-000000000020';
+    const roundId = '33373337-0000-0000-0000-000000000021';
+    const participantId = '33373337-0000-0000-0000-000000000022';
 
-    // Set round to published
-    await pool.query('update rounds set phase = $1 where id = $2', ['published', roundId]);
+    await pool.query('insert into rooms(id, title) values ($1, $2) on conflict (id) do nothing', [
+      roomId,
+      'Vote Audit Room'
+    ]);
+    await pool.query(
+      'insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, $3) on conflict (id) do nothing',
+      [roundId, roomId, 'published']
+    );
+    await pool.query(
+      'insert into participants(id, room_id, anon_name) values ($1, $2, $3) on conflict (id) do nothing',
+      [participantId, roomId, 'vote_audit_anon']
+    );
 
     // Call vote_submit
     await pool.query('select vote_submit($1, $2, $3, $4, $5)', [

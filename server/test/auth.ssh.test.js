@@ -139,10 +139,12 @@ describe('SSH Auth (Challenge/Verify)', () => {
 
     __setDbPool(pool);
     try {
-      await pool.query('truncate rooms cascade');
-      const rid = '10000000-0000-0000-0000-000000000001';
+      const rid = '10000000-0000-0000-0000-000000000010';
       const pid = crypto.randomUUID();
-      await pool.query('insert into rooms(id, title) values ($1, $2)', [rid, 'Binding Room']);
+      await pool.query('insert into rooms(id, title) values ($1, $2) on conflict (id) do nothing', [
+        rid,
+        'Binding Room'
+      ]);
 
       const cRes = await supertest(app)
         .get('/auth/challenge')
