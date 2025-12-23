@@ -113,6 +113,40 @@ CREATE TABLE IF NOT EXISTS final_votes (
 
 CREATE INDEX IF NOT EXISTS idx_final_votes_round ON final_votes (round_id);
 
+-- Scoring (M5): per-judge rubric inputs
+CREATE TABLE IF NOT EXISTS scores (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  round_id        uuid        NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+  judge_id        uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  participant_id  uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  e               integer     NOT NULL CHECK (e >= 0 AND e <= 100), -- Evidence
+  r               integer     NOT NULL CHECK (r >= 0 AND r <= 100), -- Reasoning
+  c               integer     NOT NULL CHECK (c >= 0 AND c <= 100), -- Clarity
+  v               integer     NOT NULL CHECK (v >= 0 AND v <= 100), -- Validity
+  y               integer     NOT NULL CHECK (y >= 0 AND y <= 100), -- Yield
+  client_nonce    text        NOT NULL,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (round_id, judge_id, participant_id, client_nonce)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scores_round ON scores (round_id);
+CREATE INDEX IF NOT EXISTS idx_scores_participant ON scores (participant_id);
+
+-- Reputation (M5): Elo ratings
+CREATE TABLE IF NOT EXISTS reputation (
+  participant_id  uuid        PRIMARY KEY REFERENCES participants(id) ON DELETE CASCADE,
+  elo             float       NOT NULL DEFAULT 1200.0,
+  updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS reputation_tag (
+  participant_id  uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  tag             text        NOT NULL,
+  elo             float       NOT NULL DEFAULT 1200.0,
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (participant_id, tag)
+);
+
 -- Submission flags: allow participants/moderators/viewers to report content
 CREATE TABLE IF NOT EXISTS submission_flags (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),

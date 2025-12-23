@@ -9,6 +9,9 @@ alter table if exists admin_audit_log enable row level security;
 alter table if exists submission_flags enable row level security;
 alter table if exists verification_verdicts enable row level security;
 alter table if exists final_votes enable row level security;
+alter table if exists scores enable row level security;
+alter table if exists reputation enable row level security;
+alter table if exists reputation_tag enable row level security;
 
 -- Minimal read policy on submissions:
 --  - During 'submit': only the author can read their own row
@@ -143,6 +146,48 @@ using (
 
 drop policy if exists final_votes_no_write_policy on final_votes;
 create policy final_votes_no_write_policy on final_votes
+for all to public
+using (false)
+with check (false);
+
+-- Scores: readable by the judge who cast it, or by anyone after round is final
+drop policy if exists scores_read_policy on scores;
+create policy scores_read_policy on scores
+for select to public
+using (
+  (
+    exists (
+      select 1
+        from rounds r
+       where r.id = scores.round_id
+         and r.phase = 'final'
+    )
+  )
+  or scores.judge_id = db8_current_participant_id()
+);
+
+drop policy if exists scores_no_write_policy on scores;
+create policy scores_no_write_policy on scores
+for all to public
+using (false)
+with check (false);
+
+-- Reputation: always readable by anyone
+drop policy if exists reputation_read_policy on reputation;
+create policy reputation_read_policy on reputation for select using (true);
+
+drop policy if exists reputation_no_write_policy on reputation;
+create policy reputation_no_write_policy on reputation
+for all to public
+using (false)
+with check (false);
+
+-- Reputation Tag: always readable by anyone
+drop policy if exists reputation_tag_read_policy on reputation_tag;
+create policy reputation_tag_read_policy on reputation_tag for select using (true);
+
+drop policy if exists reputation_tag_no_write_policy on reputation_tag;
+create policy reputation_tag_no_write_policy on reputation_tag
 for all to public
 using (false)
 with check (false);

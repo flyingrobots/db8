@@ -13,7 +13,10 @@ import {
   VerifySubmit,
   AuthChallengeIn,
   AuthVerifyIn,
-  FinalVote
+  FinalVote,
+  ScoreSubmit,
+  ScoreGet,
+  ReputationGet
 } from './schemas.js';
 import { sha256Hex } from './utils.js';
 import canonicalizer from './canonicalizer.js';
@@ -538,6 +541,133 @@ app.post('/rpc/vote.final', async (req, res) => {
     // Memory fallback
     const vote_id = crypto.randomUUID();
     return res.json({ ok: true, vote_id, note: 'db_fallback' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// score.submit
+app.post('/rpc/score.submit', async (req, res) => {
+  try {
+    const input = ScoreSubmit.parse(req.body);
+    if (db) {
+      try {
+        const r = await db.query(
+          'select score_submit($1::uuid,$2::uuid,$3::uuid,$4::int,$5::int,$6::int,$7::int,$8::int,$9::text) as id',
+          [
+            input.round_id,
+            input.judge_id,
+            input.participant_id,
+            input.e,
+            input.r,
+            input.c,
+            input.v,
+            input.y,
+            input.client_nonce
+          ]
+        );
+        const score_id = r.rows?.[0]?.id;
+        return res.json({ ok: true, score_id });
+      } catch (e) {
+        const msg = String(e?.message || '');
+        if (/only judges/.test(msg)) return res.status(403).json({ ok: false, error: msg });
+        console.warn('[score.submit] DB error, falling back to memory:', msg || e);
+      }
+    }
+    return res.json({ ok: true, score_id: crypto.randomUUID(), note: 'db_fallback' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// scores.get
+app.get('/rpc/scores.get', async (req, res) => {
+  try {
+    const input = ScoreGet.parse(req.query);
+    if (db) {
+      const r = await db.query('select * from view_score_aggregates where round_id = $1', [
+        input.round_id
+      ]);
+      const rows = (r.rows || []).map((row) => ({
+        ...row,
+        avg_e: Number(row.avg_e),
+        avg_r: Number(row.avg_r),
+        avg_c: Number(row.avg_c),
+        avg_v: Number(row.avg_v),
+        avg_y: Number(row.avg_y),
+        composite_score: Number(row.composite_score),
+        judge_count: Number(row.judge_count)
+      }));
+      return res.json({ ok: true, rows });
+    }
+    // Memory stub
+    return res.json({
+      ok: true,
+      rows: [{ participant_id: '...', composite_score: 85 }],
+      note: 'db_fallback'
+    });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// reputation.update
+app.post('/rpc/reputation.update', async (req, res) => {
+  try {
+    const { room_id, round_id } = req.body || {};
+    if (db) {
+      // Find rounds for the room if only room_id provided, or use specific round_id
+      const targetRoundId =
+        round_id ||
+        (
+          await db.query('select id from rounds where room_id = $1 order by idx desc limit 1', [
+            room_id
+          ])
+        ).rows?.[0]?.id;
+      if (targetRoundId) {
+        await db.query('select reputation_update_round($1::uuid)', [targetRoundId]);
+        return res.json({ ok: true });
+      }
+      return res.status(404).json({ ok: false, error: 'round_not_found' });
+    }
+    return res.json({ ok: true, note: 'db_fallback' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// reputation.get
+app.get('/rpc/reputation.get', async (req, res) => {
+  try {
+    const input = ReputationGet.parse(req.query);
+    if (db) {
+      if (input.tag) {
+        const r = await db.query(
+          'select elo from reputation_tag where participant_id = $1 and tag = $2',
+          [input.participant_id, input.tag]
+        );
+        return res.json({
+          ok: true,
+          participant_id: input.participant_id,
+          tag: input.tag,
+          elo: r.rows?.[0]?.elo || 1200.0
+        });
+      }
+      const r = await db.query('select elo from reputation where participant_id = $1', [
+        input.participant_id
+      ]);
+      return res.json({
+        ok: true,
+        participant_id: input.participant_id,
+        elo: r.rows?.[0]?.elo || 1200.0
+      });
+    }
+    return res.json({
+      ok: true,
+      participant_id: input.participant_id,
+      elo: 1200.0,
+      note: 'db_fallback'
+    });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
   }

@@ -797,6 +797,65 @@ BEGIN
 END;
 $$;
 
+-- score_submit: record rubric scores from a judge for a participant
+CREATE OR REPLACE FUNCTION score_submit(
+  p_round_id uuid,
+  p_judge_id uuid,
+  p_participant_id uuid,
+  p_e integer, p_r integer, p_c integer, p_v integer, p_y integer,
+  p_client_nonce text DEFAULT NULL
+) RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_id uuid;
+  v_judge_role text;
+BEGIN
+  -- Verify judge is actually a judge or host
+  SELECT role INTO v_judge_role FROM participants WHERE id = p_judge_id;
+  IF v_judge_role NOT IN ('judge','host') THEN
+    RAISE EXCEPTION 'only judges or hosts can submit rubric scores' USING ERRCODE = '42501';
+  END IF;
+
+  INSERT INTO scores (round_id, judge_id, participant_id, e, r, c, v, y, client_nonce)
+  VALUES (p_round_id, p_judge_id, p_participant_id, p_e, p_r, p_c, p_v, p_y, COALESCE(p_client_nonce, gen_random_uuid()::text))
+  ON CONFLICT (round_id, judge_id, participant_id, client_nonce)
+  DO UPDATE SET e = EXCLUDED.e, r = EXCLUDED.r, c = EXCLUDED.c, v = EXCLUDED.v, y = EXCLUDED.y
+  RETURNING id INTO v_id;
+
+  PERFORM admin_audit_log_write(
+    'update',
+    'submission', -- conceptually scoring a submission
+    p_participant_id,
+    p_judge_id,
+    NULL,
+    jsonb_build_object('client_nonce', p_client_nonce),
+    jsonb_build_object('e', p_e, 'r', p_r, 'c', p_c, 'v', p_v, 'y', p_y)
+  );
+
+  RETURN v_id;
+END;
+$$;
+
+CREATE OR REPLACE VIEW view_score_aggregates AS
+  SELECT
+    round_id,
+    participant_id,
+    AVG(e) as avg_e,
+    AVG(r) as avg_r,
+    AVG(c) as avg_c,
+    AVG(v) as avg_v,
+    AVG(y) as avg_y,
+    -- Composite: E*0.35 + R*0.30 + C*0.20 + V*0.05 + Y*0.10
+    (AVG(e)*0.35 + AVG(r)*0.30 + AVG(c)*0.20 + AVG(v)*0.05 + AVG(y)*0.10) as composite_score,
+    COUNT(judge_id) as judge_count
+  FROM scores
+  GROUP BY round_id, participant_id;
+
+ALTER VIEW view_score_aggregates SET (security_barrier = true);
+
 CREATE OR REPLACE VIEW view_final_tally AS
   SELECT
     round_id,
@@ -807,3 +866,80 @@ CREATE OR REPLACE VIEW view_final_tally AS
   GROUP BY round_id;
 
 ALTER VIEW view_final_tally SET (security_barrier = true);
+
+-- reputation_update_round: deterministic Elo update for a completed round
+CREATE OR REPLACE FUNCTION reputation_update_round(
+  p_round_id uuid
+) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_room_id uuid;
+  v_tags jsonb;
+  v_k integer := 32;
+  v_rec record;
+  v_opponent record;
+  v_expected float;
+  v_actual float;
+  v_delta float;
+BEGIN
+  SELECT room_id INTO v_room_id FROM rounds WHERE id = p_round_id;
+  SELECT config->'tags' INTO v_tags FROM rooms WHERE id = v_room_id;
+
+  -- For each debater in the round
+  FOR v_rec IN 
+    SELECT s.participant_id, s.composite_score, COALESCE(r.elo, 1200.0) as current_elo
+    FROM view_score_aggregates s
+    LEFT JOIN reputation r ON r.participant_id = s.participant_id
+    WHERE s.round_id = p_round_id
+  LOOP
+    -- Compare against all other debaters in the same round
+    FOR v_opponent IN
+      SELECT s.participant_id, s.composite_score, COALESCE(r.elo, 1200.0) as current_elo
+      FROM view_score_aggregates s
+      LEFT JOIN reputation r ON r.participant_id = s.participant_id
+      WHERE s.round_id = p_round_id AND s.participant_id <> v_rec.participant_id
+    LOOP
+      -- Elo math
+      v_expected := 1.0 / (1.0 + pow(10.0, (v_opponent.current_elo - v_rec.current_elo) / 400.0));
+      IF v_rec.composite_score > v_opponent.composite_score THEN
+        v_actual := 1.0;
+      ELSIF v_rec.composite_score < v_opponent.composite_score THEN
+        v_actual := 0.0;
+      ELSE
+        v_actual := 0.5;
+      END IF;
+      
+      v_delta := v_k * (v_actual - v_expected);
+      
+      -- Update Global
+      INSERT INTO reputation (participant_id, elo)
+      VALUES (v_rec.participant_id, 1200.0 + v_delta)
+      ON CONFLICT (participant_id) 
+      DO UPDATE SET elo = reputation.elo + v_delta, updated_at = now();
+
+      -- Update Tags
+      IF v_tags IS NOT NULL AND jsonb_array_length(v_tags) > 0 THEN
+        FOR i IN 0..jsonb_array_length(v_tags)-1 LOOP
+          INSERT INTO reputation_tag (participant_id, tag, elo)
+          VALUES (v_rec.participant_id, v_tags->>i, 1200.0 + v_delta)
+          ON CONFLICT (participant_id, tag)
+          DO UPDATE SET elo = reputation_tag.elo + v_delta, updated_at = now();
+        END LOOP;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  PERFORM admin_audit_log_write(
+    'update',
+    'system',
+    v_room_id,
+    NULL,
+    'worker',
+    jsonb_build_object('round_id', p_round_id),
+    jsonb_build_object('action', 'reputation_update')
+  );
+END;
+$$;
