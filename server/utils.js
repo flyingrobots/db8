@@ -66,10 +66,10 @@ export function getPersistentSigningKeys() {
   });
 
   try {
-    fs.writeFileSync(privPath, privateKey);
+    const fd = fs.openSync(privPath, 'w', 0o600);
+    fs.writeFileSync(fd, privateKey);
+    fs.closeSync(fd);
     fs.writeFileSync(pubPath, publicKey);
-    // Secure private key
-    fs.chmodSync(privPath, 0o600);
   } catch (e) {
     log.error('failed to save keys', { error: e.message });
   }

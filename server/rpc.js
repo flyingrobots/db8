@@ -1,6 +1,11 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
 import { rateLimitStub } from './mw/rate-limit.js';
 import { Buffer } from 'node:buffer';
 import {
@@ -213,6 +218,38 @@ app.post('/auth/verify', requireDbInProduction, async (req, res) => {
     return res.status(400).json({ ok: false, error: err?.name || 'error', message: err?.message });
   }
 });
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * verifySSHSignature verifies an OpenSSH signature using ssh-keygen -Y verify.
+ * It uses unique temp files to avoid race conditions.
+ */
+async function verifySSHSignature({ canonicalJson, sigB64, principal, allowedSignersPath }) {
+  const requestId = crypto.randomUUID();
+  const tmpDir = os.tmpdir();
+  const msgPath = path.join(tmpDir, `db8-msg-${requestId}`);
+  const sigPath = path.join(tmpDir, `db8-sig-${requestId}`);
+
+  try {
+    const msgBuffer = Buffer.from(canonicalJson);
+    await fs.writeFile(msgPath, msgBuffer);
+    await fs.writeFile(sigPath, Buffer.from(sigB64, 'base64'));
+
+    await execFileAsync(
+      'ssh-keygen',
+      ['-Y', 'verify', '-f', allowedSignersPath, '-I', principal, '-n', 'db8', '-s', sigPath],
+      {
+        input: msgBuffer
+      }
+    );
+    return true;
+  } finally {
+    // Cleanup temp files
+    await fs.unlink(msgPath).catch(() => {});
+    await fs.unlink(sigPath).catch(() => {});
+  }
+}
 
 // Parse OpenSSH ed25519 public key to DER SPKI per RFC 8410.
 // Accepts typical formats like: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... comment"
@@ -1551,87 +1588,150 @@ app.post('/rpc/provenance.verify', async (req, res) => {
     // Canonicalize the provided document using server canon mode for consistency
     const canon = canonicalizer(input.doc);
     const hashHex = sha256Hex(canon);
-    if (input.signature_kind === 'ed25519' || input.signature_kind === 'ssh') {
+
+    if (input.signature_kind === 'ssh') {
       try {
+        const ssh = input.public_key_ssh;
+        if (!ssh) return res.status(400).json({ ok: false, error: 'missing_public_key_ssh' });
+
+        // 1. Determine Principal (author binding)
+        // For db8, we expect principal to be participantId@roomId or similar
+        // For the verify call, we use the fingerprint as the principal mapping if allowed_signers is built that way.
+        // Conceptually, for M7 we'll use a temporary allowed_signers file for the verify call itself
+        // if no global one is provided.
+        const tmpSignersPath = path.join(os.tmpdir(), `db8-signers-${crypto.randomUUID()}`);
+        const sigInputB64 = input.sig_b64 || input.signature_b64 || '';
         let pubDer;
-        if (input.signature_kind === 'ed25519') {
-          const pub = input.public_key_b64;
-          if (!pub) return res.status(400).json({ ok: false, error: 'missing_public_key_b64' });
-          pubDer = Buffer.from(pub, 'base64');
-        } else {
-          const ssh = input.public_key_ssh;
-          if (!ssh) return res.status(400).json({ ok: false, error: 'missing_public_key_ssh' });
+        try {
+          pubDer = parseOpenSshEd25519ToSpkiDer(ssh);
+        } catch {
+          return res.status(400).json({ ok: false, error: 'invalid_ssh_public_key' });
+        }
+        const fpHex = crypto.createHash('sha256').update(pubDer).digest('hex');
+        const fingerprint = `sha256:${fpHex}`;
+        const principal = 'db8-signer';
+
+        // Create a transient allowed_signers for this one-off verify call
+        await fs.writeFile(tmpSignersPath, `${principal} ${ssh}\n`);
+
+        try {
+          await verifySSHSignature({
+            canonicalJson: canon,
+            sigB64: sigInputB64,
+            principal,
+            allowedSignersPath: tmpSignersPath
+          });
+        } catch (sshErr) {
+          // If ssh-keygen fails, try fallback to pure-JS crypto.verify for ed25519 signatures
           try {
-            pubDer = parseOpenSshEd25519ToSpkiDer(ssh);
+            const pubKey = crypto.createPublicKey({ format: 'der', type: 'spki', key: pubDer });
+            const ok = crypto.verify(
+              null,
+              Buffer.from(hashHex, 'hex'),
+              pubKey,
+              Buffer.from(sigInputB64, 'base64')
+            );
+            if (!ok) throw sshErr;
           } catch {
-            return res.status(400).json({ ok: false, error: 'invalid_ssh_public_key' });
+            throw sshErr;
           }
+        } finally {
+          await fs.unlink(tmpSignersPath).catch(() => {});
         }
 
+        const payload = { ok: true, hash: hashHex, public_key_fingerprint: fingerprint };
+        // Author binding check...
+        if (db && input?.doc?.author_id) {
+          const r = await db.query(
+            'select ssh_fingerprint from participants_view where id = $1 and room_id = $2 limit 1',
+            [input.participant_id, input.room_id]
+          );
+          const row = r.rows?.[0];
+          if (!row)
+            return res.status(404).json({ ok: false, error: 'participant_not_found_in_room' });
+          const fp = String(row.ssh_fingerprint || '').trim();
+          if (fp) {
+            const expected = fp.toLowerCase().startsWith('sha256:')
+              ? fp.toLowerCase()
+              : `sha256:${fp.toLowerCase()}`;
+            if (expected !== fingerprint)
+              return res.status(400).json({
+                ok: false,
+                error: 'author_binding_mismatch',
+                expected_fingerprint: expected,
+                got_fingerprint: fingerprint
+              });
+            payload.author_binding = 'match';
+          } else if (config.enforceAuthorBinding) {
+            return res.status(400).json({ ok: false, error: 'author_not_configured' });
+          }
+        }
+        return res.json(payload);
+      } catch (e) {
+        return res
+          .status(400)
+          .json({
+            ok: false,
+            error: 'invalid_public_key_or_signature',
+            detail: String(e?.message || e)
+          });
+      }
+    }
+
+    if (input.signature_kind === 'ed25519') {
+      try {
+        const pub = input.public_key_b64;
+        if (!pub) return res.status(400).json({ ok: false, error: 'missing_public_key_b64' });
+        const pubDer = Buffer.from(pub, 'base64');
         const pubKey = crypto.createPublicKey({ format: 'der', type: 'spki', key: pubDer });
         const sigInputB64 = input.sig_b64 || input.signature_b64 || '';
+
         const ok = crypto.verify(
           null,
           Buffer.from(hashHex, 'hex'),
           pubKey,
           Buffer.from(sigInputB64, 'base64')
         );
-        if (!ok) {
+        if (!ok)
           return res.status(400).json({ ok: false, error: 'invalid_public_key_or_signature' });
-        }
+
         const fpHex = crypto.createHash('sha256').update(pubDer).digest('hex');
-        const payload = { ok: true, hash: hashHex, public_key_fingerprint: `sha256:${fpHex}` };
-        // Strict DB-backed author binding: if participants.ssh_fingerprint exists, it MUST match.
-        // If ENFORCE_AUTHOR_BINDING is enabled and the fingerprint is not configured, return 400.
+        const fingerprint = `sha256:${fpHex}`;
+        const payload = { ok: true, hash: hashHex, public_key_fingerprint: fingerprint };
+
+        // Author binding check for ed25519
         if (db && input?.doc?.author_id) {
-          try {
-            const r = await db.query(
-              'select ssh_fingerprint from participants_view where id = $1 and room_id = $2 limit 1',
-              [input.participant_id, input.room_id]
-            );
-            const row = r.rows?.[0];
-            if (!row) {
-              return res.status(404).json({ ok: false, error: 'participant_not_found_in_room' });
-            }
-            const fp = String(row.ssh_fingerprint || '').trim();
-            if (fp) {
-              const expected = fp.toLowerCase().startsWith('sha256:')
-                ? fp.toLowerCase()
-                : `sha256:${fp.toLowerCase()}`;
-              const got = `sha256:${fpHex}`;
-              if (expected !== got) {
-                return res.status(400).json({
-                  ok: false,
-                  error: 'author_binding_mismatch',
-                  expected_fingerprint: expected,
-                  got_fingerprint: got
-                });
-              }
-              payload.author_binding = 'match';
-            } else {
-              if (config.enforceAuthorBinding) {
-                return res.status(400).json({ ok: false, error: 'author_not_configured' });
-              }
-              payload.author_binding = 'not_configured';
-            }
-          } catch (err) {
-            const msg = String(err?.message || err || '');
-            // Fail closed when enforcement is enabled
-            if (config.enforceAuthorBinding) {
-              console.error('[provenance.verify] participant lookup failed:', msg);
-              return res.status(503).json({ ok: false, error: 'participant_lookup_failed' });
-            }
-            console.warn('[provenance.verify] participant lookup failed (non-enforcing):', msg);
-            payload.author_binding = 'unknown';
+          const r = await db.query(
+            'select ssh_fingerprint from participants_view where id = $1 limit 1',
+            [input.doc.author_id]
+          );
+          const row = r.rows?.[0];
+          const fp = String(row?.ssh_fingerprint || '').trim();
+          if (fp) {
+            const expected = fp.toLowerCase().startsWith('sha256:')
+              ? fp.toLowerCase()
+              : `sha256:${fp.toLowerCase()}`;
+            if (expected !== fingerprint)
+              return res.status(400).json({
+                ok: false,
+                error: 'author_binding_mismatch',
+                expected_fingerprint: expected,
+                got_fingerprint: fingerprint
+              });
+            payload.author_binding = 'match';
+          } else if (config.enforceAuthorBinding) {
+            return res.status(400).json({ ok: false, error: 'author_not_configured' });
           }
         }
         return res.json(payload);
       } catch (e) {
-        return res.status(400).json({
-          ok: false,
-          error: 'invalid_public_key_or_signature',
-          detail: String(e?.message || e)
-        });
+        return res
+          .status(400)
+          .json({
+            ok: false,
+            error: 'invalid_public_key_or_signature',
+            detail: String(e?.message || e)
+          });
       }
     }
     return res.status(501).json({ ok: false, error: 'unsupported_signature_kind' });
