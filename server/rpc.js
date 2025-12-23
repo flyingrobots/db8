@@ -147,10 +147,14 @@ app.post('/auth/verify', async (req, res) => {
     if (db) {
       try {
         const r = await db.query(
-          'select ssh_fingerprint from participants_view where id = $1 limit 1',
-          [input.participant_id]
+          'select ssh_fingerprint from participants_view where id = $1 and room_id = $2 limit 1',
+          [input.participant_id, input.room_id]
         );
-        const fp = String(r.rows?.[0]?.ssh_fingerprint || '').trim();
+        const row = r.rows?.[0];
+        if (!row) {
+          return res.status(404).json({ ok: false, error: 'participant_not_found_in_room' });
+        }
+        const fp = String(row.ssh_fingerprint || '').trim();
         if (fp) {
           const expected = fp.toLowerCase().startsWith('sha256:')
             ? fp.toLowerCase()

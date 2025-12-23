@@ -3,6 +3,7 @@ import supertest from 'supertest';
 import app, { __setDbPool } from '../rpc.js';
 import crypto from 'node:crypto';
 import { Buffer } from 'node:buffer';
+import pg from 'pg';
 
 describe('SSH Auth (Challenge/Verify)', () => {
   const roomId = '10000000-0000-0000-0000-000000000001';
@@ -121,5 +122,49 @@ describe('SSH Auth (Challenge/Verify)', () => {
 
     expect(vRes.status).toBe(400);
     expect(vRes.body.error).toBe('challenge_mismatch');
+  });
+
+  it('POST /auth/verify returns 404 if participant is not in the room (DB)', async () => {
+    const dbUrl =
+      process.env.DB8_TEST_DATABASE_URL ||
+      process.env.DATABASE_URL ||
+      'postgresql://postgres:test@localhost:54329/db8_test';
+
+    const pool = new pg.Pool({ connectionString: dbUrl });
+
+    __setDbPool(pool);
+    try {
+      await pool.query('truncate rooms cascade');
+      const rid = '10000000-0000-0000-0000-000000000001';
+      const pid = '10000000-0000-0000-0000-000000000003';
+      await pool.query('insert into rooms(id, title) values ($1, $2)', [rid, 'Binding Room']);
+      // Participant is NOT in this room
+
+      const cRes = await supertest(app)
+        .get('/auth/challenge')
+        .query({ room_id: rid, participant_id: pid });
+      const nonce = cRes.body.nonce;
+
+      const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+      const sig = crypto.sign(null, Buffer.from(nonce), privateKey);
+      const pubDer = publicKey.export({ format: 'der', type: 'spki' });
+
+      const vRes = await supertest(app)
+        .post('/auth/verify')
+        .send({
+          room_id: rid,
+          participant_id: pid,
+          nonce,
+          signature_kind: 'ed25519',
+          sig_b64: sig.toString('base64'),
+          public_key_b64: pubDer.toString('base64')
+        });
+
+      expect(vRes.status).toBe(404);
+      expect(vRes.body.error).toBe('participant_not_found_in_room');
+    } finally {
+      __setDbPool(null);
+      await pool.end();
+    }
   });
 });
