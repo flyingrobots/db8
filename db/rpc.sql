@@ -647,6 +647,20 @@ BEGIN
   ON CONFLICT (round_id, reporter_id, submission_id, coalesce(claim_id, ''))
   DO UPDATE SET verdict = EXCLUDED.verdict, rationale = COALESCE(EXCLUDED.rationale, verification_verdicts.rationale)
   RETURNING id INTO v_id;
+
+  -- Notify listeners that a new verdict is available
+  PERFORM pg_notify(
+    'db8_verdict',
+    json_build_object(
+      't', 'verdict',
+      'room_id', v_room::text,
+      'round_id', p_round_id::text,
+      'submission_id', p_submission_id::text,
+      'claim_id', p_claim_id,
+      'verdict', p_verdict
+    )::text
+  );
+
   RETURN v_id;
 END;
 $$;

@@ -776,7 +776,7 @@ app.get('/state', async (req, res) => {
       );
       const roundRow = roundResult.rows?.[0];
       if (roundRow) {
-        const [tallyResult, submissionsResult] = await Promise.all([
+        const [tallyResult, submissionsResult, verifyResult] = await Promise.all([
           db.query(
             'select yes, no from view_continue_tally where room_id = $1 and round_id = $2 limit 1',
             [roomId, roundRow.round_id]
@@ -792,6 +792,10 @@ app.get('/state', async (req, res) => {
                from submissions_with_flags_view
               where round_id = $1
               order by submitted_at asc nulls last, id asc`,
+            [roundRow.round_id]
+          ),
+          db.query(
+            'select submission_id, claim_id, true_count, false_count, unclear_count, needs_work_count, total from verify_summary($1::uuid)',
             [roundRow.round_id]
           )
         ]);
@@ -821,7 +825,8 @@ app.get('/state', async (req, res) => {
               yes: Number(tallyRow.yes || 0),
               no: Number(tallyRow.no || 0)
             },
-            transcript
+            transcript,
+            verifications: verifyResult.rows || []
           },
           flags: flagged
         });
@@ -987,6 +992,7 @@ app.get('/events', async (req, res) => {
       listenerClient = await db.connect();
       await listenerClient.query('LISTEN db8_rounds');
       await listenerClient.query('LISTEN db8_journal');
+      await listenerClient.query('LISTEN db8_verdict');
       const onNotification = (msg) => {
         if (closed) return;
         try {
@@ -1019,6 +1025,11 @@ app.get('/events', async (req, res) => {
             res.write(`data: ${JSON.stringify(j)}\n\n`);
             return;
           }
+          if (msg.channel === 'db8_verdict') {
+            res.write(`event: verdict\n`);
+            res.write(`data: ${JSON.stringify(payload)}\n\n`);
+            return;
+          }
         } catch {
           // ignore bad payloads
         }
@@ -1041,6 +1052,11 @@ app.get('/events', async (req, res) => {
             }
             try {
               await listenerClient.query('UNLISTEN db8_journal');
+            } catch {
+              /* ignore */
+            }
+            try {
+              await listenerClient.query('UNLISTEN db8_verdict');
             } catch {
               /* ignore */
             }

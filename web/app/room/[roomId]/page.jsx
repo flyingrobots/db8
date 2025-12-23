@@ -122,6 +122,17 @@ export default function RoomPage({ params }) {
           /* ignore */
         }
       });
+      es.addEventListener('verdict', (ev) => {
+        try {
+          const d = JSON.parse(ev.data);
+          if (d.room_id !== roomId) return;
+          // Optimistically trigger a refresh of verifyRows or wait for polling
+          // For now, let's just use the polling, but we could also patch the state here.
+          // Let's at least force a re-fetch by bumping a hidden counter if we wanted.
+        } catch {
+          /* ignore */
+        }
+      });
       es.onerror = () => {
         try {
           es.close();
@@ -382,6 +393,7 @@ export default function RoomPage({ params }) {
     const form = new window.FormData(e.target);
     const verdict = form.get('verdict');
     const rationale = form.get('rationale');
+    const claim_id = form.get('claim_id');
     setActionBusy(true);
     try {
       const clientNonce = lastNonceRef.current || String(Date.now()); // simplified
@@ -391,6 +403,7 @@ export default function RoomPage({ params }) {
         submission_id: verifying.submission_id,
         verdict,
         rationale,
+        claim_id: claim_id || undefined,
         client_nonce: clientNonce
       };
       const r = await fetch(`${apiBase()}/rpc/verify.submit`, {
@@ -673,6 +686,17 @@ export default function RoomPage({ params }) {
                 {verifying.submission_id}
               </p>
               <form onSubmit={onVerifySubmit} className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium">Claim (optional)</label>
+                  <select name="claim_id" className="w-full mt-1 border rounded p-2 bg-background">
+                    <option value="">Full Submission</option>
+                    {(verifying.claims || []).map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.id}: {c.text.slice(0, 30)}...
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div>
                   <label className="text-sm font-medium">Verdict</label>
                   <select name="verdict" className="w-full mt-1 border rounded p-2 bg-background">
