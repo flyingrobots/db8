@@ -50,7 +50,63 @@ export default function RoomPage({ params }) {
   const [role, setRole] = useState('');
   const [verifying, setVerifying] = useState(null); // submission object
   const [flagging, setFlagging] = useState(null); // submission object
+  const [showContinueVote, setShowContinueVote] = useState(false);
+  const [showFinalVote, setShowFinalVote] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+
+  // ... loadsnapshot useEffect ...
+
+  async function onContinueVote(choice) {
+    setActionBusy(true);
+    try {
+      const r = await fetch(`${apiBase()}/rpc/vote.continue`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
+        },
+        body: JSON.stringify({
+          room_id: roomId,
+          round_id: state.round.round_id,
+          voter_id: participant,
+          choice,
+          client_nonce: window.crypto.randomUUID()
+        })
+      });
+      if (r.ok) setShowContinueVote(false);
+      else window.alert('Vote failed');
+    } catch (err) {
+      window.alert(String(err));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function onFinalVote(approval, ranking = []) {
+    setActionBusy(true);
+    try {
+      const r = await fetch(`${apiBase()}/rpc/vote.final`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
+        },
+        body: JSON.stringify({
+          round_id: state.round.round_id,
+          voter_id: participant,
+          approval,
+          ranking,
+          client_nonce: window.crypto.randomUUID()
+        })
+      });
+      if (r.ok) setShowFinalVote(false);
+      else window.alert('Final vote failed');
+    } catch (err) {
+      window.alert(String(err));
+    } finally {
+      setActionBusy(false);
+    }
+  }
 
   // Fetch snapshot
   useEffect(() => {
@@ -467,6 +523,16 @@ export default function RoomPage({ params }) {
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Room</h1>
         <div className="flex items-center gap-2">
+          {state?.round?.phase === 'published' && (
+            <Button size="sm" onClick={() => setShowContinueVote(true)}>
+              Vote to Continue
+            </Button>
+          )}
+          {state?.round?.phase === 'final' && (
+            <Button size="sm" onClick={() => setShowFinalVote(true)}>
+              Final Vote
+            </Button>
+          )}
           {role && <Badge variant="outline">{role}</Badge>}
           <Button variant="ghost" asChild>
             <Link href="/">Back</Link>
@@ -490,8 +556,16 @@ export default function RoomPage({ params }) {
           </div>
           {state?.round?.continue_tally && (
             <div className="mt-3 flex items-center gap-3">
-              <Badge variant="success">yes {state.round.continue_tally.yes}</Badge>
-              <Badge>no {state.round.continue_tally.no}</Badge>
+              <span className="text-xs text-muted mr-1">Continue Tally:</span>
+              <Badge className="bg-green-600">yes {state.round.continue_tally.yes}</Badge>
+              <Badge variant="secondary">no {state.round.continue_tally.no}</Badge>
+            </div>
+          )}
+          {state?.round?.final_tally && (
+            <div className="mt-3 flex items-center gap-3">
+              <span className="text-xs text-muted mr-1">Final Approval:</span>
+              <Badge className="bg-green-600">approves {state.round.final_tally.approves}</Badge>
+              <Badge variant="destructive">rejects {state.round.final_tally.rejects}</Badge>
             </div>
           )}
         </CardContent>
@@ -578,7 +652,9 @@ export default function RoomPage({ params }) {
                   className="rounded border border-border p-3 space-y-2 relative"
                 >
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="font-mono text-[11px]">{entry.author_id}</span>
+                    <span className="font-medium text-xs">
+                      {entry.author_anon_name || entry.author_id}
+                    </span>
                     {entry.submitted_at ? (
                       <time dateTime={new Date(entry.submitted_at * 1000).toISOString()}>
                         {new Date(entry.submitted_at * 1000).toLocaleTimeString()}
@@ -756,6 +832,62 @@ export default function RoomPage({ params }) {
                   </Button>
                 </div>
               </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {showContinueVote && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md">
+            <CardContent className="p-6 space-y-4 text-center">
+              <h3 className="text-lg font-semibold">Round Complete</h3>
+              <p>Should the debate continue to the next round?</p>
+              <div className="flex justify-center gap-4 pt-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => onContinueVote('end')}
+                  disabled={actionBusy}
+                >
+                  End Debate
+                </Button>
+                <Button onClick={() => onContinueVote('continue')} disabled={actionBusy}>
+                  Continue
+                </Button>
+              </div>
+              <Button variant="ghost" className="w-full" onClick={() => setShowContinueVote(false)}>
+                Cancel
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {showFinalVote && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md">
+            <CardContent className="p-6 space-y-4">
+              <h3 className="text-lg font-semibold">Final Approval</h3>
+              <p>Do you approve the results/conclusions of this debate?</p>
+              <div className="flex justify-center gap-4 pt-2">
+                <Button
+                  variant="destructive"
+                  onClick={() => onFinalVote(false)}
+                  disabled={actionBusy}
+                >
+                  Reject
+                </Button>
+                <Button
+                  className="bg-green-600 hover:bg-green-700"
+                  onClick={() => onFinalVote(true)}
+                  disabled={actionBusy}
+                >
+                  Approve
+                </Button>
+              </div>
+              <Button variant="ghost" className="w-full" onClick={() => setShowFinalVote(false)}>
+                Cancel
+              </Button>
             </CardContent>
           </Card>
         </div>

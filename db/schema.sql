@@ -4,10 +4,18 @@
 -- UUID generation
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- Helper: current participant id from session (set via set_config('db8.participant_id', uuid, false))
+create or replace function db8_current_participant_id()
+returns uuid language sql stable as $$
+  select nullif(current_setting('db8.participant_id', true), '')::uuid
+$$;
+
 -- Rooms and Rounds (minimal M1)
 CREATE TABLE IF NOT EXISTS rooms (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   title       text,
+  status      text NOT NULL DEFAULT 'active' CHECK (status IN ('init','active','closed')),
+  config      jsonb NOT NULL DEFAULT '{}'::jsonb,
   client_nonce  text UNIQUE,
   created_at  timestamptz NOT NULL DEFAULT now()
 );

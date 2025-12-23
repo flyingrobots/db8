@@ -342,6 +342,20 @@ BEGIN
       jsonb_build_object('room_id', v_rec.room_id, 'idx', v_rec.idx),
       jsonb_build_object('action', v_rec.action, 'yes', v_rec.yes_votes, 'no', v_rec.no_votes)
     );
+
+    -- If we hit 'final', mark the room as closed
+    IF v_rec.action = 'final' THEN
+      UPDATE rooms SET status = 'closed' WHERE id = v_rec.room_id;
+      PERFORM admin_audit_log_write(
+        'update',
+        'room',
+        v_rec.room_id,
+        NULL,
+        'watcher',
+        jsonb_build_object('status', 'closed'),
+        jsonb_build_object('reason', 'final_vote_completed')
+      );
+    END IF;
   END LOOP;
 END;
 $$;
@@ -366,12 +380,23 @@ CREATE OR REPLACE VIEW submissions_view AS
     s.id,
     r.room_id,
     s.round_id,
-    s.author_id,
+    CASE 
+      WHEN (rm.config->>'attribution_mode') = 'masked' 
+           AND r.phase = 'submit' 
+           AND s.author_id <> db8_current_participant_id()
+      THEN NULL -- Hidden during submit if masked
+      WHEN (rm.config->>'attribution_mode') = 'masked'
+      THEN p.id -- We still return the internal id but UI will use anon_name
+      ELSE s.author_id 
+    END as author_id,
+    p.anon_name as author_anon_name,
     s.content,
     s.canonical_sha256,
     s.submitted_at
   FROM submissions s
-  JOIN rounds r ON r.id = s.round_id;
+  JOIN rounds r ON r.id = s.round_id
+  JOIN rooms rm ON rm.id = r.room_id
+  JOIN participants p ON p.id = s.author_id;
 
 CREATE OR REPLACE VIEW votes_view AS
   SELECT
@@ -399,7 +424,16 @@ CREATE OR REPLACE VIEW submissions_with_flags_view AS
     s.id,
     r.room_id,
     s.round_id,
-    s.author_id,
+    CASE 
+      WHEN (rm.config->>'attribution_mode') = 'masked' 
+           AND r.phase = 'submit' 
+           AND s.author_id <> db8_current_participant_id()
+      THEN NULL 
+      WHEN (rm.config->>'attribution_mode') = 'masked'
+      THEN p.id
+      ELSE s.author_id 
+    END as author_id,
+    p.anon_name as author_anon_name,
     s.content,
     s.canonical_sha256,
     s.submitted_at,
@@ -407,6 +441,8 @@ CREATE OR REPLACE VIEW submissions_with_flags_view AS
     COALESCE(f.flag_details, '[]'::jsonb) AS flag_details
   FROM submissions s
   JOIN rounds r ON r.id = s.round_id
+  JOIN rooms rm ON rm.id = r.room_id
+  JOIN participants p ON p.id = s.author_id
   LEFT JOIN (
     SELECT sf.submission_id,
            COUNT(*) AS flag_count,

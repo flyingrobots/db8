@@ -845,6 +845,7 @@ app.get('/state', async (req, res) => {
         const transcript = submissionsResult.rows.map((row) => ({
           submission_id: row.id,
           author_id: row.author_id,
+          author_anon_name: row.author_anon_name,
           content: row.content,
           canonical_sha256: row.canonical_sha256,
           submitted_at: row.submitted_at ? Math.floor(row.submitted_at.getTime() / 1000) : null,

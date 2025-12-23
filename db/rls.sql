@@ -10,12 +10,6 @@ alter table if exists submission_flags enable row level security;
 alter table if exists verification_verdicts enable row level security;
 alter table if exists final_votes enable row level security;
 
--- Helper: current participant id from session (set via set_config('db8.participant_id', uuid, false))
-create or replace function db8_current_participant_id()
-returns uuid language sql stable as $$
-  select nullif(current_setting('db8.participant_id', true), '')::uuid
-$$;
-
 -- Minimal read policy on submissions:
 --  - During 'submit': only the author can read their own row
 --  - After 'published': anyone can read (researchers, spectators); fine-grained room scoping can arrive later
