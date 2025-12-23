@@ -23,6 +23,13 @@ db8 login --room <uuid> --participant <uuid> --jwt <token>
 db8 whoami          # prints room/participant if configured
 ```text
 
+## Room creation
+
+```text
+db8 room create --topic "My Debate" --participants 4
+# prints room_id: <uuid>
+```text
+
 ## Room state
 
 ```text
