@@ -1,4 +1,6 @@
 import pg from 'pg';
+import crypto from 'node:crypto';
+import { log, getPersistentSigningKeys } from './utils.js';
 import { createSigner, buildJournalCore, finalizeJournal } from './journal.js';
 
 // Authoritative round watcher.
@@ -6,19 +8,48 @@ import { createSigner, buildJournalCore, finalizeJournal } from './journal.js';
 
 let _interval = null;
 let _pool = null;
+const WATCHER_ID = `watcher-${crypto.randomBytes(4).toString('hex')}`;
+let _lastRecovery = 0;
 
 export async function runTick(pool) {
   if (!pool) return;
+
+  log.info('watcher tick', { watcher_id: WATCHER_ID });
+
+  // M7: Signal liveness
+  await pool.query('select orchestrator_heartbeat($1)', [WATCHER_ID]).catch((err) => {
+    log.error('heartbeat failed', { error: err.message });
+  });
+
+  // M7: Periodically attempt recovery of abandoned barriers (every 30s)
+  const now = Date.now();
+  if (now - _lastRecovery > 30_000) {
+    _lastRecovery = now;
+    await pool
+      .query('select recover_abandoned_barrier(60)')
+      .then((r) => {
+        if (r.rows?.[0]?.recover_abandoned_barrier > 0) {
+          log.info('recovered abandoned barriers', { count: r.rows[0].recover_abandoned_barrier });
+        }
+      })
+      .catch((err) => {
+        log.error('recovery failed', { error: err.message });
+      });
+  }
+
   // Flip due submit→published, then open next rounds for winners
-  await pool.query('select round_publish_due()');
+  await pool
+    .query('select round_publish_due()')
+    .catch((err) => log.error('publish_due failed', { error: err.message }));
   // Sign checkpoints for any newly-published rounds that don't have a journal row yet
   await signPublished(pool);
-  await pool.query('select round_open_next()');
+  await pool
+    .query('select round_open_next()')
+    .catch((err) => log.error('open_next failed', { error: err.message }));
 }
 
 const _signer = createSigner({
-  privateKeyPem: process.env.SIGNING_PRIVATE_KEY || '',
-  publicKeyPem: process.env.SIGNING_PUBLIC_KEY || '',
+  ...getPersistentSigningKeys(),
   canonMode: process.env.CANON_MODE || 'jcs'
 });
 

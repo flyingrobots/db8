@@ -20,7 +20,7 @@ import {
   ResearchFetch,
   ResearchCacheGet
 } from './schemas.js';
-import { sha256Hex } from './utils.js';
+import { sha256Hex, log, getPersistentSigningKeys } from './utils.js';
 import canonicalizer from './canonicalizer.js';
 import { loadConfig } from './config/config-builder.js';
 import { createSigner, buildJournalCore, finalizeJournal } from './journal.js';
@@ -37,7 +37,8 @@ let db = null;
 if (config.databaseUrl) {
   try {
     db = new pg.Pool({ connectionString: config.databaseUrl, max: 2 });
-  } catch {
+  } catch (err) {
+    log.error('DB pool initialization failed', { error: err.message });
     db = null;
   }
 }
@@ -71,11 +72,11 @@ const CLEANUP_INTERVAL_SEC = 10;
 // In-memory room state and idempotency for room.create fallback
 const memRooms = new Map(); // room_id -> { round: { idx, phase, submit_deadline_unix, published_at_unix?, continue_vote_close_unix? } }
 const memRoomNonces = new Map(); // client_nonce -> room_id
+
 const SUBMIT_WINDOW_SEC = config.submitWindowSec;
 const CONTINUE_WINDOW_SEC = config.continueWindowSec;
 const signer = createSigner({
-  privateKeyPem: process.env.SIGNING_PRIVATE_KEY || '',
-  publicKeyPem: process.env.SIGNING_PUBLIC_KEY || '',
+  ...getPersistentSigningKeys(),
   canonMode: config.canonMode
 });
 const memJournalHashes = new Map();
