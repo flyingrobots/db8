@@ -84,8 +84,15 @@ CREATE OR REPLACE FUNCTION submission_upsert(
 ) RETURNS uuid
 LANGUAGE plpgsql
 AS $$
-DECLARE v_id uuid;
+DECLARE 
+  v_id uuid;
+  v_exists boolean;
 BEGIN
+  SELECT EXISTS(
+    SELECT 1 FROM submissions 
+    WHERE round_id = p_round_id AND author_id = p_author_id AND client_nonce = p_client_nonce
+  ) INTO v_exists;
+
   INSERT INTO submissions (round_id, author_id, content, claims, citations, status,
                            submitted_at, canonical_sha256, client_nonce)
   VALUES (p_round_id, p_author_id, p_content, p_claims, p_citations,
@@ -93,6 +100,17 @@ BEGIN
   ON CONFLICT (round_id, author_id, client_nonce)
   DO UPDATE SET canonical_sha256 = EXCLUDED.canonical_sha256
   RETURNING id INTO v_id;
+
+  PERFORM admin_audit_log_write(
+    CASE WHEN v_exists THEN 'update' ELSE 'create' END,
+    'submission',
+    v_id,
+    p_author_id,
+    NULL,
+    jsonb_build_object('client_nonce', p_client_nonce),
+    jsonb_build_object('canonical_sha256', p_canonical_sha256)
+  );
+
   RETURN v_id;
 END;
 $$;
@@ -160,6 +178,17 @@ BEGIN
   ON CONFLICT (round_id, voter_id, kind, client_nonce)
   DO UPDATE SET ballot = EXCLUDED.ballot
   RETURNING id INTO v_id;
+
+  PERFORM admin_audit_log_write(
+    'vote',
+    'vote',
+    v_id,
+    p_voter_id,
+    NULL,
+    jsonb_build_object('client_nonce', p_client_nonce),
+    jsonb_build_object('kind', p_kind, 'ballot', p_ballot)
+  );
+
   RETURN v_id;
 END;
 $$;
@@ -168,13 +197,28 @@ $$;
 CREATE OR REPLACE FUNCTION round_publish_due() RETURNS void
 LANGUAGE plpgsql
 AS $$
-DECLARE now_unix bigint := extract(epoch from now())::bigint;
+DECLARE 
+  now_unix bigint := extract(epoch from now())::bigint;
+  v_round record;
 BEGIN
-  UPDATE rounds SET
-    phase = 'published',
-    published_at_unix = now_unix,
-    continue_vote_close_unix = now_unix + 30::bigint
-  WHERE phase = 'submit' AND submit_deadline_unix > 0 AND submit_deadline_unix < now_unix;
+  FOR v_round IN 
+    UPDATE rounds SET
+      phase = 'published',
+      published_at_unix = now_unix,
+      continue_vote_close_unix = now_unix + 30::bigint
+    WHERE phase = 'submit' AND submit_deadline_unix > 0 AND submit_deadline_unix < now_unix
+    RETURNING id, room_id, idx
+  LOOP
+    PERFORM admin_audit_log_write(
+      'publish',
+      'round',
+      v_round.id,
+      NULL,
+      'watcher',
+      jsonb_build_object('room_id', v_round.room_id, 'idx', v_round.idx),
+      jsonb_build_object('phase', 'published')
+    );
+  END LOOP;
 END;
 $$;
 
@@ -221,39 +265,84 @@ $$;
 CREATE OR REPLACE FUNCTION round_open_next() RETURNS void
 LANGUAGE plpgsql
 AS $$
-DECLARE now_unix bigint := extract(epoch from now())::bigint;
+DECLARE 
+  now_unix bigint := extract(epoch from now())::bigint;
+  v_rec record;
 BEGIN
+  -- We'll use a temporary table to store what happened so we can log it
+  CREATE TEMP TABLE IF NOT EXISTS _round_transitions (
+    round_id uuid,
+    room_id uuid,
+    idx integer,
+    action text, -- 'final' or 'open_next'
+    yes_votes integer,
+    no_votes integer
+  ) ON COMMIT DROP;
+  TRUNCATE _round_transitions;
+
   WITH due AS (
     SELECT r.* FROM rounds r
     WHERE r.phase = 'published'
       AND r.continue_vote_close_unix IS NOT NULL
       AND r.continue_vote_close_unix < now_unix
-  ), tallied AS MATERIALIZED (
+  ), tallied AS (
     SELECT d.room_id,
            d.id AS round_id,
-           r.idx,
-           COALESCE(SUM(CASE WHEN v.kind = 'continue' AND (v.ballot->>'choice') = 'continue' THEN 1 ELSE 0 END), 0) AS yes,
-           COALESCE(SUM(CASE WHEN v.kind = 'continue' AND (v.ballot->>'choice') = 'end' THEN 1 ELSE 0 END), 0) AS no
+           d.idx,
+           COALESCE(SUM(CASE WHEN v.kind = 'continue' AND (v.ballot->>'choice') = 'continue' THEN 1 ELSE 0 END), 0)::int AS yes,
+           COALESCE(SUM(CASE WHEN v.kind = 'continue' AND (v.ballot->>'choice') = 'end' THEN 1 ELSE 0 END), 0)::int AS no
     FROM due d
-    JOIN rounds r ON r.id = d.id
     LEFT JOIN votes v ON v.round_id = d.id
-    GROUP BY d.room_id, d.id, r.idx
+    GROUP BY d.room_id, d.id, d.idx
   ), losers AS (
     UPDATE rounds r
     SET phase = 'final'
     FROM tallied t
     WHERE r.id = t.round_id
       AND t.yes <= t.no
-    RETURNING 1
+    RETURNING r.id, r.room_id, r.idx, t.yes, t.no
   )
-  INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix)
-  SELECT t.room_id,
-         t.idx + 1,
-         'submit',
-         now_unix + 300::bigint
-  FROM tallied t
-  WHERE t.yes > t.no
-  ON CONFLICT (room_id, idx) DO NOTHING;
+  INSERT INTO _round_transitions (round_id, room_id, idx, action, yes_votes, no_votes)
+  SELECT id, room_id, idx, 'final', yes, no FROM losers;
+
+  WITH tallied AS (
+    SELECT d.room_id,
+           d.id AS round_id,
+           d.idx,
+           COALESCE(SUM(CASE WHEN v.kind = 'continue' AND (v.ballot->>'choice') = 'continue' THEN 1 ELSE 0 END), 0)::int AS yes,
+           COALESCE(SUM(CASE WHEN v.kind = 'continue' AND (v.ballot->>'choice') = 'end' THEN 1 ELSE 0 END), 0)::int AS no
+    FROM rounds d
+    LEFT JOIN votes v ON v.round_id = d.id
+    WHERE d.phase = 'published'
+      AND d.continue_vote_close_unix IS NOT NULL
+      AND d.continue_vote_close_unix < now_unix
+    GROUP BY d.room_id, d.id, d.idx
+  ), winners AS (
+    INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix)
+    SELECT t.room_id,
+           t.idx + 1,
+           'submit',
+           now_unix + 300::bigint
+    FROM tallied t
+    WHERE t.yes > t.no
+    ON CONFLICT (room_id, idx) DO NOTHING
+    RETURNING id, room_id, idx
+  )
+  INSERT INTO _round_transitions (round_id, room_id, idx, action)
+  SELECT id, room_id, idx, 'open_next' FROM winners;
+
+  -- Now log everything from the temp table
+  FOR v_rec IN SELECT * FROM _round_transitions LOOP
+    PERFORM admin_audit_log_write(
+      CASE WHEN v_rec.action = 'final' THEN 'update' ELSE 'open_next' END,
+      'round',
+      v_rec.round_id,
+      NULL,
+      'watcher',
+      jsonb_build_object('room_id', v_rec.room_id, 'idx', v_rec.idx),
+      jsonb_build_object('action', v_rec.action, 'yes', v_rec.yes_votes, 'no', v_rec.no_votes)
+    );
+  END LOOP;
 END;
 $$;
 
