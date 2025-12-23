@@ -12,9 +12,8 @@ describe('Room Lifecycle (M4)', () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: dbUrl });
     __setDbPool(pool);
-    await pool.query(
-      'truncate rooms, participants, rounds, submissions, votes, final_votes, admin_audit_log cascade'
-    );
+    // Note: avoid global truncate here to prevent race conditions with other tests if possible,
+    // or ensure unique IDs are used everywhere.
   });
 
   afterAll(async () => {
@@ -22,29 +21,27 @@ describe('Room Lifecycle (M4)', () => {
   });
 
   it('round_open_next should close the room when a round transitions to final', async () => {
-    const roomId = '70000000-0000-0000-0000-000000000001';
-    const roundId = '70000000-0000-0000-0000-000000000002';
-    const participantId = '70000000-0000-0000-0000-000000000003';
+    const roomId = '77777777-0000-0000-0000-000000000001';
+    const roundId = '77777777-0000-0000-0000-000000000002';
+    const participantId = '77777777-0000-0000-0000-000000000003';
 
-    await pool.query('insert into rooms(id, title, status) values ($1, $2, $3)', [
-      roomId,
-      'Lifecycle Room',
-      'active'
-    ]);
+    await pool.query(
+      'insert into rooms(id, title, status) values ($1, $2, $3) on conflict (id) do update set status = excluded.status',
+      [roomId, 'Lifecycle Room Unique', 'active']
+    );
     // Round is published and vote window closed
     await pool.query(
-      "insert into rounds(id, room_id, idx, phase, continue_vote_close_unix) values ($1, $2, 0, 'published', 100)",
+      "insert into rounds(id, room_id, idx, phase, continue_vote_close_unix) values ($1, $2, 0, 'published', 100) on conflict (id) do nothing",
       [roundId, roomId]
     );
-    await pool.query('insert into participants(id, room_id, anon_name) values ($1, $2, $3)', [
-      participantId,
-      roomId,
-      'voter_1'
-    ]);
+    await pool.query(
+      'insert into participants(id, room_id, anon_name) values ($1, $2, $3) on conflict (id) do nothing',
+      [participantId, roomId, 'voter_unique_1']
+    );
 
     // Tally is No (or equal), so it should transition to final
     await pool.query(
-      "insert into votes(round_id, voter_id, kind, ballot, client_nonce) values ($1, $2, 'continue', '{\"choice\": \"end\"}', 'nonce-1')",
+      "insert into votes(round_id, voter_id, kind, ballot, client_nonce) values ($1, $2, 'continue', '{\"choice\": \"end\"}', 'nonce-lifecycle-1')",
       [roundId, participantId]
     );
 

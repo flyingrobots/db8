@@ -20,21 +20,22 @@ describe('Final Voting (M4)', () => {
   });
 
   it('POST /rpc/vote.final submits a vote and is audit-logged', async () => {
-    const roomId = '50000000-0000-0000-0000-000000000001';
-    const roundId = '50000000-0000-0000-0000-000000000002';
-    const participantId = '50000000-0000-0000-0000-000000000003';
+    const roomId = '55555555-0000-0000-0000-000000000001';
+    const roundId = '55555555-0000-0000-0000-000000000002';
+    const participantId = '55555555-0000-0000-0000-000000000003';
 
-    await pool.query('insert into rooms(id, title) values ($1, $2)', [roomId, 'Vote Room']);
-    await pool.query('insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, $3)', [
-      roundId,
+    await pool.query('insert into rooms(id, title) values ($1, $2) on conflict (id) do nothing', [
       roomId,
-      'submit'
+      'Vote Room Unique'
     ]);
-    await pool.query('insert into participants(id, room_id, anon_name) values ($1, $2, $3)', [
-      participantId,
-      roomId,
-      'voter_1'
-    ]);
+    await pool.query(
+      'insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, $3) on conflict (id) do nothing',
+      [roundId, roomId, 'submit']
+    );
+    await pool.query(
+      'insert into participants(id, room_id, anon_name) values ($1, $2, $3) on conflict (id) do nothing',
+      [participantId, roomId, 'voter_unique_final']
+    );
 
     const res = await supertest(app)
       .post('/rpc/vote.final')
