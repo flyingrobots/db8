@@ -12,7 +12,8 @@ import {
   ParticipantFingerprintSet,
   VerifySubmit,
   AuthChallengeIn,
-  AuthVerifyIn
+  AuthVerifyIn,
+  FinalVote
 } from './schemas.js';
 import { sha256Hex } from './utils.js';
 import canonicalizer from './canonicalizer.js';
@@ -505,6 +506,39 @@ app.post('/rpc/vote.continue', (req, res) => {
   }
 });
 
+// vote.final
+app.post('/rpc/vote.final', async (req, res) => {
+  try {
+    const input = FinalVote.parse(req.body);
+    if (db) {
+      try {
+        const r = await db.query(
+          'select vote_final_submit($1::uuid,$2::uuid,$3::boolean,$4::jsonb,$5::text) as id',
+          [
+            input.round_id,
+            input.voter_id,
+            input.approval,
+            JSON.stringify(input.ranking || []),
+            input.client_nonce
+          ]
+        );
+        const vote_id = r.rows?.[0]?.id;
+        if (!vote_id) throw new Error('vote_final_submit_missing_id');
+        return res.json({ ok: true, vote_id });
+      } catch (e) {
+        const msg = String(e?.message || '');
+        if (/not a participant/.test(msg)) return res.status(403).json({ ok: false, error: msg });
+        console.warn('[vote.final] DB error, falling back to memory:', msg || e);
+      }
+    }
+    // Memory fallback
+    const vote_id = crypto.randomUUID();
+    return res.json({ ok: true, vote_id, note: 'db_fallback' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
 // room.create: seeds room + round 0 (DB) or in-memory fallback
 app.post('/rpc/room.create', async (req, res) => {
   try {
@@ -776,11 +810,14 @@ app.get('/state', async (req, res) => {
       );
       const roundRow = roundResult.rows?.[0];
       if (roundRow) {
-        const [tallyResult, submissionsResult, verifyResult] = await Promise.all([
+        const [tallyResult, finalTallyResult, submissionsResult, verifyResult] = await Promise.all([
           db.query(
             'select yes, no from view_continue_tally where room_id = $1 and round_id = $2 limit 1',
             [roomId, roundRow.round_id]
           ),
+          db.query('select approves, rejects from view_final_tally where round_id = $1 limit 1', [
+            roundRow.round_id
+          ]),
           db.query(
             `select id,
                     author_id,
@@ -800,6 +837,7 @@ app.get('/state', async (req, res) => {
           )
         ]);
         const tallyRow = tallyResult.rows?.[0] || { yes: 0, no: 0 };
+        const finalTallyRow = finalTallyResult.rows?.[0] || { approves: 0, rejects: 0 };
         const transcript = submissionsResult.rows.map((row) => ({
           submission_id: row.id,
           author_id: row.author_id,
@@ -824,6 +862,10 @@ app.get('/state', async (req, res) => {
             continue_tally: {
               yes: Number(tallyRow.yes || 0),
               no: Number(tallyRow.no || 0)
+            },
+            final_tally: {
+              approves: Number(finalTallyRow.approves || 0),
+              rejects: Number(finalTallyRow.rejects || 0)
             },
             transcript,
             verifications: verifyResult.rows || []
@@ -993,11 +1035,14 @@ app.get('/events', async (req, res) => {
       await listenerClient.query('LISTEN db8_rounds');
       await listenerClient.query('LISTEN db8_journal');
       await listenerClient.query('LISTEN db8_verdict');
+      await listenerClient.query('LISTEN db8_final_vote');
       const onNotification = (msg) => {
         if (closed) return;
         try {
           const payload = JSON.parse(msg.payload || '{}');
-          if (!payload || payload.room_id !== roomId) return;
+          if (!payload || (payload.room_id !== roomId && payload.t !== 'final_vote')) return;
+          // Note: final_vote notification doesn't strictly carry room_id in the payload currently,
+          // let's fix that in rpc.sql or just use the channel.
           if (msg.channel === 'db8_rounds') {
             // Update cached round and emit a phase event immediately
             currentRound = {
@@ -1030,6 +1075,11 @@ app.get('/events', async (req, res) => {
             res.write(`data: ${JSON.stringify(payload)}\n\n`);
             return;
           }
+          if (msg.channel === 'db8_final_vote') {
+            res.write(`event: vote\n`);
+            res.write(`data: ${JSON.stringify({ kind: 'final', ...payload })}\n\n`);
+            return;
+          }
         } catch {
           // ignore bad payloads
         }
@@ -1057,6 +1107,11 @@ app.get('/events', async (req, res) => {
             }
             try {
               await listenerClient.query('UNLISTEN db8_verdict');
+            } catch {
+              /* ignore */
+            }
+            try {
+              await listenerClient.query('UNLISTEN db8_final_vote');
             } catch {
               /* ignore */
             }

@@ -129,6 +129,14 @@ export const VerifySubmit = z.object({
   client_nonce: z.string().min(8)
 });
 
+export const FinalVote = z.object({
+  round_id: z.string().uuid(),
+  voter_id: z.string().uuid(),
+  approval: z.boolean(),
+  ranking: z.array(z.string().uuid()).optional(),
+  client_nonce: z.string().min(8).optional()
+});
+
 // SSH Auth schemas
 export const AuthChallengeIn = z.object({
   room_id: z.string().uuid(),

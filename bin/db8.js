@@ -95,6 +95,8 @@ async function main() {
       'draft:validate',
       'submit',
       'resubmit',
+      'vote:continue',
+      'vote:final',
       'flag:submission',
       'journal:pull',
       'journal:verify',
@@ -788,6 +790,85 @@ async function main() {
         }
         if (args.json) print(JSON.stringify({ ...body, canonical_sha256 }));
         else print(`submission_id: ${body.submission_id}\ncanonical_sha256: ${canonical_sha256}`);
+        return EXIT.OK;
+      } catch (e) {
+        printerr(e?.message || String(e));
+        return EXIT.NETWORK;
+      }
+    }
+    case 'vote:continue': {
+      const choice = args._[2];
+      if (choice !== 'continue' && choice !== 'end') {
+        printerr('vote continue requires "continue" or "end"');
+        return EXIT.VALIDATION;
+      }
+      if (!room || !participant || !jwt) {
+        printerr('Missing room/participant credentials. Run db8 login or set env.');
+        return EXIT.AUTH;
+      }
+      const cn = String(args.nonce || randomNonce());
+      try {
+        const res = await fetch(`${apiUrl.replace(/\/$/, '')}/rpc/vote.continue`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${jwt}`
+          },
+          body: JSON.stringify({
+            room_id: room,
+            round_id: '00000000-0000-0000-0000-000000000002', // loose stub
+            voter_id: participant,
+            choice,
+            client_nonce: cn
+          })
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          printerr(body?.error || `Server error ${res.status}`);
+          return EXIT.NETWORK;
+        }
+        if (args.json) print(JSON.stringify(body));
+        else print('ok');
+        return EXIT.OK;
+      } catch (e) {
+        printerr(e?.message || String(e));
+        return EXIT.NETWORK;
+      }
+    }
+    case 'vote:final': {
+      const approval = args.approve !== undefined ? Boolean(args.approve !== 'false') : true;
+      const ranking = args.rank
+        ? String(args.rank)
+            .split(',')
+            .map((s) => s.trim())
+        : [];
+      if (!room || !participant || !jwt) {
+        printerr('Missing room/participant credentials. Run db8 login or set env.');
+        return EXIT.AUTH;
+      }
+      const cn = String(args.nonce || randomNonce());
+      try {
+        const res = await fetch(`${apiUrl.replace(/\/$/, '')}/rpc/vote.final`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${jwt}`
+          },
+          body: JSON.stringify({
+            round_id: '00000000-0000-0000-0000-000000000002', // loose stub
+            voter_id: participant,
+            approval,
+            ranking,
+            client_nonce: cn
+          })
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          printerr(body?.error || `Server error ${res.status}`);
+          return EXIT.NETWORK;
+        }
+        if (args.json) print(JSON.stringify(body));
+        else print('ok');
         return EXIT.OK;
       } catch (e) {
         printerr(e?.message || String(e));

@@ -91,6 +91,20 @@ CREATE TABLE IF NOT EXISTS votes (
 
 CREATE INDEX IF NOT EXISTS idx_votes_round_kind ON votes (round_id, kind);
 
+-- Final votes (M4): approval + optional ranked tie-break
+CREATE TABLE IF NOT EXISTS final_votes (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  round_id      uuid        NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+  voter_id      uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  approval      boolean     NOT NULL, -- true if approves of the round/result
+  ranking       jsonb       DEFAULT '[]'::jsonb, -- optional ranked list of participant ids
+  client_nonce  text        NOT NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (round_id, voter_id, client_nonce)
+);
+
+CREATE INDEX IF NOT EXISTS idx_final_votes_round ON final_votes (round_id);
+
 -- Submission flags: allow participants/moderators/viewers to report content
 CREATE TABLE IF NOT EXISTS submission_flags (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),

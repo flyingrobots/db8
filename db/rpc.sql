@@ -698,3 +698,76 @@ AS $$
   GROUP BY v.submission_id, v.claim_id
   ORDER BY v.submission_id, v.claim_id NULLS FIRST;
 $$;
+
+-- vote_final_submit: record a final approval/ranking vote
+CREATE OR REPLACE FUNCTION vote_final_submit(
+  p_round_id uuid,
+  p_voter_id uuid,
+  p_approval boolean,
+  p_ranking jsonb DEFAULT '[]'::jsonb,
+  p_client_nonce text DEFAULT NULL
+) RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_id uuid;
+  v_is_participant boolean;
+BEGIN
+  -- Verify voter is a participant in the round's room
+  SELECT EXISTS (
+           SELECT 1
+             FROM participants p
+             JOIN rounds r ON r.room_id = p.room_id
+            WHERE p.id = p_voter_id
+              AND r.id = p_round_id
+         )
+    INTO v_is_participant;
+
+  IF NOT v_is_participant THEN
+    RAISE EXCEPTION 'voter not a participant in round: %', p_voter_id USING ERRCODE = '42501';
+  END IF;
+
+  INSERT INTO final_votes (round_id, voter_id, approval, ranking, client_nonce)
+  VALUES (p_round_id, p_voter_id, p_approval, COALESCE(p_ranking, '[]'::jsonb), COALESCE(p_client_nonce, gen_random_uuid()::text))
+  ON CONFLICT (round_id, voter_id, client_nonce)
+  DO UPDATE SET approval = EXCLUDED.approval, ranking = EXCLUDED.ranking
+  RETURNING id INTO v_id;
+
+  -- Notify listeners
+  PERFORM pg_notify(
+    'db8_final_vote',
+    json_build_object(
+      't', 'final_vote',
+      'room_id', (SELECT room_id FROM rounds WHERE id = p_round_id)::text,
+      'round_id', p_round_id::text,
+      'voter_id', p_voter_id::text,
+      'approval', p_approval
+    )::text
+  );
+
+  PERFORM admin_audit_log_write(
+    'vote',
+    'vote',
+    v_id,
+    p_voter_id,
+    NULL,
+    jsonb_build_object('client_nonce', p_client_nonce),
+    jsonb_build_object('approval', p_approval, 'ranking', p_ranking)
+  );
+
+  RETURN v_id;
+END;
+$$;
+
+CREATE OR REPLACE VIEW view_final_tally AS
+  SELECT
+    round_id,
+    COUNT(*) FILTER (WHERE approval = true) AS approves,
+    COUNT(*) FILTER (WHERE approval = false) AS rejects,
+    COUNT(*) AS total
+  FROM final_votes
+  GROUP BY round_id;
+
+ALTER VIEW view_final_tally SET (security_barrier = true);
