@@ -13,33 +13,33 @@ describe('Scoring & Reputation (M5)', () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: dbUrl });
     __setDbPool(pool);
-    await pool.query(
-      'truncate rooms, participants, rounds, submissions, votes, final_votes, admin_audit_log cascade'
-    );
   });
 
   afterAll(async () => {
     await pool.end();
   });
 
-  const roomId = '90000000-0000-0000-0000-000000000001';
-  const roundId = '90000000-0000-0000-0000-000000000002';
-  const judgeId = '90000000-0000-0000-0000-000000000003';
-  const debaterId = '90000000-0000-0000-0000-000000000004';
+  const roomId = '99990000-0000-0000-0000-000000000001';
+  const roundId = '99990000-0000-0000-0000-000000000002';
+  const judgeId = '99990000-0000-0000-0000-000000000003';
+  const debaterId = '99990000-0000-0000-0000-000000000004';
+  const opponentId = '99990000-0000-0000-0000-000000000005';
 
   it('POST /rpc/score.submit should record rubric scores', async () => {
-    // Seed
-    await pool.query('insert into rooms(id, title) values ($1, $2)', [roomId, 'Scoring Room']);
+    await pool.query('insert into rooms(id, title) values ($1, $2) on conflict (id) do nothing', [
+      roomId,
+      'Scoring Room'
+    ]);
     await pool.query(
-      "insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, 'published')",
+      "insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, 'published') on conflict (id) do nothing",
       [roundId, roomId]
     );
     await pool.query(
-      'insert into participants(id, room_id, anon_name, role) values ($1, $2, $3, $4)',
+      'insert into participants(id, room_id, anon_name, role) values ($1, $2, $3, $4) on conflict (id) do nothing',
       [judgeId, roomId, 'judge_1', 'judge']
     );
     await pool.query(
-      'insert into participants(id, room_id, anon_name, role) values ($1, $2, $3, $4)',
+      'insert into participants(id, room_id, anon_name, role) values ($1, $2, $3, $4) on conflict (id) do nothing',
       [debaterId, roomId, 'debater_1', 'debater']
     );
 
@@ -52,7 +52,7 @@ describe('Scoring & Reputation (M5)', () => {
       c: 90,
       v: 70,
       y: 85,
-      client_nonce: 'score-nonce-1'
+      client_nonce: 'score-nonce-999'
     });
 
     expect(res.status).toBe(200);
@@ -64,18 +64,15 @@ describe('Scoring & Reputation (M5)', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.rows).toBeDefined();
-    // Composite score = weighted average of E/R/C/V/Y
     expect(res.body.rows[0].composite_score).toBeGreaterThan(0);
   });
 
   it('RPC reputation_update should update Elo deterministically', async () => {
-    const opponentId = '90000000-0000-0000-0000-000000000005';
     await pool.query(
-      'insert into participants(id, room_id, anon_name, role) values ($1, $2, $3, $4)',
+      'insert into participants(id, room_id, anon_name, role) values ($1, $2, $3, $4) on conflict (id) do nothing',
       [opponentId, roomId, 'opponent_1', 'debater']
     );
 
-    // Submit score for opponent too
     await supertest(app).post('/rpc/score.submit').send({
       round_id: roundId,
       judge_id: judgeId,
@@ -85,10 +82,9 @@ describe('Scoring & Reputation (M5)', () => {
       c: 50,
       v: 50,
       y: 50,
-      client_nonce: 'score-nonce-opponent'
+      client_nonce: 'score-nonce-opponent-999'
     });
 
-    // This is likely a background job or manual RPC trigger for the worker
     const res = await supertest(app).post('/rpc/reputation.update').send({ room_id: roomId });
 
     expect(res.status).toBe(200);
@@ -97,14 +93,13 @@ describe('Scoring & Reputation (M5)', () => {
       .get('/rpc/reputation.get')
       .query({ participant_id: debaterId });
 
-    expect(rep.body.elo).not.toBe(1200); // Assuming 1200 is starting Elo
+    expect(rep.body.elo).not.toBe(1200);
   });
 
   it('GET /rpc/reputation.get with tags should return category elo', async () => {
-    // Seed a room with tags in config
-    const roomIdTag = '90000000-0000-0000-0000-000000000010';
+    const roomIdTag = '99990000-0000-0000-0000-000000000010';
     await pool.query(
-      'insert into rooms(id, title, config) values ($1, $2, \'{"tags": ["science", "tech"]}\')',
+      'insert into rooms(id, title, config) values ($1, $2, \'{"tags": ["science"]}\') on conflict (id) do nothing',
       [roomIdTag, 'Tag Room']
     );
 

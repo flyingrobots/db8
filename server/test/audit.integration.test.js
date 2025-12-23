@@ -19,21 +19,21 @@ describe('Audit Trail Integration', () => {
   });
 
   it('room_create should be audit-logged (implied via watcher or manual call)', async () => {
-    const roomId = '33363336-0000-0000-0000-000000000001';
-    const roundId = '33363336-0000-0000-0000-000000000002';
-    const participantId = '33363336-0000-0000-0000-000000000003';
+    const roomId = '33373337-0000-0000-0000-000000000001';
+    const roundId = '33373337-0000-0000-0000-000000000002';
+    const participantId = '33373337-0000-0000-0000-000000000003';
 
-    // Seed data
-    await pool.query('insert into rooms(id, title) values ($1, $2) on conflict do nothing', [
+    // Seed data with ON CONFLICT to avoid parallel collision issues
+    await pool.query('insert into rooms(id, title) values ($1, $2) on conflict (id) do nothing', [
       roomId,
       'Audit Room Unique'
     ]);
     await pool.query(
-      'insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, $3) on conflict do nothing',
+      'insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, $3) on conflict (id) do nothing',
       [roundId, roomId, 'submit']
     );
     await pool.query(
-      'insert into participants(id, room_id, anon_name) values ($1, $2, $3) on conflict do nothing',
+      'insert into participants(id, room_id, anon_name) values ($1, $2, $3) on conflict (id) do nothing',
       [participantId, roomId, 'audit_anon_unique']
     );
 
@@ -59,8 +59,8 @@ describe('Audit Trail Integration', () => {
   });
 
   it('vote_submit should be audit-logged', async () => {
-    const roundId = '33363336-0000-0000-0000-000000000002';
-    const participantId = '33363336-0000-0000-0000-000000000003';
+    const roundId = '33373337-0000-0000-0000-000000000002';
+    const participantId = '33373337-0000-0000-0000-000000000003';
 
     // Set round to published
     await pool.query('update rounds set phase = $1 where id = $2', ['published', roundId]);
@@ -84,16 +84,16 @@ describe('Audit Trail Integration', () => {
   });
 
   it('round_publish_due should be audit-logged', async () => {
-    const roomId = '33363336-0000-0000-0000-000000000010';
-    const roundId = '33363336-0000-0000-0000-000000000011';
+    const roomId = '33373337-0000-0000-0000-000000000010';
+    const roundId = '33373337-0000-0000-0000-000000000011';
 
     // Seed a due round
-    await pool.query('insert into rooms(id, title) values ($1, $2) on conflict do nothing', [
+    await pool.query('insert into rooms(id, title) values ($1, $2) on conflict (id) do nothing', [
       roomId,
       'Due Room Unique'
     ]);
     await pool.query(
-      'insert into rounds(id, room_id, idx, phase, submit_deadline_unix) values ($1, $2, 0, $3, $4) on conflict do nothing',
+      'insert into rounds(id, room_id, idx, phase, submit_deadline_unix) values ($1, $2, 0, $3, $4) on conflict (id) do nothing',
       [
         roundId,
         roomId,
