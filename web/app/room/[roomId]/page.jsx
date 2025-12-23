@@ -44,6 +44,7 @@ export default function RoomPage({ params }) {
   const timerRef = useRef(null);
   const esRef = useRef(null);
   const lastNonceRef = useRef('');
+  const actionAbortRef = useRef(null);
 
   const [role, setRole] = useState('');
   const [verifying, setVerifying] = useState(null); // submission object
@@ -54,6 +55,46 @@ export default function RoomPage({ params }) {
   const [researchUrl, setResearchUrl] = useState('');
   const [researchResults, setResearchResults] = useState([]); // { url, snapshot }
   const [actionBusy, setActionBusy] = useState(false);
+
+  function abortActionInFlight() {
+    const ctrl = actionAbortRef.current;
+    if (!ctrl) return;
+    try {
+      ctrl.abort();
+    } catch {
+      /* ignore */
+    }
+    actionAbortRef.current = null;
+  }
+
+  function cancelActionInFlight() {
+    abortActionInFlight();
+    setActionBusy(false);
+  }
+
+  function beginAction() {
+    try {
+      if (actionAbortRef.current) actionAbortRef.current.abort();
+    } catch {
+      /* ignore */
+    }
+    const ctrl = new window.AbortController();
+    actionAbortRef.current = ctrl;
+    setActionBusy(true);
+    return ctrl;
+  }
+
+  function endAction(ctrl) {
+    if (actionAbortRef.current !== ctrl) return;
+    actionAbortRef.current = null;
+    setActionBusy(false);
+  }
+
+  useEffect(() => {
+    return () => {
+      abortActionInFlight();
+    };
+  }, []);
 
   // Fetch snapshot
   useEffect(() => {
@@ -218,11 +259,12 @@ export default function RoomPage({ params }) {
 
   async function onFetchResearch() {
     if (!researchUrl) return;
-    setActionBusy(true);
+    const ctrl = beginAction();
     try {
       const r = await fetch(`${apiBase()}/rpc/research.fetch`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
+        signal: ctrl.signal,
         body: JSON.stringify({
           room_id: roomId,
           round_id: state.round.round_id,
@@ -238,9 +280,10 @@ export default function RoomPage({ params }) {
         window.alert(j.error || 'Fetch failed');
       }
     } catch (err) {
-      window.alert(String(err));
+      if (err?.name === 'AbortError') return;
+      window.alert(String(err?.message || err));
     } finally {
-      setActionBusy(false);
+      endAction(ctrl);
     }
   }
 
@@ -308,7 +351,7 @@ export default function RoomPage({ params }) {
     const verdict = form.get('verdict');
     const rationale = form.get('rationale');
     const claim_id = form.get('claim_id');
-    setActionBusy(true);
+    const ctrl = beginAction();
     try {
       const payload = {
         round_id: state.round.round_id,
@@ -325,14 +368,16 @@ export default function RoomPage({ params }) {
           'content-type': 'application/json',
           ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
         },
+        signal: ctrl.signal,
         body: JSON.stringify(payload)
       });
       if (r.ok) setVerifying(null);
       else window.alert('Verify failed');
     } catch (err) {
-      window.alert(String(err));
+      if (err?.name === 'AbortError') return;
+      window.alert(String(err?.message || err));
     } finally {
-      setActionBusy(false);
+      endAction(ctrl);
     }
   }
 
@@ -341,7 +386,7 @@ export default function RoomPage({ params }) {
     if (!flagging) return;
     const form = new window.FormData(e.target);
     const reason = form.get('reason');
-    setActionBusy(true);
+    const ctrl = beginAction();
     try {
       const payload = {
         submission_id: flagging.submission_id,
@@ -355,19 +400,21 @@ export default function RoomPage({ params }) {
           'content-type': 'application/json',
           ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
         },
+        signal: ctrl.signal,
         body: JSON.stringify(payload)
       });
       if (r.ok) setFlagging(null);
       else window.alert('Flag failed');
     } catch (err) {
-      window.alert(String(err));
+      if (err?.name === 'AbortError') return;
+      window.alert(String(err?.message || err));
     } finally {
-      setActionBusy(false);
+      endAction(ctrl);
     }
   }
 
   async function onContinueVote(choice) {
-    setActionBusy(true);
+    const ctrl = beginAction();
     try {
       const r = await fetch(`${apiBase()}/rpc/vote.continue`, {
         method: 'POST',
@@ -375,6 +422,7 @@ export default function RoomPage({ params }) {
           'content-type': 'application/json',
           ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
         },
+        signal: ctrl.signal,
         body: JSON.stringify({
           room_id: roomId,
           round_id: state.round.round_id,
@@ -386,14 +434,15 @@ export default function RoomPage({ params }) {
       if (r.ok) setShowContinueVote(false);
       else window.alert('Vote failed');
     } catch (err) {
-      window.alert(String(err));
+      if (err?.name === 'AbortError') return;
+      window.alert(String(err?.message || err));
     } finally {
-      setActionBusy(false);
+      endAction(ctrl);
     }
   }
 
   async function onFinalVote(approval, ranking = []) {
-    setActionBusy(true);
+    const ctrl = beginAction();
     try {
       const r = await fetch(`${apiBase()}/rpc/vote.final`, {
         method: 'POST',
@@ -401,6 +450,7 @@ export default function RoomPage({ params }) {
           'content-type': 'application/json',
           ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
         },
+        signal: ctrl.signal,
         body: JSON.stringify({
           round_id: state.round.round_id,
           voter_id: participant,
@@ -412,9 +462,10 @@ export default function RoomPage({ params }) {
       if (r.ok) setShowFinalVote(false);
       else window.alert('Final vote failed');
     } catch (err) {
-      window.alert(String(err));
+      if (err?.name === 'AbortError') return;
+      window.alert(String(err?.message || err));
     } finally {
-      setActionBusy(false);
+      endAction(ctrl);
     }
   }
 
@@ -434,7 +485,14 @@ export default function RoomPage({ params }) {
             </Button>
           </h1>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setShowResearch(!showResearch)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (showResearch) cancelActionInFlight();
+                setShowResearch(!showResearch);
+              }}
+            >
               {showResearch ? 'Hide Research' : 'Research Tools'}
             </Button>
             {state?.round?.phase === 'published' && (
@@ -788,11 +846,15 @@ export default function RoomPage({ params }) {
               <h3 className="text-lg font-bold">Verify Submission</h3>
               <form onSubmit={onVerifySubmit} className="space-y-4">
                 <div>
-                  <label className="text-xs font-black uppercase text-muted-foreground">
+                  <label
+                    htmlFor="verify-claim-id"
+                    className="text-xs font-black uppercase text-muted-foreground"
+                  >
                     Claim
                   </label>
                   <select
                     name="claim_id"
+                    id="verify-claim-id"
                     className="w-full mt-1 border rounded p-2 bg-background text-sm"
                   >
                     <option value="">Full Submission</option>
@@ -804,11 +866,15 @@ export default function RoomPage({ params }) {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-black uppercase text-muted-foreground">
+                  <label
+                    htmlFor="verify-verdict"
+                    className="text-xs font-black uppercase text-muted-foreground"
+                  >
                     Verdict
                   </label>
                   <select
                     name="verdict"
+                    id="verify-verdict"
                     className="w-full mt-1 border rounded p-2 bg-background text-sm"
                   >
                     <option value="true">True</option>
@@ -818,18 +884,29 @@ export default function RoomPage({ params }) {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-black uppercase text-muted-foreground">
+                  <label
+                    htmlFor="verify-rationale"
+                    className="text-xs font-black uppercase text-muted-foreground"
+                  >
                     Rationale
                   </label>
                   <textarea
                     name="rationale"
+                    id="verify-rationale"
                     required
                     className="w-full mt-1 border rounded p-2 bg-background text-sm min-h-[100px]"
                     placeholder="Explain your verdict..."
                   />
                 </div>
                 <div className="flex justify-end gap-2">
-                  <Button type="button" variant="ghost" onClick={() => setVerifying(null)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      cancelActionInFlight();
+                      setVerifying(null);
+                    }}
+                  >
                     Cancel
                   </Button>
                   <Button type="submit" disabled={actionBusy}>
@@ -849,18 +926,29 @@ export default function RoomPage({ params }) {
               <h3 className="text-lg font-bold">Flag Submission</h3>
               <form onSubmit={onFlagSubmit} className="space-y-4">
                 <div>
-                  <label className="text-xs font-black uppercase text-muted-foreground">
+                  <label
+                    htmlFor="flag-reason"
+                    className="text-xs font-black uppercase text-muted-foreground"
+                  >
                     Reason
                   </label>
                   <textarea
                     name="reason"
+                    id="flag-reason"
                     required
                     className="w-full mt-1 border rounded p-2 bg-background text-sm min-h-[80px]"
                     placeholder="Why are you flagging this?"
                   />
                 </div>
                 <div className="flex justify-end gap-2">
-                  <Button type="button" variant="ghost" onClick={() => setFlagging(null)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      cancelActionInFlight();
+                      setFlagging(null);
+                    }}
+                  >
                     Cancel
                   </Button>
                   <Button type="submit" variant="destructive" disabled={actionBusy}>
@@ -899,7 +987,10 @@ export default function RoomPage({ params }) {
               <Button
                 variant="ghost"
                 className="text-xs text-muted-foreground"
-                onClick={() => setShowContinueVote(false)}
+                onClick={() => {
+                  cancelActionInFlight();
+                  setShowContinueVote(false);
+                }}
               >
                 Cancel
               </Button>
@@ -936,7 +1027,10 @@ export default function RoomPage({ params }) {
               <Button
                 variant="ghost"
                 className="text-xs text-muted-foreground w-full"
-                onClick={() => setShowFinalVote(false)}
+                onClick={() => {
+                  cancelActionInFlight();
+                  setShowFinalVote(false);
+                }}
               >
                 Cancel
               </Button>
