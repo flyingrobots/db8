@@ -987,6 +987,30 @@ BEGIN
 END;
 $$;
 
+-- view_unsigned_published_rounds: rounds that are published but lack a journal entry
+CREATE OR REPLACE VIEW view_unsigned_published_rounds AS
+  WITH pub AS (
+    SELECT 
+      r.room_id, 
+      r.id AS round_id, 
+      r.idx, 
+      r.phase, 
+      r.submit_deadline_unix, 
+      r.published_at_unix, 
+      r.continue_vote_close_unix
+    FROM rounds_view r
+    LEFT JOIN journals j ON j.room_id = r.room_id AND j.round_idx = r.idx
+    WHERE r.phase = 'published' AND j.room_id IS NULL
+  )
+  SELECT 
+    p.*, 
+    COALESCE(t.yes, 0) AS yes, 
+    COALESCE(t.no, 0) AS no
+  FROM pub p
+  LEFT JOIN view_continue_tally t ON t.room_id = p.room_id AND t.round_id = p.round_id;
+
+ALTER VIEW view_unsigned_published_rounds SET (security_barrier = true);
+
 -- dlq_push: push a failed payload to the DLQ
 CREATE OR REPLACE FUNCTION dlq_push(
   p_payload jsonb
