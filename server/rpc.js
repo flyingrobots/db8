@@ -448,40 +448,41 @@ function addVoteToTotals(roomId, choice) {
 }
 
 // vote.continue
-app.post('/rpc/vote.continue', requireDbInProduction, (req, res) => {
+app.post('/rpc/vote.continue', requireDbInProduction, async (req, res) => {
   try {
     const input = ContinueVote.parse(req.body);
     const key = `${input.round_id}:${input.voter_id}:continue:${input.client_nonce}`;
     if (db) {
-      return db
-        .query('select vote_submit($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::text) as id', [
-          input.round_id,
-          input.voter_id,
-          'continue',
-          JSON.stringify({ choice: input.choice }),
-          input.client_nonce
-        ])
-        .then((r) => {
-          const vote_id = r.rows?.[0]?.id;
-          if (vote_id) {
-            addVoteToTotals(input.room_id, input.choice);
-            return res.json({ ok: true, vote_id });
-          }
-          throw new Error('vote_submit_missing_id');
-        })
-        .catch((e) => {
-          if (memVotes.has(key))
-            return res.json({
-              ok: true,
-              vote_id: memVotes.get(key).id,
-              note: 'db_fallback',
-              db_error: e.message
-            });
-          const vote_id = crypto.randomUUID();
-          memVotes.set(key, { id: vote_id, choice: input.choice });
+      try {
+        const r = await db.query(
+          'select vote_submit($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::text) as id',
+          [
+            input.round_id,
+            input.voter_id,
+            'continue',
+            JSON.stringify({ choice: input.choice }),
+            input.client_nonce
+          ]
+        );
+        const vote_id = r.rows?.[0]?.id;
+        if (vote_id) {
           addVoteToTotals(input.room_id, input.choice);
-          return res.json({ ok: true, vote_id, note: 'db_fallback', db_error: e.message });
-        });
+          return res.json({ ok: true, vote_id });
+        }
+        throw new Error('vote_submit_missing_id');
+      } catch (e) {
+        if (memVotes.has(key))
+          return res.json({
+            ok: true,
+            vote_id: memVotes.get(key).id,
+            note: 'db_fallback',
+            db_error: e.message
+          });
+        const vote_id = crypto.randomUUID();
+        memVotes.set(key, { id: vote_id, choice: input.choice });
+        addVoteToTotals(input.room_id, input.choice);
+        return res.json({ ok: true, vote_id, note: 'db_fallback', db_error: e.message });
+      }
     }
     if (memVotes.has(key)) return res.json({ ok: true, vote_id: memVotes.get(key).id });
     const vote_id = crypto.randomUUID();
@@ -1402,14 +1403,16 @@ async function buildLatestJournal(roomId) {
         ]);
         tally = tallyResult.rows?.[0] || { yes: 0, no: 0 };
         transcriptHashes = submissionsResult.rows.map((r) => String(r.canonical_sha256));
-        // Load previous journal hash for chain linking without mutating DB row object
-        prevHash = await db
-          .query('select hash from journals where room_id = $1 and round_idx = $2', [
-            roomId,
-            Number(roundRow.idx || 0) - 1
-          ])
-          .then((x) => x.rows?.[0]?.hash || null)
-          .catch(() => null);
+        // Load previous journal hash for chain linking for the core
+        try {
+          const prevRes = await db.query(
+            'select hash from journals where room_id = $1 and round_idx = $2',
+            [roomId, Number(roundRow.idx || 0) - 1]
+          );
+          prevHash = prevRes.rows?.[0]?.hash || null;
+        } catch {
+          prevHash = null;
+        }
       }
     } catch {
       /* ignore */

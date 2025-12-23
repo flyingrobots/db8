@@ -24,13 +24,16 @@ export class JournalService {
   async createCheckpoint(row) {
     try {
       // Look up previous journal hash for chain linking
-      const prev = await this.pool
-        .query('SELECT hash FROM journals WHERE room_id = $1 AND round_idx = $2', [
-          row.room_id,
-          Number(row.idx || 0) - 1
-        ])
-        .then((r) => (r.rows?.[0]?.hash ? String(r.rows[0].hash) : null))
-        .catch(() => null);
+      let prev = null;
+      try {
+        const prevRes = await this.pool.query(
+          'SELECT hash FROM journals WHERE room_id = $1 AND round_idx = $2',
+          [row.room_id, Number(row.idx || 0) - 1]
+        );
+        prev = prevRes.rows?.[0]?.hash ? String(prevRes.rows[0].hash) : null;
+      } catch {
+        // ignore errors looking up prev hash
+      }
 
       // Fetch transcript hashes for the round
       const sub = await this.pool.query(

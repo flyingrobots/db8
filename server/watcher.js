@@ -27,16 +27,14 @@ export async function runTick(pool) {
   const now = Date.now();
   if (now - _lastRecovery > 30_000) {
     _lastRecovery = now;
-    await pool
-      .query('select recover_abandoned_barrier(60)')
-      .then((r) => {
-        if (r.rows?.[0]?.recover_abandoned_barrier > 0) {
-          log.info('recovered abandoned barriers', { count: r.rows[0].recover_abandoned_barrier });
-        }
-      })
-      .catch((err) => {
-        log.error('recovery failed', { error: err.message });
-      });
+    try {
+      const r = await pool.query('select recover_abandoned_barrier(60)');
+      if (r.rows?.[0]?.recover_abandoned_barrier > 0) {
+        log.info('recovered abandoned barriers', { count: r.rows[0].recover_abandoned_barrier });
+      }
+    } catch (err) {
+      log.error('recovery failed', { error: err.message });
+    }
   }
 
   // Flip due submit→published, then open next rounds for winners
