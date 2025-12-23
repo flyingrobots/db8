@@ -943,3 +943,46 @@ BEGIN
   );
 END;
 $$;
+
+-- research_cache_upsert: store a URL snapshot
+CREATE OR REPLACE FUNCTION research_cache_upsert(
+  p_url text,
+  p_url_hash text,
+  p_snapshot jsonb
+) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO research_cache (url, url_hash, snapshot)
+  VALUES (p_url, p_url_hash, p_snapshot)
+  ON CONFLICT (url_hash) DO UPDATE SET snapshot = EXCLUDED.snapshot;
+END;
+$$;
+
+-- research_usage_increment: track and enforce fetch quotas
+CREATE OR REPLACE FUNCTION research_usage_increment(
+  p_room_id uuid,
+  p_round_id uuid,
+  p_max integer
+) RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_count integer;
+BEGIN
+  INSERT INTO research_usage (room_id, round_id, fetch_count)
+  VALUES (p_room_id, p_round_id, 1)
+  ON CONFLICT (room_id, round_id) DO UPDATE SET fetch_count = research_usage.fetch_count + 1
+  RETURNING fetch_count INTO v_count;
+
+  IF p_max > 0 AND v_count > p_max THEN
+    RAISE EXCEPTION 'quota_exceeded' USING ERRCODE = '22023';
+  END IF;
+
+  RETURN v_count;
+END;
+$$;

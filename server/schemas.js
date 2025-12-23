@@ -158,6 +158,17 @@ export const ReputationGet = z.object({
   tag: z.string().optional()
 });
 
+export const ResearchFetch = z.object({
+  room_id: z.string().uuid(),
+  round_id: z.string().uuid(),
+  participant_id: z.string().uuid(),
+  url: z.string().url()
+});
+
+export const ResearchCacheGet = z.object({
+  url: z.string().url()
+});
+
 // SSH Auth schemas
 export const AuthChallengeIn = z.object({
   room_id: z.string().uuid(),

@@ -147,6 +147,22 @@ CREATE TABLE IF NOT EXISTS reputation_tag (
   PRIMARY KEY (participant_id, tag)
 );
 
+-- Research Cache (M6)
+CREATE TABLE IF NOT EXISTS research_cache (
+  url_hash     char(64)    PRIMARY KEY CHECK (url_hash ~ '^[0-9a-f]{64}$'),
+  url          text        NOT NULL,
+  snapshot     jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+-- Research Usage (M6): track quotas per round
+CREATE TABLE IF NOT EXISTS research_usage (
+  room_id      uuid        NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  round_id     uuid        NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+  fetch_count  integer     NOT NULL DEFAULT 0,
+  PRIMARY KEY (room_id, round_id)
+);
+
 -- Submission flags: allow participants/moderators/viewers to report content
 CREATE TABLE IF NOT EXISTS submission_flags (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),

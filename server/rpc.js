@@ -16,7 +16,9 @@ import {
   FinalVote,
   ScoreSubmit,
   ScoreGet,
-  ReputationGet
+  ReputationGet,
+  ResearchFetch,
+  ResearchCacheGet
 } from './schemas.js';
 import { sha256Hex } from './utils.js';
 import canonicalizer from './canonicalizer.js';
@@ -668,6 +670,97 @@ app.get('/rpc/reputation.get', async (req, res) => {
       elo: 1200.0,
       note: 'db_fallback'
     });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// research.fetch
+async function simulateFetch(url) {
+  // CONCEPTUAL: In a real implementation, this would use puppeteer or a library to scrape.
+  // For M6 prototype, we'll return a deterministic mock based on the domain.
+  const domain = new URL(url).hostname;
+  return {
+    title: `Research on ${domain}`,
+    excerpt: `This is a simulated snapshot of the content found at ${url}. It includes key evidence and reasoning patterns relevant to the current debate.`,
+    authors: ['Simulated Researcher'],
+    canonical_url: url,
+    fetched_at: nowSec()
+  };
+}
+
+app.post('/rpc/research.fetch', async (req, res) => {
+  try {
+    const input = ResearchFetch.parse(req.body);
+    const urlHash = sha256Hex(input.url);
+
+    if (db) {
+      try {
+        // 1. Check Cache first
+        const cacheCheck = await db.query(
+          'select snapshot from research_cache where url_hash = $1',
+          [urlHash]
+        );
+        if (cacheCheck.rows.length > 0) {
+          return res.json({
+            ok: true,
+            snapshot: cacheCheck.rows[0].snapshot,
+            url_hash: urlHash,
+            cached: true
+          });
+        }
+
+        // 2. Check and Increment Quota
+        const roomRes = await db.query('select config from rooms where id = $1', [input.room_id]);
+        const maxFetches = Number(roomRes.rows[0]?.config?.max_fetches_per_round || 0);
+
+        await db.query('select research_usage_increment($1::uuid, $2::uuid, $3::int)', [
+          input.room_id,
+          input.round_id,
+          maxFetches
+        ]);
+
+        // 3. Fetch and Snapshot
+        const snapshot = await simulateFetch(input.url);
+
+        // 4. Update Cache
+        await db.query('select research_cache_upsert($1, $2, $3::jsonb)', [
+          input.url,
+          urlHash,
+          JSON.stringify(snapshot)
+        ]);
+
+        return res.json({ ok: true, snapshot, url_hash: urlHash, cached: false });
+      } catch (e) {
+        const msg = String(e?.message || '');
+        if (/quota_exceeded/.test(msg))
+          return res.status(429).json({ ok: false, error: 'quota_exceeded' });
+        console.warn('[research.fetch] DB error, falling back to memory:', msg || e);
+      }
+    }
+    // Memory fallback
+    const snapshot = await simulateFetch(input.url);
+    return res.json({ ok: true, snapshot, url_hash: urlHash, note: 'db_fallback' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// research.cache
+app.get('/rpc/research.cache', async (req, res) => {
+  try {
+    const input = ResearchCacheGet.parse(req.query);
+    const urlHash = sha256Hex(input.url);
+    if (db) {
+      const r = await db.query('select snapshot from research_cache where url_hash = $1', [
+        urlHash
+      ]);
+      if (r.rows.length > 0) {
+        return res.json({ ok: true, snapshot: r.rows[0].snapshot });
+      }
+      return res.status(404).json({ ok: false, error: 'not_found' });
+    }
+    return res.json({ ok: true, snapshot: await simulateFetch(input.url), note: 'db_fallback' });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err?.message || String(err) });
   }
