@@ -51,7 +51,8 @@ Environment flags (M2)
 - `ENFORCE_AUTHOR_BINDING=1` — require an enrolled fingerprint for the claimed author_id during provenance verify;
   if missing, `/rpc/provenance.verify` returns `400 { ok:false, error:"author_not_configured" }`.
 - `SIGNING_PRIVATE_KEY` / `SIGNING_PUBLIC_KEY` — PEM Ed25519 keypair to sign
-  journals (dev keypair is generated if unset).
+  journals (persistent files `.db8_signing_key` are generated if unset).
+- `ENFORCE_RATELIMIT=1` — enable production rate limiting (M7).
 
 SSH verification (M2)
 
@@ -176,7 +177,8 @@ Shut the database down with `npm run stop:db` when you're finished.
 The CLI is provided as a local binary in this repo under `bin/db8.js`.
 
 ```bash
-npm link         # optional: makes `db8` available on your PATH
+npm install
+npm link         # makes `db8` command available globally
 db8 whoami       # prints identity (from ~/.db8/session.json if present)
 db8 room status  # fetches /state (set DB8_API_URL if not localhost)
 ```
@@ -215,8 +217,8 @@ export DATABASE_URL=postgresql://postgres:test@localhost:54329/db8_test
 node server/watcher.js
 ```
 
-You should see phase changes reflected in `/events` as `event: phase` messages
-when deadlines are crossed.
+In Milestone 7, the watcher also signals a liveness heartbeat and
+automatically recovers rounds abandoned by crashed orchestrators.
 
 ## Next steps
 

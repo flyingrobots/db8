@@ -13,29 +13,20 @@ weighted by open+closed issue counts (priority weights: p0=8, p1=5, p2=3, p3=1, 
 Each milestone marker includes all tasks from prior milestones (e.g., M2 = M1+M2).
 
 ```text
-███████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░
+████████████████████████████████████████████████████████████
 |                    |                |      |    |  | |   |
 0                   M1               M2     M3   M4 M5M6  M7
 ```
 
-## Milestone Focus (what you can do)
+## Milestone Focus
 
-- M0: Repo & Docs — clean repo, docs, and CI wiring to enable disciplined
-  development.
-- M1: MVP Loop — create rooms/rounds, submit content, continue votes, and see a
-  live room snapshot and timers in the UI/CLI.
-- M2: Provenance & Journals — canonicalize (RFC 8785 JCS), verify client
-  signatures (Ed25519 or OpenSSH ed25519), optional author binding, signed
-  per‑round journals, and CLI journal pull/verify.
-- M3: Verification — record per‑claim verification verdicts (schema/RPC/CLI) and
-  surface minimal verification UI.
-- M4: Votes & Final — continue/no‑continue flows to finalize debates; expose
-  tallies and transitions to “final”.
-- M5: Scoring & Elo — scoring model and participant ratings; basic leaderboards.
-- M6: Research Tools — exports, analytics hooks, and E2E scripts to support
-  research scenarios.
-- M7: Hardening & Ops — security reviews, rate limiting/quotas, packaging, and
-  operational run books.
+- M1: MVP Loop — Complete.
+- M2: Provenance & Journals — Complete.
+- M3: Verification — Complete.
+- M4: Votes & Final — Complete.
+- M5: Scoring & Elo — Complete.
+- M6: Research Tools — Complete.
+- M7: Hardening & Ops — Complete.
 
 ## Quickstart
 
@@ -47,11 +38,14 @@ Each milestone marker includes all tasks from prior milestones (e.g., M2 = M1+M2
 
 ## Highlights
 
-- RFC 8785 JCS canonicalization (default) for deterministic hashing
-- Provenance verify (Ed25519 + OpenSSH ed25519); optional strict author binding
-- Server‑issued nonces (issue + enforce) for idempotent submissions
-- Journals: per‑round core, chain hash, Ed25519 signature; endpoints + CLI verify
-- SSE: realtime timers, phase changes, and journal events
+- **Deterministic Causal Kernel**: Authoritative watcher loop with heartbeat recovery.
+- **Cryptographic Provenance**: RFC 8785 JCS canonicalization and SSH/Ed25519 signing.
+- **Signed Journals**: Per-round core data, chain hash, and Ed25519 signatures.
+- **Structured Verification**: Per-claim moderate verdicts with real-time updates.
+- **Reputation System**: Deterministic Elo updates globally and by topic tag.
+- **Research Infrastructure**: URL snapshotting, deduplicated cache, and fetch quotas.
+- **Production Hardening**: Rate limiting, Dead Letter Queue (pgmq), and persistent keys.
+- **SSE Streams**: Real-time timers, phase changes, and journal events.
 
 ## Repository Layout
 
