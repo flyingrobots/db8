@@ -31,7 +31,7 @@ suite('SSE /events is DB-backed (LISTEN/NOTIFY)', () => {
     const res = await pool.query('select room_create($1, $2, $3) as id', [
       topic,
       '{}',
-      `sse-nonce-${Math.random()}`
+      `sse-nonce-${Math.random()}-${Date.now()}`
     ]);
     roomId = res.rows[0].id;
 

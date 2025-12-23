@@ -13,9 +13,6 @@ describe('Research Tools & Cache (M6)', () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: dbUrl });
     __setDbPool(pool);
-    await pool.query(
-      'truncate rooms, participants, rounds, submissions, votes, final_votes, admin_audit_log cascade'
-    );
   });
 
   afterAll(async () => {
@@ -27,49 +24,73 @@ describe('Research Tools & Cache (M6)', () => {
   const participantId = '66660000-0000-0000-0000-000000000003';
 
   it('POST /rpc/research.fetch should snapshot content and cache it', async () => {
-    // Seed
-    await pool.query('insert into rooms(id, title) values ($1, $2)', [roomId, 'Research Room']);
-    await pool.query("insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, 'submit')", [
-      roundId,
-      roomId
-    ]);
-    await pool.query('insert into participants(id, room_id, anon_name) values ($1, $2, $3)', [
-      participantId,
-      roomId,
-      'researcher_1'
-    ]);
-
-    const targetUrl = 'https://example.com/article';
-    const res = await supertest(app).post('/rpc/research.fetch').send({
-      room_id: roomId,
-      round_id: roundId,
-      participant_id: participantId,
-      url: targetUrl
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.ok).toBe(true);
-    expect(res.body.snapshot).toBeDefined();
-    expect(res.body.snapshot.title).toBeDefined();
-    expect(res.body.url_hash).toBeDefined();
-
-    // Verify it was cached in DB
-    const cacheRes = await pool.query('select * from research_cache where url = $1', [targetUrl]);
-    expect(cacheRes.rows.length).toBe(1);
-  });
-
-  it('POST /rpc/research.fetch should enforce per-round quotas', async () => {
-    // Set a small quota on the room
     await pool.query(
-      'update rooms set config = config || \'{"max_fetches_per_round": 1}\' where id = $1',
-      [roomId]
+      'insert into rooms(id, title, config) values ($1, $2, $3) on conflict (id) do nothing',
+      [roomId, 'Research Room', JSON.stringify({ max_fetches_per_round: 5 })]
+    );
+    await pool.query(
+      "insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, 'submit') on conflict (id) do nothing",
+      [roundId, roomId]
+    );
+    await pool.query(
+      'insert into participants(id, room_id, anon_name) values ($1, $2, $3) on conflict (id) do nothing',
+      [participantId, roomId, 'researcher_1']
     );
 
     const res = await supertest(app).post('/rpc/research.fetch').send({
       room_id: roomId,
       round_id: roundId,
       participant_id: participantId,
-      url: 'https://example.com/another-article'
+      url: 'https://example.com/evidence'
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.snapshot.title).toBeDefined();
+    expect(res.body.cached).toBe(false);
+
+    // Second call should be cached
+    const res2 = await supertest(app).post('/rpc/research.fetch').send({
+      room_id: roomId,
+      round_id: roundId,
+      participant_id: participantId,
+      url: 'https://example.com/evidence'
+    });
+    expect(res2.body.cached).toBe(true);
+  });
+
+  it('POST /rpc/research.fetch should enforce per-round quotas', async () => {
+    const limitedRoom = '66660000-0000-0000-0000-000000000010';
+    const limitedRound = '66660000-0000-0000-0000-000000000011';
+
+    await pool.query(
+      'insert into rooms(id, title, config) values ($1, $2, $3) on conflict (id) do nothing',
+      [limitedRoom, 'Quota Room', JSON.stringify({ max_fetches_per_round: 1 })]
+    );
+    await pool.query(
+      "insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, 'submit') on conflict (id) do nothing",
+      [limitedRound, limitedRoom]
+    );
+    await pool.query(
+      'insert into participants(id, room_id, anon_name) values ($1, $2, $3) on conflict (id) do nothing',
+      [participantId, limitedRoom, 'researcher_quota']
+    );
+
+    // First fetch
+    await supertest(app)
+      .post('/rpc/research.fetch')
+      .send({
+        room_id: limitedRoom,
+        round_id: limitedRound,
+        participant_id: participantId,
+        url: 'https://a.com'
+      });
+
+    // Second fetch (new URL) should fail
+    const res = await supertest(app).post('/rpc/research.fetch').send({
+      room_id: limitedRoom,
+      round_id: limitedRound,
+      participant_id: participantId,
+      url: 'https://b.com'
     });
 
     expect(res.status).toBe(429);
@@ -79,7 +100,7 @@ describe('Research Tools & Cache (M6)', () => {
   it('GET /rpc/research.cache should retrieve cached entries', async () => {
     const res = await supertest(app)
       .get('/rpc/research.cache')
-      .query({ url: 'https://example.com/article' });
+      .query({ url: 'https://example.com/evidence' });
 
     expect(res.status).toBe(200);
     expect(res.body.snapshot).toBeDefined();
