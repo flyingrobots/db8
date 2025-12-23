@@ -422,7 +422,17 @@ export default function RoomPage({ params }) {
     <main className="max-w-6xl mx-auto p-6 space-y-6 flex flex-col md:flex-row gap-6 items-start">
       <div className={`flex-1 space-y-6 w-full ${showResearch ? 'md:w-2/3' : ''}`}>
         <header className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-foreground">Room</h1>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-3">
+            Room
+            <Button
+              variant="link"
+              size="sm"
+              className="text-xs text-muted-foreground p-0 h-auto"
+              asChild
+            >
+              <Link href={`/room/${encodeURIComponent(roomId)}/provenance`}>View Chain →</Link>
+            </Button>
+          </h1>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => setShowResearch(!showResearch)}>
               {showResearch ? 'Hide Research' : 'Research Tools'}
