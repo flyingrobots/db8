@@ -17,7 +17,7 @@ suite('SSE /events is DB-backed (LISTEN/NOTIFY)', () => {
   let pool;
   let server = null;
   let port;
-  let roomId = '11111111-0000-0000-0000-000000000001';
+  let roomId;
   let roundId;
 
   beforeAll(async () => {
@@ -27,10 +27,11 @@ suite('SSE /events is DB-backed (LISTEN/NOTIFY)', () => {
     // Schema/RPC/RLS are loaded by scripts/prepare-db.js prior to tests.
 
     // Create a room/round via RPC
+    const topic = `SSE Test Room ${Math.random()}`;
     const res = await pool.query('select room_create($1, $2, $3) as id', [
-      'SSE Test Room Unique',
+      topic,
       '{}',
-      'sse-nonce-unique-1'
+      `sse-nonce-${Math.random()}`
     ]);
     roomId = res.rows[0].id;
 
