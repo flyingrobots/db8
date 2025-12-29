@@ -50,7 +50,7 @@
     "eslint-plugin-unicorn": "^61.0.2",
     "lint-staged": "^16.2.3",
     "markdown-link-check": "^3.12.2",
-    "markdownlint": "^0.33.0",
+    "markdownlint": "^0.40.0",
     "markdownlint-cli": "^0.45.0",
     "prettier": "^3.3.3",
     "supertest": "^7.0.0",
