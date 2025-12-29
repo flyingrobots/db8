@@ -59,7 +59,7 @@
   "dependencies": {
     "canonicalize": "2.1.0",
     "express": "^5.1.0",
-    "zod": "^3.25.76"
+    "zod": "^4.2.1"
   },
   "optionalDependencies": {
     "@rollup/rollup-linux-x64-gnu": "^4.52.4",
