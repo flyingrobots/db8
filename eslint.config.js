@@ -29,7 +29,10 @@ export default [
     },
     settings: {
       'import/resolver': {
-        node: { extensions: ['.js', '.jsx', '.json'] },
+        node: {
+          extensions: ['.js', '.jsx', '.json'],
+          moduleDirectory: ['node_modules', './node_modules', 'web/node_modules']
+        },
         alias: {
           map: [['@', './web']],
           extensions: ['.js', '.jsx', '.json']

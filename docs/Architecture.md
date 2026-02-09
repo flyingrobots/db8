@@ -476,7 +476,8 @@ create table rooms (
   topic text not null,
   status text check (status in ('init','active','closed')) default 'init',
   created_at timestamptz default now(),
-  config jsonb not null default '{}'::jsonb  -- knobs: timings, caps, policies
+  config jsonb not null default '{}'::jsonb,  -- knobs: timings, caps, policies
+  client_nonce text unique                    -- idempotency
 );
 
 -- participants (humans or agents)
@@ -588,12 +589,12 @@ returns uuid as $$
 $$ language sql stable;
 
 -- create room + seed participants
-create or replace function room_create(topic text, cfg jsonb)
+create or replace function room_create(topic text, cfg jsonb, client_nonce text default null)
 returns uuid as $$
 declare rid uuid;
 begin
-  insert into rooms(topic, config, status) values (topic, coalesce(cfg
-  ,'{}'::jsonb), 'active') returning id into rid;
+  insert into rooms(topic, config, status, client_nonce) values (topic, coalesce(cfg
+  ,'{}'::jsonb), 'active', client_nonce) returning id into rid;
 
   -- seed debaters anon_1..anon_5
   insert into participants(room_id, anon_name, role)

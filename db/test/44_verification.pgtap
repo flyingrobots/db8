@@ -1,0 +1,78 @@
+-- 44_verification.pgtap — M3 verification schema + RPC invariants
+BEGIN;
+SELECT plan(9);
+
+-- Table existence (portable across pgTAP versions)
+SELECT ok(
+  EXISTS (
+    SELECT 1 FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = 'verification_verdicts'
+  ),
+  'verification_verdicts table exists'
+);
+SELECT has_function('public','verify_submit', ARRAY['uuid','uuid','uuid','text','text','text','text']);
+SELECT has_function('public','verify_summary', ARRAY['uuid']);
+
+-- Seed a room/round/submission and participants (judge + author)
+DO $$
+DECLARE
+  rid uuid := '20000000-0000-0000-0000-000000000001';
+  r0  uuid := '20000000-0000-0000-0000-000000000002';
+  author uuid := '20000000-0000-0000-0000-000000000003';
+  judge  uuid := '20000000-0000-0000-0000-000000000004';
+  sub   uuid;
+BEGIN
+  INSERT INTO rooms(id,title) VALUES (rid,'Verify Room') ON CONFLICT DO NOTHING;
+  INSERT INTO rounds(id,room_id,idx,phase,submit_deadline_unix,published_at_unix)
+    VALUES (r0,rid,0,'published',0, extract(epoch from now())::bigint)
+    ON CONFLICT DO NOTHING;
+  INSERT INTO participants(id,room_id,anon_name,role)
+    VALUES (author,rid,'author_v','debater')
+    ON CONFLICT DO NOTHING;
+  INSERT INTO participants(id,room_id,anon_name,role)
+    VALUES (judge,rid,'judge_v','judge')
+    ON CONFLICT DO NOTHING;
+  INSERT INTO submissions(round_id, author_id, content, canonical_sha256, client_nonce)
+    VALUES (r0,author,'Hello','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','n-ver-1')
+    RETURNING id INTO sub;
+  PERFORM ok(sub IS NOT NULL, 'seeded submission id');
+END $$;
+
+-- verify_submit idempotency on (round, reporter, submission, claim)
+DO $$
+DECLARE
+  r0  uuid := '20000000-0000-0000-0000-000000000002';
+  judge  uuid := '20000000-0000-0000-0000-000000000004';
+  sub   uuid := (SELECT id FROM submissions ORDER BY submitted_at DESC LIMIT 1);
+  id1 uuid; id2 uuid; id3 uuid;
+BEGIN
+  SELECT verify_submit(r0, judge, sub, NULL, 'true', 'looks good', 'n1') INTO id1;
+  SELECT verify_submit(r0, judge, sub, NULL, 'true', 'still good', 'n1') INTO id2;
+  PERFORM ok(id1 = id2, 'verify_submit idempotent for same tuple (no claim)');
+  -- Different claim_id should yield a different row
+  SELECT verify_submit(r0, judge, sub, 'c1', 'false', 'nope', 'n2') INTO id3;
+  PERFORM ok(id3 <> id1, 'verify_submit separate row for different claim');
+END $$;
+
+-- Bounds/role checks
+SELECT throws_ok(
+  $$SELECT verify_submit('20000000-0000-0000-0000-000000000002','20000000-0000-0000-0000-000000000003',(SELECT id FROM submissions LIMIT 1),NULL,'true',NULL,'n3')$$,
+  '42501',
+  'reporter_role_denied'
+);
+
+SELECT throws_ok(
+  $$SELECT verify_submit('20000000-0000-0000-0000-000000000002','20000000-0000-0000-0000-000000000004',(SELECT id FROM submissions LIMIT 1),NULL,'maybe',NULL,'n4')$$,
+  '22023',
+  'invalid_verdict'
+);
+
+-- Summary aggregates
+SELECT results_eq(
+  $$ SELECT total::int FROM verify_summary('20000000-0000-0000-0000-000000000002'::uuid) WHERE claim_id IS NULL $$,
+  ARRAY[1::int],
+  'summary counts one overall-verdict row'
+);
+
+SELECT finish();
+ROLLBACK;

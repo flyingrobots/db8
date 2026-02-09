@@ -15,9 +15,9 @@ const suite = shouldRun ? describe : describe.skip;
 
 suite('SSE /events is DB-backed (LISTEN/NOTIFY)', () => {
   let pool;
-  let server;
+  let server = null;
   let port;
-  let roomId;
+  let roomId = '11111111-0000-0000-0000-000000000001';
   let roundId;
 
   beforeAll(async () => {
@@ -26,9 +26,14 @@ suite('SSE /events is DB-backed (LISTEN/NOTIFY)', () => {
 
     // Schema/RPC/RLS are loaded by scripts/prepare-db.js prior to tests.
 
-    // Create a room/round via RPC and fetch the current round via the secure view
-    const rc = await pool.query('select room_create($1) as id', ['SSE Test Room']);
-    roomId = rc.rows[0].id;
+    // Create a room/round via RPC
+    const res = await pool.query('select room_create($1, $2, $3) as id', [
+      'SSE Test Room Unique',
+      '{}',
+      'sse-nonce-unique-1'
+    ]);
+    roomId = res.rows[0].id;
+
     const cur = await pool.query(
       `select room_id, round_id, idx, phase, submit_deadline_unix
          from view_current_round
@@ -45,7 +50,7 @@ suite('SSE /events is DB-backed (LISTEN/NOTIFY)', () => {
 
   afterAll(async () => {
     __setDbPool(null);
-    await new Promise((r) => server.close(r));
+    if (server) await new Promise((r) => server.close(r));
     await pool.end();
   });
 

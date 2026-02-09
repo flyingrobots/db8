@@ -1,0 +1,64 @@
+-- 45_verification_rls.pgtap — RLS for verification verdicts
+BEGIN;
+SELECT plan(3);
+
+-- Ensure RLS enabled on verification_verdicts (portable)
+WITH f AS (
+  SELECT relrowsecurity AS enabled
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' AND c.relname = 'verification_verdicts'
+)
+SELECT ok((SELECT enabled FROM f), 'RLS enabled on verification_verdicts');
+
+-- Seed minimal data
+DO $$
+DECLARE rid uuid := '21000000-0000-0000-0000-000000000001';
+        r0  uuid := '21000000-0000-0000-0000-000000000002';
+        a1  uuid := '21000000-0000-0000-0000-000000000003';
+        j1  uuid := '21000000-0000-0000-0000-000000000004';
+        sub uuid;
+BEGIN
+  INSERT INTO rooms(id,title) VALUES (rid,'RLS Verify') ON CONFLICT DO NOTHING;
+  INSERT INTO rounds(id,room_id,idx,phase,submit_deadline_unix,published_at_unix)
+    VALUES (r0,rid,0,'published',0,extract(epoch from now())::bigint)
+    ON CONFLICT DO NOTHING;
+  INSERT INTO participants(id,room_id,anon_name,role)
+    VALUES (a1,rid,'a1','debater'),(j1,rid,'j1','judge')
+    ON CONFLICT DO NOTHING;
+  INSERT INTO submissions(round_id, author_id, content, canonical_sha256, client_nonce)
+    VALUES (r0,a1,'A','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','nrls')
+    RETURNING id INTO sub;
+  PERFORM verify_submit(r0, j1, sub, NULL, 'true', 'ok', 'nr');
+END $$;
+
+-- Create reader role and grant minimal permissions
+DO $$
+BEGIN
+  BEGIN
+    CREATE ROLE db8_reader LOGIN;
+  EXCEPTION WHEN duplicate_object THEN END;
+  GRANT USAGE ON SCHEMA public TO db8_reader;
+  GRANT SELECT ON verification_verdicts TO db8_reader;
+  GRANT SELECT ON rounds TO db8_reader;
+END $$;
+
+-- Reporter can always read their own (regardless of publish)
+SET ROLE db8_reader;
+SELECT set_config('db8.participant_id','21000000-0000-0000-0000-000000000004', false);
+SELECT results_eq(
+  $$ SELECT count(*)::int FROM verification_verdicts $$,
+  ARRAY[1::int],
+  'reporter sees their verdict row'
+);
+
+-- Anonymous/other participant can read after publish via policy
+SELECT set_config('db8.participant_id','21000000-0000-0000-0000-000000000099', false);
+SELECT results_eq(
+  $$ SELECT count(*)::int FROM verification_verdicts v JOIN rounds r ON r.id=v.round_id WHERE r.phase='published' $$,
+  ARRAY[1::int],
+  'others see verdicts after publish'
+);
+
+SELECT finish();
+ROLLBACK;

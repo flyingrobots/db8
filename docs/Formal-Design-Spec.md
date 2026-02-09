@@ -27,7 +27,7 @@ model differences rather than cascading influence effects.
 DB8 standardizes all participant references under the unified term **Agent**,
 with clear subtypes reflecting different interaction modalities:
 
-````mermaid
+```mermaid
 classDiagram
     class Agent {
         <<abstract>>
@@ -67,7 +67,7 @@ classDiagram
     Agent <|-- CLIAgent
     Agent <|-- HumanAgent
     Agent <|-- SystemAgent
-```text
+```
 
 **API Agent**: AI system connected via provider APIs (Claude, GPT-4, Gemini).
 Primary function involves synchronized reasoning submission with cryptographic
@@ -123,11 +123,9 @@ stateDiagram-v2
 
     RevelationPhase --> [*]
 
-    note right of IsolationPeriod : Agents cannot access other
-    responses\nDatabase-level isolation enforced
-    note right of RevelationPhase : All submissions visible
-    simultaneously\nEnables clean comparative analysis
-```text
+    note right of IsolationPeriod : Agents cannot access other responses\nDatabase-level isolation enforced
+    note right of RevelationPhase : All submissions visible simultaneously\nEnables clean comparative analysis
+```
 
 ### Attribution Control for Blind/Double-Blind Studies
 
@@ -176,7 +174,7 @@ graph TD
     style E fill:#ccffcc
     style I fill:#ffcccc
     style J fill:#ccffcc
-```text
+```
 
 DB8 addresses this through temporal isolation. All participants receive
 identical prompts simultaneously but cannot observe other responses until the
@@ -216,7 +214,7 @@ C4Context
     Rel(orchestrator, gemini, "Synchronized prompts")
     Rel(provenance, storage, "Cryptographically signed results")
     Rel(analysis, storage, "Retrieves datasets for research")
-```text
+```
 
 The orchestrator component serves as the temporal coordination mechanism,
 ensuring that all AI participants receive prompts at precisely the same moment
@@ -260,7 +258,7 @@ sequenceDiagram
         O2->>DB: mark_round_failed()
         O2->>A: experiment_terminated_event()
     end
-```text
+```
 
 The heartbeat mechanism requires active orchestrators to periodically update the
 `last_heartbeat` column for their managed rooms. Standby orchestrators monitor
@@ -308,7 +306,7 @@ BEGIN
   END LOOP;
 END;
 $$ LANGUAGE plpgsql;
-```text
+```
 
 This approach ensures that orchestrator failures cannot leave experiments in
 undefined states. Recovery procedures either complete barrier periods that
@@ -364,7 +362,7 @@ const canonical = canonicalizeJCS({
 });
 
 const content_hash = sha256Hex(canonical);
-```text
+```
 
 This implementation provides mathematical guarantees that semantically
 equivalent content yields identical hash values regardless of formatting
@@ -402,7 +400,7 @@ sequenceDiagram
     end
 
     Note over DB: Nonce marked as consumed, cannot be reused
-```text
+```
 
 Server-generated nonces include cryptographically random values with
 time-limited validity periods. Each nonce can only be consumed once per agent
@@ -521,7 +519,7 @@ const ResearchVoteSchema = z.object({
     })
     .optional()
 });
-```text
+```
 
 This schema structure enables sophisticated research analysis including
 inter-rater reliability studies, evaluation consistency metrics, and
@@ -578,7 +576,7 @@ function calculateBarrierDuration(participants) {
     return Math.floor(baseTime + (extendedTime - baseTime) * humanRatio);
   }
 }
-```text
+```
 
 This adaptive approach ensures that human agents can provide high-quality
 reasoning contributions without compromising the temporal isolation that defines
@@ -647,7 +645,7 @@ gantt
         Multi-Modal Support         :milestone, m3b, 2024-05-01, 0d
         Federation Protocol         :milestone, m3c, 2024-05-15, 0d
         Visualization Dashboard     :milestone, m3d, 2024-06-01, 0d
-```text
+```
 
 M1 establishes the minimum viable research platform with reliable barrier
 synchronization and basic dataset generation. M2 extends research integrity
@@ -766,7 +764,7 @@ erDiagram
         timestamp committed_at
         text verification_status
     }
-```text
+```
 
 This schema design prioritizes research reproducibility and data integrity over
 application performance, enabling sophisticated longitudinal studies and
@@ -810,7 +808,7 @@ flowchart TD
     P --> Q
 
     style Q fill:#e8f5e8
-```text
+```
 
 ### Row-Level Security Implementation
 
@@ -846,7 +844,7 @@ CREATE POLICY fact_check_phase_access ON fact_check_verdicts
     rd.id
      WHERE s.id = submission_id) = 'verification_phase'
   );
-```text
+```
 
 These policies enforce experimental integrity by automatically adjusting access
 permissions based on experimental phases, preventing information leakage that
@@ -894,4 +892,3 @@ DB8 represents foundational infrastructure for the emerging field of multi-agent
 AI studies, providing researchers with unprecedented experimental control and
 methodological rigor for understanding how AI systems interact, reason, and
 evolve in complex coordination contexts.
-````

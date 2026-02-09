@@ -42,8 +42,27 @@ jobs:
         run: |
           npm ci --prefix web || (echo "web npm ci failed; retrying clean install" && rm -rf web/node_modules web/package-lock.json && npm --prefix web install)
 
+      - name: Detect path changes
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            web:
+              - 'web/**'
+              - 'public/**'
+              - 'eslint.config.js'
+              - 'web/package.json'
+              - 'web/package-lock.json'
+
       - name: Lint
         run: npm run lint
+
+      - name: Build Web (Next.js)
+        if: github.event_name == 'push' || steps.changes.outputs.web == 'true'
+        env:
+          NODE_ENV: production
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: npm --prefix web run build
 
       - name: DB setup
         env:

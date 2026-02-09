@@ -65,6 +65,9 @@ Room State
 - db8 room status
   - Shows topic, phase, round idx, submit deadline, vote window
   - --json dumps the raw /state snapshot
+- db8 room create
+  - Creates a new room via RPC
+  - Flags: --topic <string>, --participants <int>, --submit-minutes <int>
 - db8 room watch
   - Streams timer/events (SSE) and reconnects with backoff
   - Emits one JSON object per line; use --quiet to suppress reconnect logs
@@ -115,6 +118,7 @@ RPC Mapping
 - login: POST /auth/device → /auth/exchange
 - room status: GET /state?room_id
 - room watch: WS /events?room_id (SSE alt)
+- room create: POST /rpc/room.create
 - submit/resubmit: POST /rpc/submission.create
 - withdraw: POST /rpc/submission.withdraw
 - vote continue: POST /rpc/vote.continue

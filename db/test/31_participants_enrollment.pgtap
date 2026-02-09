@@ -25,7 +25,7 @@ SELECT is(
 
 -- 2) Accept plain hex and normalize to sha256:
 SELECT diag('plain hex normalization');
-SELECT like(
+SELECT is(
   participant_fingerprint_set('00000000-0000-0000-0000-00000000aa02', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
   'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
   'plain hex normalized with prefix'
@@ -57,4 +57,3 @@ SELECT throws_ok(
 
 SELECT finish();
 ROLLBACK;
-

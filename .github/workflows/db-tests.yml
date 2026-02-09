@@ -1,0 +1,69 @@
+name: db-tests
+on:
+  # Manual trigger remains available
+  workflow_dispatch:
+  # Run weekly for drift detection
+  schedule:
+    - cron: '0 6 * * 1'  # weekly Monday 06:00 UTC
+  # Run automatically on PRs when DB‑related files change
+  pull_request:
+    paths:
+      - 'db/**'
+      - 'server/rpc.js'
+      - 'server/journal.js'
+      - 'server/watcher.js'
+      - 'server/schemas.js'
+      - 'bin/db8.js'
+      - 'server/test/**'
+    types: [opened, synchronize, reopened]
+jobs:
+  db-integration:
+    # Avoid duplicate concurrent runs for the same PR/branch
+    concurrency:
+      group: db-tests-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        ports: ['5432:5432']
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        # NOTE: Do not include shell line-continuation backslashes here; the
+        # options string is passed directly to `docker create`.
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Install web dependencies
+        run: npm ci --prefix web
+      - name: Create test database
+        env:
+          PGPASSWORD: test
+        run: |
+          until pg_isready -h localhost -p 5432 -U postgres; do sleep 2; done
+          psql -h localhost -U postgres -c 'CREATE DATABASE db8_test;'
+      - name: Prepare schema/RPC/RLS
+        env:
+          DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
+          DB8_TEST_OUTPUT: quiet
+        run: node scripts/prepare-db.js
+      - name: Run lint (server/db only)
+        run: |
+          # Limit lint to non-web paths for this DB-focused job to avoid resolver noise
+          npx eslint server bin scripts eslint.config.js vitest.config.js
+      - name: Run DB-gated tests (glob)
+        env:
+          DB8_TEST_PG: '1'
+          DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
+        run: |
+          npx vitest run "server/test/**/*.db.*.js" server/test/journal.byidx.test.js --reporter verbose

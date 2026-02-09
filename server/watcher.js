@@ -27,7 +27,7 @@ async function signPublished(pool) {
   const q = `
     with pub as (
       select r.room_id, r.id as round_id, r.idx, r.phase, r.submit_deadline_unix, r.published_at_unix, r.continue_vote_close_unix
-      from rounds r
+      from rounds_view r
       left join journals j on j.room_id = r.room_id and j.round_idx = r.idx
       where r.phase = 'published' and j.room_id is null
     )
