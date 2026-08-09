@@ -17,10 +17,6 @@ suite('Watcher DB flips', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: dbUrl });
     // Always apply schema/RPC/RLS to keep isolated and deterministic
-    const schemaSql = fs.readFileSync(path.resolve('db/schema.sql'), 'utf8');
-    await pool.query(schemaSql);
-    const rpcSql = fs.readFileSync(path.resolve('db/rpc.sql'), 'utf8');
-    await pool.query(rpcSql);
     const rlsSql = fs.readFileSync(path.resolve('db/rls.sql'), 'utf8');
     await pool.query(rlsSql);
     const helpersSql = fs.readFileSync(path.resolve('db/test/helpers.sql'), 'utf8');

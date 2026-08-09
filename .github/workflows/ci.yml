@@ -95,15 +95,14 @@ jobs:
       #
       # DB8_TEST_PG unlocks six DB-gated suites that no workflow ran, which is
       # how a journal endpoint that answered idx=999 with the latest round
-      # reached main. Those suites TRUNCATE shared tables, so they deadlock
-      # against concurrent writers; --no-file-parallelism serialises them. Fix
-      # the fixtures to be self-scoped and this flag can go.
+      # reached main. They run in parallel with everything else: their
+      # fixtures are self-scoped now.
       - name: Tests (pass 2 — same database, DB-gated, idempotency gate)
         env:
           DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
           DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
           DB8_TEST_PG: '1'
-        run: npx vitest run --no-file-parallelism
+        run: npm run test:inner
 
       - name: Tests (Postgres RPC integration)
         env:

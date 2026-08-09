@@ -70,11 +70,11 @@ jobs:
         run: npm run test:inner
 
       # Idempotency plus the DB-gated suites — see the matching step in ci.yml
-      # for why both live in one pass and why parallelism is disabled here.
+      # for why both gates live in one pass.
       - name: Run tests (pass 2 — same database, DB-gated, idempotency gate)
         env:
           DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
           DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
           DB8_TEST_PG: '1'
           CI: true
-        run: npx vitest run --no-file-parallelism
+        run: npm run test:inner
