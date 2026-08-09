@@ -134,7 +134,10 @@
     "disanalogy",
     "Flink",
     "interruptible",
-    "SSHSIG"
+    "SSHSIG",
+    "confrelid",
+    "conrelid",
+    "contype"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
