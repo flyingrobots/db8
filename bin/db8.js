@@ -171,9 +171,9 @@ async function main() {
     },
     sha256Hex: (s) => crypto.createHash('sha256').update(s).digest('hex'),
     SubmissionIn: z.object({
-      room_id: z.string().uuid(),
-      round_id: z.string().uuid(),
-      author_id: z.string().uuid(),
+      room_id: z.guid(),
+      round_id: z.guid(),
+      author_id: z.guid(),
       phase: z.enum(['submit', 'published', 'final']),
       deadline_unix: z.number().int(),
       content: z.string().min(1).max(4000),
