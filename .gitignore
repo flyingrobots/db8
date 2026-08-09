@@ -5,7 +5,11 @@
 ._*
 
 # Node / Core
-node_modules/
+# No trailing slash: that form matches directories only, so a symlink named
+# node_modules (as git worktrees commonly need) would slip past and be committed
+# as an absolute-path symlink. The bare name matches dirs, files and symlinks at
+# any depth, so web/node_modules is covered too.
+node_modules
 .npm-cache/
 logs/
 *.log
@@ -23,6 +27,11 @@ pnpm-debug.log*
 .env
 .env.local
 .env.*.local
+
+# db8 signing keys (local-only; never commit)
+# The wildcard also covers the .tmp.<pid>.<rand> staging files used to publish
+# the pair atomically; those are unlinked on success but can survive a crash.
+.db8_signing_key*
 
 # Next.js / Frontend
 .next/

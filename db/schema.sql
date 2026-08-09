@@ -3,6 +3,7 @@
 
 -- UUID generation
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pgmq CASCADE;
 
 -- Helper: current participant id from session (set via set_config('db8.participant_id', uuid, false))
 create or replace function db8_current_participant_id()
@@ -147,6 +148,22 @@ CREATE TABLE IF NOT EXISTS reputation_tag (
   PRIMARY KEY (participant_id, tag)
 );
 
+-- Research Cache (M6)
+CREATE TABLE IF NOT EXISTS research_cache (
+  url_hash     char(64)    PRIMARY KEY CHECK (url_hash ~ '^[0-9a-f]{64}$'),
+  url          text        NOT NULL,
+  snapshot     jsonb       NOT NULL DEFAULT '{}'::jsonb,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+-- Research Usage (M6): track quotas per round
+CREATE TABLE IF NOT EXISTS research_usage (
+  room_id      uuid        NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  round_id     uuid        NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+  fetch_count  integer     NOT NULL DEFAULT 0,
+  PRIMARY KEY (room_id, round_id)
+);
+
 -- Submission flags: allow participants/moderators/viewers to report content
 CREATE TABLE IF NOT EXISTS submission_flags (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -197,7 +214,12 @@ CREATE TABLE admin_audit_log (
   action        text        NOT NULL,
   entity_type   text        NOT NULL,
   entity_id     uuid        NOT NULL,
-  actor_id      uuid        REFERENCES participants(id) ON DELETE SET NULL,
+  -- Deliberately no foreign key. An audit log is a historical record and must
+  -- survive deletion of the participant it names. A FK with ON DELETE SET NULL
+  -- also contradicts admin_audit_actor_oneof_ck below: nulling actor_id leaves
+  -- both actor columns null, the check rejects the update, and the delete
+  -- fails — so any participant who had ever been audited could never be removed.
+  actor_id      uuid,
   system_actor  text,
   actor_context jsonb       NOT NULL DEFAULT '{}'::jsonb,
   details       jsonb       NOT NULL DEFAULT '{}'::jsonb,
@@ -262,3 +284,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_verification_verdicts_unique_nonce
 CREATE INDEX IF NOT EXISTS idx_verification_verdicts_round ON verification_verdicts (round_id);
 CREATE INDEX IF NOT EXISTS idx_verification_verdicts_submission ON verification_verdicts (submission_id);
 CREATE INDEX IF NOT EXISTS idx_verification_verdicts_reporter ON verification_verdicts (reporter_id);
+
+-- Orchestrator Heartbeat (M7)
+CREATE TABLE IF NOT EXISTS orchestrator_heartbeat (
+  id            text        PRIMARY KEY,
+  last_seen_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Initialize DLQ
+SELECT pgmq.create('db8_dlq');

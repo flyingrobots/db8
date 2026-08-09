@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 
 import canonicalizePkg from 'canonicalize';
-import { Buffer } from 'node:buffer';
+import crypto from 'node:crypto';
+import os from 'node:os';
+import path from 'node:path';
+import fsp from 'node:fs/promises';
+import { z } from 'zod';
 
 const EXIT = {
   OK: 0,
@@ -38,7 +42,7 @@ function parseArgs(argv) {
 }
 
 function help() {
-  print(`db8 CLI (skeleton)
+  print(`db8 CLI
 Usage: db8 <command> [options]
 
 Global options:
@@ -51,20 +55,22 @@ Global options:
   --nonce <id>         client idempotency key
 
 Commands:
-  login                obtain a room-scoped JWT (add --device-code for interactive flow)
+  login                obtain a room-scoped JWT
   whoami               print current identity
   room status          show room snapshot
   room watch           stream events (WS/SSE)
-  room create         create a new room (server RPC)
+  room create          create a new room
   draft open           create/open draft.json
   draft validate       validate and print canonical sha
   submit               submit current draft
   resubmit             resubmit with a new nonce
-  flag submission      report a submission to moderators
+  vote continue        cast a vote to continue
+  vote final           cast a final approval vote
+  flag submission      report a submission
   journal pull         download journal (latest or history)
   journal verify       verify journal signature and chain
-  provenance enroll    enroll a participant fingerprint (author binding)
-  provenance verify    verify a submission signature (ed25519 or ssh)
+  provenance enroll    enroll a participant fingerprint
+  provenance verify    verify a submission signature
   verify submit        record a verification verdict
   verify summary       show per-claim/per-submission aggregates
 `);
@@ -74,171 +80,44 @@ async function main() {
   const args = parseArgs(process.argv);
   const [cmd, subcmd] = args._;
 
-  // Basic validation
-  class CLIError extends Error {
-    constructor(message, exitCode = EXIT.VALIDATION) {
-      super(message);
-      this.name = 'CLIError';
-      this.exitCode = exitCode;
-    }
-  }
-
-  function validateArgs(args, cmd, subcmd) {
-    // Allowed commands (cmd or cmd+subcmd mapped with ':')
-    const allowed = new Set([
-      'login',
-      'whoami',
-      'room:status',
-      'room:watch',
-      'room:create',
-      'draft:open',
-      'draft:validate',
-      'submit',
-      'resubmit',
-      'vote:continue',
-      'vote:final',
-      'flag:submission',
-      'journal:pull',
-      'journal:verify',
-      'provenance:verify',
-      'provenance:enroll',
-      'verify:submit',
-      'verify:summary',
-      'auth:challenge',
-      'auth:verify'
-    ]);
-
-    // Help handling
-    if (!cmd || cmd === 'help' || args.help) return { wantHelp: true };
-
-    const key = `${cmd}${subcmd ? ':' + subcmd : ''}`;
-    if (!allowed.has(key)) {
-      throw new CLIError(`Unknown command: ${cmd}${subcmd ? ' ' + subcmd : ''}`, EXIT.NOT_FOUND);
-    }
-
-    // Flags validation
-    if (args.timeout !== undefined) {
-      const t = Number(args.timeout);
-      if (!Number.isInteger(t) || t < 0 || t > 600000) {
-        throw new CLIError(
-          `Invalid --timeout value: ${args.timeout}. Must be integer 0..600000 ms`,
-          EXIT.VALIDATION
-        );
-      }
-      args.timeout = t;
-    }
-
-    if (args.json !== undefined) {
-      // convert truthy strings to boolean
-      if (typeof args.json === 'string') args.json = args.json !== 'false' && args.json !== '0';
-      args.json = Boolean(args.json);
-    }
-    if (args.quiet !== undefined) args.quiet = Boolean(args.quiet);
-    if (args['non-interactive'] !== undefined)
-      args['non-interactive'] = Boolean(args['non-interactive']);
-
-    // Basic UUID-ish sanity for room/participant (loose check)
-    const uuidRe = /^[0-9a-fA-F-]{8,}$/;
-    if (args.room !== undefined && typeof args.room !== 'string') {
-      throw new CLIError('--room must be a string', EXIT.VALIDATION);
-    }
-    if (args.room && !uuidRe.test(args.room)) {
-      // not fatal; warn but continue
-      printerr('--room looks non-standard (expecting uuid-like string)');
-    }
-
-    if (args.participant !== undefined && typeof args.participant !== 'string') {
-      throw new CLIError('--participant must be a string', EXIT.VALIDATION);
-    }
-
-    if (key === 'verify:submit') {
-      if (!args.round || !args.submission || !args.verdict) {
-        throw new CLIError(
-          'verify submit requires --round <uuid> --submission <uuid> --verdict <true|false|unclear|needs_work>',
-          EXIT.VALIDATION
-        );
-      }
-      const allowedVerdicts = new Set(['true', 'false', 'unclear', 'needs_work']);
-      const v = String(args.verdict).toLowerCase();
-      if (!allowedVerdicts.has(v))
-        throw new CLIError(
-          '--verdict must be one of: true,false,unclear,needs_work',
-          EXIT.VALIDATION
-        );
-      if (args.rationale !== undefined && typeof args.rationale !== 'string')
-        throw new CLIError('--rationale must be a string', EXIT.VALIDATION);
-      if (args.claim !== undefined && typeof args.claim !== 'string')
-        throw new CLIError('--claim must be a string', EXIT.VALIDATION);
-    }
-    if (key === 'verify:summary') {
-      if (!args.round)
-        throw new CLIError('verify summary requires --round <uuid>', EXIT.VALIDATION);
-    }
-
-    if (key === 'flag:submission') {
-      if (typeof args.submission !== 'string' || args.submission.length === 0) {
-        throw new CLIError('flag submission requires --submission <uuid>', EXIT.VALIDATION);
-      }
-      if (!uuidRe.test(args.submission))
-        printerr('--submission looks non-standard (expecting uuid-like string)');
-      if (args.reason !== undefined && typeof args.reason !== 'string') {
-        throw new CLIError('--reason must be a string', EXIT.VALIDATION);
-      }
-      if (args.role !== undefined && typeof args.role !== 'string') {
-        throw new CLIError('--role must be a string', EXIT.VALIDATION);
-      }
-      if (args.reporter !== undefined && typeof args.reporter !== 'string') {
-        throw new CLIError('--reporter must be a string', EXIT.VALIDATION);
-      }
-    }
-    if (key === 'journal:pull') {
-      if (!args.room && !process.env.DB8_ROOM_ID)
-        throw new CLIError('journal pull requires --room or DB8_ROOM_ID', EXIT.VALIDATION);
-      if (args.round !== undefined) {
-        const n = Number(args.round);
-        if (!Number.isInteger(n) || n < 0)
-          throw new CLIError('--round must be a non-negative integer', EXIT.VALIDATION);
-        args.round = n;
-      }
-      if (args.out !== undefined && typeof args.out !== 'string')
-        throw new CLIError('--out must be a string path', EXIT.VALIDATION);
-    }
-    if (key === 'journal:verify') {
-      if (!args.room && !process.env.DB8_ROOM_ID)
-        throw new CLIError('journal verify requires --room or DB8_ROOM_ID', EXIT.VALIDATION);
-    }
-    if (key === 'provenance:verify') {
-      const kind = String(args.kind || 'ed25519').toLowerCase();
-      if (!['ed25519', 'ssh'].includes(kind))
-        throw new CLIError("--kind must be 'ed25519' or 'ssh'", EXIT.VALIDATION);
-      if (!args.file && !args.path)
-        throw new CLIError('provenance:verify requires --file <path>', EXIT.VALIDATION);
-      if (kind === 'ed25519') {
-        if (!args['sig-b64']) throw new CLIError('ed25519 requires --sig-b64', EXIT.VALIDATION);
-        if (!args['pub-b64']) throw new CLIError('ed25519 requires --pub-b64', EXIT.VALIDATION);
-      } else if (kind === 'ssh') {
-        if (!args['sig-b64']) throw new CLIError('ssh requires --sig-b64', EXIT.VALIDATION);
-        if (!args['pub-ssh']) throw new CLIError('ssh requires --pub-ssh', EXIT.VALIDATION);
-      }
-    }
-
-    return { wantHelp: false };
-  }
-
-  // Run validation - may throw CLIError
-  const v = validateArgs(args, cmd, subcmd);
-  if (v.wantHelp) {
+  if (!cmd || cmd === 'help' || args.help) {
     help();
     return EXIT.OK;
   }
 
-  const key = `${cmd}${subcmd ? ':' + subcmd : ''}`;
-  // Minimal config/session helpers
-  const os = await import('node:os');
-  const path = await import('node:path');
-  const fsp = await import('node:fs/promises');
-  const crypto = await import('node:crypto');
-  const { z } = await import('zod');
+  // Command Mapping
+  const commandMap = {
+    login: './commands/identity/login.js',
+    whoami: './commands/identity/whoami.js',
+    'room:status': './commands/room/status.js',
+    'room:watch': './commands/room/watch.js',
+    'room:create': './commands/room/create.js',
+    'draft:open': './commands/draft/open.js',
+    'draft:validate': './commands/draft/validate.js',
+    submit: './commands/submit.js',
+    resubmit: './commands/resubmit.js',
+    'vote:continue': './commands/vote/continue.js',
+    'vote:final': './commands/vote/final.js',
+    'flag:submission': './commands/flag/submission.js',
+    'journal:pull': './commands/journal/pull.js',
+    'journal:verify': './commands/journal/verify.js',
+    'provenance:enroll': './commands/provenance/enroll.js',
+    'provenance:verify': './commands/provenance/verify.js',
+    'verify:submit': './commands/verify/submit.js',
+    'verify:summary': './commands/verify/summary.js',
+    'auth:challenge': './commands/auth/challenge.js',
+    'auth:verify': './commands/auth/verify.js'
+  };
+
+  const key = subcmd && commandMap[`${cmd}:${subcmd}`] ? `${cmd}:${subcmd}` : cmd;
+  const commandFile = commandMap[key];
+
+  if (!commandFile) {
+    printerr(`Unknown command: ${cmd} ${subcmd || ''}`);
+    return EXIT.NOT_FOUND;
+  }
+
+  // Shared Context and Helpers
   async function readJsonSafe(p) {
     try {
       return JSON.parse(await fsp.readFile(p, 'utf8'));
@@ -246,6 +125,7 @@ async function main() {
       return null;
     }
   }
+
   const homedir = os.homedir();
   const cfgPath = path.join(homedir, '.db8', 'config.json');
   const sessPath = path.join(homedir, '.db8', 'session.json');
@@ -254,1049 +134,93 @@ async function main() {
   const apiUrl = process.env.DB8_API_URL || config.api_url || 'http://localhost:3000';
   const profile = config.default_profile || 'main';
   const prof = (config.profiles && config.profiles[profile]) || {};
-  const room = args.room || process.env.DB8_ROOM_ID || prof.room_id || session.room_id || '';
-  const participant =
-    args.participant ||
-    process.env.DB8_PARTICIPANT_ID ||
-    prof.participant_id ||
-    session.participant_id ||
-    '';
-  const jwt = args.jwt || process.env.DB8_JWT || session.jwt || '';
 
-  // Helpers
-  function randomNonce() {
-    return (crypto.randomUUID && crypto.randomUUID()) || crypto.randomBytes(16).toString('hex');
-  }
-
-  function canonicalize(value) {
-    const mode = String(
-      process.env.DB8_CANON_MODE || process.env.CANON_MODE || 'jcs'
-    ).toLowerCase();
-    if (mode === 'jcs') return canonicalizePkg(value);
-    const seen = new WeakSet();
-    const walk = (v) => {
-      if (v === null || typeof v !== 'object') return v;
-      if (seen.has(v)) throw new Error('Cannot canonicalize circular structure');
-      seen.add(v);
-      if (Array.isArray(v)) return v.map(walk);
-      const out = {};
-      for (const k of Object.keys(v).sort()) out[k] = walk(v[k]);
-      return out;
-    };
-    return JSON.stringify(walk(value));
-  }
-
-  function sha256Hex(s) {
-    return crypto.createHash('sha256').update(s).digest('hex');
-  }
-
-  const Claim = z.object({
-    id: z.string(),
-    text: z.string().min(3),
-    support: z
-      .array(
-        z.object({
-          kind: z.enum(['citation', 'logic', 'data']),
-          ref: z.string()
-        })
-      )
-      .min(1)
-  });
-  const Citation = z.object({ url: z.string().url(), title: z.string().optional() });
-  const SubmissionIn = z.object({
-    room_id: z.string().uuid(),
-    round_id: z.string().uuid(),
-    author_id: z.string().uuid(),
-    // Align with DB phases
-    phase: z.enum(['submit', 'published', 'final']),
-    deadline_unix: z.number().int(),
-    content: z.string().min(1).max(4000),
-    claims: z.array(Claim).min(1).max(5),
-    citations: z.array(Citation).min(2),
-    client_nonce: z.string().min(8),
-    signature_kind: z.enum(['ssh', 'ed25519']).optional(),
-    signature_b64: z.string().optional(),
-    signer_fingerprint: z.string().optional()
-  });
-
-  async function ensureDir(p) {
-    await fsp.mkdir(p, { recursive: true });
-  }
-  async function writeJson(p, obj) {
-    await ensureDir(path.dirname(p));
-    await fsp.writeFile(p, JSON.stringify(obj, null, 2));
-  }
-  async function readJson(p) {
-    return JSON.parse(await fsp.readFile(p, 'utf8'));
-  }
-
-  // Router (skeleton + basic whoami/status)
-  switch (key) {
-    case 'login': {
-      // Minimal login: either direct JWT or device-code stub storing session.json
-      const uuidRe = /^[0-9a-fA-F-]{8,}$/;
-      const useDeviceCode = Boolean(args['device-code']);
-      const nonInteractive = Boolean(args['non-interactive']);
-
-      const roomFromEnv = room;
-      const participantFromEnv = participant;
-      const tokenFromEnv = jwt;
-
-      const resolveExpires = () => {
-        const v = args.expires || '';
-        const n = Number(v);
-        if (v && Number.isFinite(n) && n > 0) return n;
-        return Math.floor(Date.now() / 1000) + 3600;
-      };
-
-      async function persistSession(roomId, participantId, token, expiresAt, extra = {}) {
-        const sess = {
-          room_id: roomId,
-          participant_id: participantId,
-          jwt: token,
-          expires_at: expiresAt,
-          ...extra
-        };
-        await writeJson(sessPath, sess);
-        const payload = {
-          ok: true,
-          room_id: roomId,
-          participant_id: participantId,
-          expires_at: expiresAt
-        };
-        if (extra.device_code) payload.device_code = extra.device_code;
-        if (args.json) print(JSON.stringify(payload));
-        else print('ok');
-        return EXIT.OK;
-      }
-
-      if (useDeviceCode) {
-        const roomId = roomFromEnv;
-        if (!roomId) {
-          printerr('device-code login requires --room or configured room');
-          return EXIT.VALIDATION;
-        }
-        if (!uuidRe.test(roomId))
-          printerr('--room looks non-standard (expecting uuid-like string)');
-
-        let participantId = participantFromEnv;
-        let token = tokenFromEnv;
-
-        if ((!participantId || !token) && nonInteractive) {
-          printerr(
-            'Provide --participant and --jwt when using --device-code with --non-interactive.'
-          );
-          return EXIT.AUTH;
-        }
-
-        const deviceCode = crypto.randomBytes(3).toString('hex').slice(0, 6).toUpperCase();
-        print(`Device code: ${deviceCode}`);
-        print(`Visit ${apiUrl.replace(/\/$/, '')}/activate to continue.`);
-
-        if (!participantId || !token) {
-          const { createInterface } = await import('node:readline/promises');
-          const rl = createInterface({ input: process.stdin, output: process.stdout });
-          try {
-            if (!participantId)
-              participantId = (await rl.question('Participant ID (uuid): ')).trim();
-            if (!token) token = (await rl.question('Paste JWT (Bearer token): ')).trim();
-          } finally {
-            rl.close();
-          }
-        }
-
-        if (!participantId) {
-          printerr('Device-code login cancelled: missing participant id.');
-          return EXIT.VALIDATION;
-        }
-        if (!uuidRe.test(participantId))
-          printerr('--participant looks non-standard (expecting uuid-like string)');
-        if (!token) {
-          printerr('Device-code login cancelled: JWT required to finish.');
-          return EXIT.AUTH;
-        }
-
-        const expiresAt = resolveExpires();
-        return await persistSession(roomId, participantId, token, expiresAt, {
-          login_via: 'device_code',
-          device_code: deviceCode
-        });
-      }
-
-      // direct login path (existing behaviour)
-      const roomId = roomFromEnv;
-      const participantId = participantFromEnv;
-      const token = tokenFromEnv;
-      if (!roomId) {
-        printerr('login requires --room or DB8_ROOM_ID');
-        return EXIT.VALIDATION;
-      }
-      if (!participantId) {
-        printerr('login requires --participant or DB8_PARTICIPANT_ID');
-        return EXIT.VALIDATION;
-      }
-      if (!token) {
-        printerr('login requires --jwt or DB8_JWT');
-        return EXIT.AUTH;
-      }
-      if (!uuidRe.test(roomId)) printerr('--room looks non-standard (expecting uuid-like string)');
-      if (!uuidRe.test(participantId))
-        printerr('--participant looks non-standard (expecting uuid-like string)');
-
-      const expiresAt = resolveExpires();
-      return await persistSession(roomId, participantId, token, expiresAt, { login_via: 'manual' });
-    }
-    case 'whoami': {
-      const out = {
-        ok: true,
-        room_id: room || null,
-        participant_id: participant || null,
-        jwt_expires_at: session.expires_at || null
-      };
-      if (args.json) print(JSON.stringify(out));
-      else
-        print(
-          `room: ${out.room_id || '-'}\nparticipant: ${out.participant_id || '-'}\njwt exp: ${out.jwt_expires_at || '-'}`
-        );
-      return EXIT.OK;
-    }
-    case 'room:status': {
-      if (!room) {
-        printerr('No room configured. Set --room or DB8_ROOM_ID or config profile.');
-        return EXIT.AUTH;
-      }
-      const url = `${apiUrl.replace(/\/$/, '')}/state?room_id=${encodeURIComponent(room)}`;
-      try {
-        const res = await fetch(url, { headers: jwt ? { authorization: `Bearer ${jwt}` } : {} });
-        const body = await res.json().catch(() => ({}));
-        if (args.json) {
-          print(JSON.stringify(body));
-        } else {
-          const rnd = body.round || {};
-          const now = Math.floor(Date.now() / 1000);
-          function rem(sec) {
-            const s = Math.max(0, sec - now);
-            const mm = String(Math.floor(s / 60)).padStart(2, '0');
-            const ss = String(s % 60).padStart(2, '0');
-            return `${mm}:${ss}`;
-          }
-          let line2 = '';
-          if (rnd.phase === 'submit' && rnd.submit_deadline_unix) {
-            line2 = `submit closes in ${rem(rnd.submit_deadline_unix)}`;
-          } else if (rnd.phase === 'published' && rnd.continue_vote_close_unix) {
-            const t = rnd.continue_tally || { yes: 0, no: 0 };
-            line2 = `continue vote ${rem(rnd.continue_vote_close_unix)} (yes:${t.yes} no:${t.no})`;
-          } else if (rnd.phase === 'final') {
-            line2 = 'final';
-          }
-          print(
-            `ok: ${body.ok === true ? 'yes' : 'no'}\nround: ${rnd.idx ?? '-'} phase: ${rnd.phase ?? '-'}\n${line2}`
-          );
-        }
-        return res.ok ? EXIT.OK : EXIT.NETWORK;
-      } catch (e) {
-        printerr(`Failed to fetch state: ${e?.message || e}`);
-        return EXIT.NETWORK;
-      }
-    }
-    case 'room:watch': {
-      if (!room) {
-        printerr('No room configured. Set --room or DB8_ROOM_ID or config profile.');
-        return EXIT.AUTH;
-      }
-      const quiet = Boolean(args.quiet);
-      const maxEvents = Number(
-        process.env.DB8_CLI_TEST_MAX_EVENTS || (process.env.DB8_CLI_TEST_ONCE === '1' ? 1 : 0)
-      );
-      const url = new URL(apiUrl.replace(/\/$/, '') + '/events');
-      url.searchParams.set('room_id', room);
-      const mod =
-        url.protocol === 'https:' ? await import('node:https') : await import('node:http');
-      let stopRequested = false;
-      let eventsSeen = 0;
-      let attempt = 0;
-      let lastExit = EXIT.OK;
-
-      const sleep = (ms) => new Promise((resolve) => globalThis.setTimeout(resolve, ms));
-      const onSigint = () => {
-        stopRequested = true;
-      };
-      process.once('SIGINT', onSigint);
-
-      const connect = () =>
-        new Promise((resolve) => {
-          const req = mod.request(
-            url,
-            { method: 'GET', headers: { accept: 'text/event-stream' } },
-            (res) => {
-              res.setEncoding('utf8');
-              let buf = '';
-              res.on('data', (chunk) => {
-                buf += chunk;
-                let idx;
-                while ((idx = buf.indexOf('\n\n')) !== -1) {
-                  const frame = buf.slice(0, idx);
-                  buf = buf.slice(idx + 2);
-                  const dataLine = frame.split('\n').find((l) => l.startsWith('data: '));
-                  if (dataLine) {
-                    const json = dataLine.slice(6);
-                    try {
-                      const evt = JSON.parse(json);
-                      process.stdout.write(JSON.stringify(evt) + '\n');
-                      eventsSeen += 1;
-                      attempt = 0; // reset backoff on successful event
-                      if (maxEvents && eventsSeen >= maxEvents) {
-                        stopRequested = true;
-                        try {
-                          req.destroy();
-                        } catch {
-                          /* ignore */
-                        }
-                        resolve(EXIT.OK);
-                        return;
-                      }
-                    } catch {
-                      /* ignore malformed frames */
-                    }
-                  }
-                }
-              });
-              res.on('end', () => resolve(EXIT.OK));
-            }
-          );
-          req.on('error', (e) => {
-            if (!quiet) printerr(e.message);
-            resolve(EXIT.NETWORK);
-          });
-          req.end();
-        });
-
-      while (!stopRequested) {
-        attempt += 1;
-        lastExit = await connect();
-        if (stopRequested || (maxEvents && eventsSeen >= maxEvents)) break;
-        const delay = Math.min(500 * attempt, 5000);
-        if (!quiet) printerr(`reconnecting in ${delay}ms...`);
-        await sleep(delay);
-      }
-
-      process.removeListener('SIGINT', onSigint);
-      return lastExit;
-    }
-    case 'room:create': {
-      // Create a room via API
-      const topic = args.topic || args.t;
-      if (typeof topic !== 'string' || Array.from(topic).length < 3) {
-        printerr('room create requires --topic <string> (min 3 chars)');
-        return EXIT.VALIDATION;
-      }
-      const cfg = {};
-      if (args.participants !== undefined) {
-        const n = Number(args.participants);
-        if (!Number.isInteger(n) || n < 1 || n > 64) {
-          printerr('--participants must be an integer between 1 and 64');
-          return EXIT.VALIDATION;
-        }
-        cfg.participant_count = n;
-      }
-      if (args['submit-minutes'] !== undefined) {
-        const m = Number(args['submit-minutes']);
-        if (!Number.isInteger(m) || m < 1 || m > 1440) {
-          printerr('--submit-minutes must be an integer between 1 and 1440');
-          return EXIT.VALIDATION;
-        }
-        cfg.submit_minutes = m;
-      }
-      const payload = {
-        topic,
-        ...(Object.keys(cfg).length ? { cfg } : {}),
-        client_nonce: args.nonce || randomNonce()
-      };
-      const url = `${apiUrl.replace(/\/$/, '')}/rpc/room.create`;
-      try {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          printerr(body?.error || `Server error ${res.status}`);
-          return EXIT.NETWORK;
-        }
-        if (args.json) print(JSON.stringify(body));
-        else print(`room_id: ${body.room_id}`);
-        return EXIT.OK;
-      } catch (e) {
-        printerr(`Failed to create room: ${e?.message || e}`);
-        return EXIT.NETWORK;
-      }
-    }
-    case 'flag:submission': {
-      const submissionId = String(args.submission || '').trim();
-      const allowedRoles = new Set([
-        'participant',
-        'moderator',
-        'fact_checker',
-        'viewer',
-        'system'
-      ]);
-      const role = String(args.role || 'participant').toLowerCase();
-      if (!allowedRoles.has(role)) {
-        throw new CLIError(`Unknown --role value: ${role}`, EXIT.VALIDATION);
-      }
-      let reporterId = String(args.reporter || '').trim();
-      if (!reporterId && role === 'participant') reporterId = participant;
-      if (!reporterId) {
-        throw new CLIError(
-          'flag submission requires --reporter or configured participant id',
-          EXIT.VALIDATION
-        );
-      }
-      const reason = args.reason ? String(args.reason).trim() : '';
-      const url = `${apiUrl.replace(/\/$/, '')}/rpc/submission.flag`;
-      try {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
-          },
-          body: JSON.stringify({
-            submission_id: submissionId,
-            reporter_id: reporterId,
-            reporter_role: role,
-            reason
-          })
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          printerr(body?.error || `Server error ${res.status}`);
-          return EXIT.NETWORK;
-        }
-        if (args.json) {
-          print(JSON.stringify(body));
-        } else {
-          const count = typeof body.flag_count === 'number' ? body.flag_count : null;
-          print(`flag recorded${count !== null ? ` (total: ${count})` : ''}`);
-        }
-        return EXIT.OK;
-      } catch (e) {
-        printerr(e?.message || String(e));
-        return EXIT.NETWORK;
-      }
-    }
-    case 'draft:open': {
-      // Create a local draft scaffold
-      const anon = process.env.DB8_ANON || 'anon';
-      const idx = args.round ? String(args.round) : '0';
-      const dir = path.join(process.cwd(), 'db8', `round-${idx}`, anon);
-      const file = path.join(dir, 'draft.json');
-      const template = {
-        phase: 'submit',
-        deadline_unix: 0,
-        content: '',
-        claims: [{ id: 'c1', text: '', support: [{ kind: 'citation', ref: '' }] }],
-        citations: [{ url: '' }]
-      };
-      await writeJson(file, template);
-      if (!args.json) print(`Draft at ${file}`);
-      else print(JSON.stringify({ ok: true, path: file }));
-      return EXIT.OK;
-    }
-    case 'draft:validate': {
-      const anon = process.env.DB8_ANON || 'anon';
-      const idx = args.round ? String(args.round) : '0';
-      const file = args.path || path.join(process.cwd(), 'db8', `round-${idx}`, anon, 'draft.json');
-      try {
-        const draft = await readJson(file);
-        // We do not know real ids here; validate structure loosely by remapping ids
-        // Require content, claims, citations min as per client-side rules
-        const minimal = {
-          room_id: room || '00000000-0000-0000-0000-000000000001',
-          round_id: '00000000-0000-0000-0000-000000000002',
-          author_id: participant || '00000000-0000-0000-0000-000000000003',
-          phase: draft.phase || 'submit',
-          deadline_unix: draft.deadline_unix || 0,
-          content: draft.content,
-          claims: draft.claims,
-          citations: draft.citations,
-          client_nonce: args.nonce || randomNonce()
-        };
-        SubmissionIn.parse(minimal);
-        const canon = canonicalize(minimal);
-        const hash = sha256Hex(canon);
-        if (args.json) print(JSON.stringify({ ok: true, canonical_sha256: hash }));
-        else print(`canonical_sha256: ${hash}`);
-        return EXIT.OK;
-      } catch (e) {
-        printerr(`Invalid draft: ${e?.message || e}`);
-        return EXIT.VALIDATION;
-      }
-    }
-    case 'submit': {
-      const dryRun = Boolean(args['dry-run']);
-      if (!room || !participant || (!dryRun && !jwt)) {
-        printerr('Missing room/participant credentials. Run db8 login or set env.');
-        return EXIT.AUTH;
-      }
-      const anon = process.env.DB8_ANON || 'anon';
-      const idx = args.round ? String(args.round) : '0';
-      const file = args.path || path.join(process.cwd(), 'db8', `round-${idx}`, anon, 'draft.json');
-      try {
-        const draft = await readJson(file);
-        const payload = {
-          room_id: room,
-          round_id: '00000000-0000-0000-0000-000000000002',
-          author_id: participant,
-          phase: draft.phase || 'submit',
-          deadline_unix: draft.deadline_unix || 0,
-          content: draft.content,
-          claims: draft.claims,
-          citations: draft.citations,
-          client_nonce: String(args.nonce || randomNonce())
-        };
-        SubmissionIn.parse(payload);
-        const canon = canonicalize(payload);
-        const canonical_sha256 = sha256Hex(canon);
-        if (dryRun) {
-          const info = {
-            ok: true,
-            dry_run: true,
-            canonical_sha256,
-            client_nonce: payload.client_nonce
-          };
-          if (args.json) print(JSON.stringify(info));
-          else
-            print(
-              `canonical_sha256: ${canonical_sha256}\nclient_nonce: ${payload.client_nonce}\n(dry run — not submitted)`
-            );
-          return EXIT.OK;
-        }
-        const url = `${apiUrl.replace(/\/$/, '')}/rpc/submission.create`;
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${jwt}`,
-            'x-db8-client-nonce': payload.client_nonce
-          },
-          body: JSON.stringify(payload)
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          printerr(body?.error || `Server error ${res.status}`);
-          return EXIT.NETWORK;
-        }
-        if (args.json) print(JSON.stringify({ ...body, canonical_sha256 }));
-        else print(`submission_id: ${body.submission_id}\ncanonical_sha256: ${canonical_sha256}`);
-        return EXIT.OK;
-      } catch (e) {
-        printerr(e?.message || String(e));
-        return EXIT.NETWORK;
-      }
-    }
-    case 'vote:continue': {
-      const choice = args._[2];
-      if (choice !== 'continue' && choice !== 'end') {
-        printerr('vote continue requires "continue" or "end"');
-        return EXIT.VALIDATION;
-      }
-      if (!room || !participant || !jwt) {
-        printerr('Missing room/participant credentials. Run db8 login or set env.');
-        return EXIT.AUTH;
-      }
-      const cn = String(args.nonce || randomNonce());
-      try {
-        const res = await fetch(`${apiUrl.replace(/\/$/, '')}/rpc/vote.continue`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${jwt}`
-          },
-          body: JSON.stringify({
-            room_id: room,
-            round_id: '00000000-0000-0000-0000-000000000002', // loose stub
-            voter_id: participant,
-            choice,
-            client_nonce: cn
-          })
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          printerr(body?.error || `Server error ${res.status}`);
-          return EXIT.NETWORK;
-        }
-        if (args.json) print(JSON.stringify(body));
-        else print('ok');
-        return EXIT.OK;
-      } catch (e) {
-        printerr(e?.message || String(e));
-        return EXIT.NETWORK;
-      }
-    }
-    case 'vote:final': {
-      const approval = args.approve !== undefined ? Boolean(args.approve !== 'false') : true;
-      const ranking = args.rank
-        ? String(args.rank)
-            .split(',')
-            .map((s) => s.trim())
-        : [];
-      if (!room || !participant || !jwt) {
-        printerr('Missing room/participant credentials. Run db8 login or set env.');
-        return EXIT.AUTH;
-      }
-      const cn = String(args.nonce || randomNonce());
-      try {
-        const res = await fetch(`${apiUrl.replace(/\/$/, '')}/rpc/vote.final`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${jwt}`
-          },
-          body: JSON.stringify({
-            round_id: '00000000-0000-0000-0000-000000000002', // loose stub
-            voter_id: participant,
-            approval,
-            ranking,
-            client_nonce: cn
-          })
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          printerr(body?.error || `Server error ${res.status}`);
-          return EXIT.NETWORK;
-        }
-        if (args.json) print(JSON.stringify(body));
-        else print('ok');
-        return EXIT.OK;
-      } catch (e) {
-        printerr(e?.message || String(e));
-        return EXIT.NETWORK;
-      }
-    }
-    case 'resubmit':
-      args.nonce = randomNonce();
-      // Reuse submit handler with a new nonce (simple delegation)
-      process.argv = [...process.argv.slice(0, 2), 'submit', ...process.argv.slice(3)];
-      return EXIT.OK;
-    case 'journal:pull': {
-      const roomId = args.room || process.env.DB8_ROOM_ID || session.room_id;
-      const outDir = args.out || path.join(homedir, '.db8', 'journal', roomId);
-      const idx = args.round;
-      const wantHistory = Boolean(args.history) && idx === undefined;
-
-      async function writeFileJson(p, obj) {
-        await ensureDir(path.dirname(p));
-        await fsp.writeFile(p, JSON.stringify(obj, null, 2));
-        return p;
-      }
-
-      try {
-        if (wantHistory) {
-          const res = await fetch(
-            `${apiUrl.replace(/\/$/, '')}/journal/history?room_id=${encodeURIComponent(roomId)}`
-          );
-          const body = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            printerr(body?.error || `Server error ${res.status}`);
-            return EXIT.NETWORK;
-          }
-          const journals = Array.isArray(body.journals) ? body.journals : [];
-          const files = [];
-          for (const j of journals) {
-            const idxOut = Number(j.round_idx ?? (j.core && j.core.idx) ?? 0);
-            const fp = path.join(outDir, `round-${idxOut}.json`);
-            files.push(await writeFileJson(fp, j));
-          }
-          if (args.json) print(JSON.stringify({ ok: true, count: files.length, files }));
-          else if (files.length === 0) print('no journals');
-          else print(files.join('\n'));
-          return EXIT.OK;
-        }
-        // Single latest or specific index
-        const url =
-          idx === undefined
-            ? `${apiUrl.replace(/\/$/, '')}/journal?room_id=${encodeURIComponent(roomId)}`
-            : `${apiUrl.replace(/\/$/, '')}/journal?room_id=${encodeURIComponent(roomId)}&idx=${idx}`;
-        const res = await fetch(url);
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          printerr(body?.error || `Server error ${res.status}`);
-          return EXIT.NETWORK;
-        }
-        const j = body.journal || body; // support either shape
-        const idxOut = Number(j.round_idx ?? (j.core && j.core.idx) ?? 0);
-        const fp = path.join(outDir, `round-${idxOut}.json`);
-        await writeFileJson(fp, j);
-        if (args.json) print(JSON.stringify({ ok: true, file: fp }));
-        else print(fp);
-        return EXIT.OK;
-      } catch (e) {
-        printerr(e?.message || String(e));
-        return EXIT.NETWORK;
-      }
-    }
-    case 'journal:verify': {
-      const roomId = args.room || process.env.DB8_ROOM_ID || session.room_id;
-      const wantHistory = Boolean(args.history);
-      async function verifyOne(j) {
-        try {
-          const pubDer = Buffer.from(j.signature.public_key_b64, 'base64');
-          const pubKey = crypto.createPublicKey({ format: 'der', type: 'spki', key: pubDer });
-          const ok = crypto.verify(
-            null,
-            Buffer.from(j.hash, 'hex'),
-            pubKey,
-            Buffer.from(j.signature.sig_b64, 'base64')
-          );
-          return Boolean(ok);
-        } catch {
-          return false;
-        }
-      }
-      try {
-        if (wantHistory) {
-          const res = await fetch(
-            `${apiUrl.replace(/\/$/, '')}/journal/history?room_id=${encodeURIComponent(roomId)}`
-          );
-          const body = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            printerr(body?.error || `Server error ${res.status}`);
-            return EXIT.NETWORK;
-          }
-          const items = Array.isArray(body.journals) ? body.journals : [];
-          let allOk = true;
-          for (let i = 0; i < items.length; i++) {
-            const j = items[i];
-            const ok = await verifyOne(j);
-            if (!ok) allOk = false;
-            if (i > 0) {
-              const prev = items[i - 1];
-              const prevHash = (j.core && j.core.prev_hash) || null;
-              if (prevHash !== prev.hash) allOk = false;
-            }
-          }
-          if (args.json) print(JSON.stringify({ ok: allOk, count: items.length }));
-          else print(allOk ? 'ok' : 'fail');
-          return allOk ? EXIT.OK : EXIT.VALIDATION;
-        }
-        // Single latest
-        const res = await fetch(
-          `${apiUrl.replace(/\/$/, '')}/journal?room_id=${encodeURIComponent(roomId)}`
-        );
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          printerr(body?.error || `Server error ${res.status}`);
-          return EXIT.NETWORK;
-        }
-        const ok = await verifyOne(body.journal);
-        if (args.json) print(JSON.stringify({ ok }));
-        else print(ok ? 'ok' : 'fail');
-        return ok ? EXIT.OK : EXIT.VALIDATION;
-      } catch (e) {
-        printerr(e?.message || String(e));
-        return EXIT.NETWORK;
-      }
-    }
-    case 'provenance:verify': {
-      const kind = String(args.kind || 'ed25519').toLowerCase();
-      const file = String(args.file || args.path || '');
-      try {
-        const doc = await readJson(file);
-        const body = { doc, signature_kind: kind };
-        if (kind === 'ed25519') {
-          body.sig_b64 = String(args['sig-b64']);
-          body.public_key_b64 = String(args['pub-b64']);
-        } else if (kind === 'ssh') {
-          body.sig_b64 = String(args['sig-b64'] || '');
-          if (args['pub-ssh']) {
-            let val = String(args['pub-ssh']);
-            if (val.startsWith('@')) {
-              const p = val.slice(1);
-              if (!p) throw new CLIError('empty path passed to --pub-ssh', EXIT.VALIDATION);
-              try {
-                // Use the already-imported fsp helper for consistency
-                val = await fsp.readFile(p, 'utf8');
-              } catch {
-                throw new CLIError(`failed to read --pub-ssh file: ${p}`, EXIT.VALIDATION);
-              }
-            }
-            body.public_key_ssh = val.trim();
-          }
-        }
-        const res = await fetch(`${apiUrl.replace(/\/$/, '')}/rpc/provenance.verify`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data?.ok !== true) {
-          if (args.json)
-            print(JSON.stringify({ ok: false, status: res.status, error: data?.error }));
-          else printerr(data?.error || `Server error ${res.status}`);
-          return EXIT.PROVENANCE;
-        }
-        if (args.json) {
-          print(JSON.stringify(data));
-        } else {
-          const fp = data.public_key_fingerprint || '';
-          const bind = data.author_binding || 'unknown';
-          print(`ok ${data.hash}${fp ? ` fp=${fp}` : ''} binding=${bind}`);
-        }
-        return EXIT.OK;
-      } catch (e) {
-        printerr(e?.message || String(e));
-        return EXIT.NETWORK;
-      }
-    }
-    case 'provenance:enroll': {
-      const participantId = args.participant || process.env.DB8_PARTICIPANT_ID || '';
-      if (!participantId) {
-        printerr('provenance enroll requires --participant <uuid>');
-        return EXIT.VALIDATION;
-      }
-      const pubB64 = args['pub-b64'];
-      const fpArg = args.fp || args.fingerprint;
-      if ((!pubB64 && !fpArg) || (pubB64 && fpArg)) {
-        printerr('provide exactly one of --pub-b64 <DER base64> or --fp sha256:<hex>');
-        return EXIT.VALIDATION;
-      }
-      let body;
-      if (pubB64) {
-        body = { participant_id: participantId, public_key_b64: String(pubB64) };
-      } else {
-        const fpNorm = String(fpArg).toLowerCase();
-        if (!/^(sha256:)?[0-9a-f]{64}$/.test(fpNorm)) {
-          printerr('invalid fingerprint format (expect sha256:<64 hex> or 64 hex)');
-          return EXIT.VALIDATION;
-        }
-        body = { participant_id: participantId, fingerprint: fpNorm };
-      }
-      try {
-        const url = `${apiUrl.replace(/\/$/, '')}/rpc/participant.fingerprint.set`;
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
-          },
-          body: JSON.stringify(body)
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data?.ok) {
-          if (args.json)
-            print(JSON.stringify({ ok: false, status: res.status, error: data?.error }));
-          else printerr(data?.error || `Server error ${res.status}`);
-          return EXIT.PROVENANCE;
-        }
-        if (args.json) print(JSON.stringify({ ok: true, fingerprint: data.fingerprint }));
-        else print(data.fingerprint);
-        return EXIT.OK;
-      } catch (e) {
-        printerr(e?.message || String(e));
-        return EXIT.NETWORK;
-      }
-    }
-    case 'verify:submit': {
-      const participantId =
-        args.participant || process.env.DB8_PARTICIPANT_ID || session.participant_id || '';
-      const roundId = String(args.round);
-      const submissionId = String(args.submission);
-      const verdict = String(args.verdict).toLowerCase();
-      const claimId = args.claim ? String(args.claim) : undefined;
-      const rationale = args.rationale ? String(args.rationale) : undefined;
-      const cn = String(args.nonce || randomNonce());
-      if (!participantId) {
-        printerr('verify submit requires --participant (reporter) or configured participant');
-        return EXIT.VALIDATION;
-      }
-      try {
-        const url = `${apiUrl.replace(/\/$/, '')}/rpc/verify.submit`;
-        const body = {
-          round_id: roundId,
-          reporter_id: participantId,
-          submission_id: submissionId,
-          verdict,
-          client_nonce: cn,
-          ...(claimId ? { claim_id: claimId } : {}),
-          ...(rationale ? { rationale } : {})
-        };
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            ...(jwt ? { authorization: `Bearer ${jwt}` } : {})
-          },
-          body: JSON.stringify(body)
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data?.ok) {
-          if (args.json)
-            print(JSON.stringify({ ok: false, status: res.status, error: data?.error }));
-          else printerr(data?.error || `Server error ${res.status}`);
-          if (res.status === 400) return EXIT.VALIDATION;
-          if (res.status === 401 || res.status === 403) return EXIT.AUTH;
-          return EXIT.NETWORK;
-        }
-        if (args.json) print(JSON.stringify({ ok: true, id: data.id }));
-        else print(`ok id=${data.id}`);
-        return EXIT.OK;
-      } catch (e) {
-        const msg = e?.message || String(e);
-        printerr(msg);
-        const name = (e && e.name) || '';
-        const code = (e && e.code) || '';
-        if (
-          name === 'FetchError' ||
-          name === 'AbortError' ||
-          (typeof code === 'string' && /^E/.test(code))
-        ) {
-          return EXIT.NETWORK;
-        }
-        return EXIT.FAIL;
-      }
-    }
-    case 'verify:summary': {
-      const roundId = String(args.round);
-      try {
-        const res = await fetch(
-          `${apiUrl.replace(/\/$/, '')}/verify/summary?round_id=${encodeURIComponent(roundId)}`
-        );
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data?.ok !== true) {
-          if (args.json)
-            print(JSON.stringify({ ok: false, status: res.status, error: data?.error }));
-          else printerr(data?.error || `Server error ${res.status}`);
-          return EXIT.NETWORK;
-        }
-        if (args.json) print(JSON.stringify({ ok: true, rows: data.rows || [] }));
-        else {
-          const rows = data.rows || [];
-          if (rows.length === 0) print('no rows');
-          else
-            rows.forEach((r) =>
-              print(
-                `${r.submission_id} ${r.claim_id ?? '-'} T:${r.true_count} F:${r.false_count} U:${r.unclear_count} N:${r.needs_work_count} Total:${r.total}`
+  const context = {
+    print,
+    printerr,
+    EXIT,
+    apiUrl,
+    room: args.room || process.env.DB8_ROOM_ID || prof.room_id || session.room_id || '',
+    participant:
+      args.participant ||
+      process.env.DB8_PARTICIPANT_ID ||
+      prof.participant_id ||
+      session.participant_id ||
+      '',
+    jwt: args.jwt || process.env.DB8_JWT || session.jwt || '',
+    session,
+    config,
+    homedir,
+    sessPath,
+    fsp,
+    z,
+    randomNonce: () =>
+      (crypto.randomUUID && crypto.randomUUID()) || crypto.randomBytes(16).toString('hex'),
+    writeJson: async (p, obj) => {
+      await fsp.mkdir(path.dirname(p), { recursive: true });
+      await fsp.writeFile(p, JSON.stringify(obj, null, 2));
+    },
+    readJson: async (p) => JSON.parse(await fsp.readFile(p, 'utf8')),
+    ensureDir: async (p) => await fsp.mkdir(p, { recursive: true }),
+    canonicalize: (value) => {
+      const mode = String(
+        process.env.DB8_CANON_MODE || process.env.CANON_MODE || 'jcs'
+      ).toLowerCase();
+      if (mode === 'jcs') return canonicalizePkg(value);
+      return JSON.stringify(value, Object.keys(value).sort());
+    },
+    sha256Hex: (s) => crypto.createHash('sha256').update(s).digest('hex'),
+    SubmissionIn: z.object({
+      room_id: z.string().uuid(),
+      round_id: z.string().uuid(),
+      author_id: z.string().uuid(),
+      phase: z.enum(['submit', 'published', 'final']),
+      deadline_unix: z.number().int(),
+      content: z.string().min(1).max(4000),
+      claims: z
+        .array(
+          z.object({
+            id: z.string(),
+            text: z.string().min(3),
+            support: z
+              .array(
+                z.object({
+                  kind: z.enum(['citation', 'logic', 'data']),
+                  ref: z.string()
+                })
               )
-            );
-        }
-        return EXIT.OK;
-      } catch (e) {
-        printerr(e?.message || String(e));
-        return EXIT.NETWORK;
-      }
-    }
-    case 'auth:challenge': {
-      if (!room || !participant) {
-        printerr('auth challenge requires --room and --participant');
-        return EXIT.VALIDATION;
-      }
-      try {
-        const res = await fetch(
-          `${apiUrl.replace(/\/$/, '')}/auth/challenge?room_id=${encodeURIComponent(room)}&participant_id=${encodeURIComponent(participant)}`
-        );
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data?.ok !== true) {
-          if (args.json)
-            print(JSON.stringify({ ok: false, status: res.status, error: data?.error }));
-          else printerr(data?.error || `Server error ${res.status}`);
-          return EXIT.NETWORK;
-        }
-        if (args.json) print(JSON.stringify(data));
-        else print(data.nonce);
-        return EXIT.OK;
-      } catch (e) {
-        printerr(e?.message || String(e));
-        return EXIT.NETWORK;
-      }
-    }
-    case 'auth:verify': {
-      if (!room || !participant || !args.nonce || !args['sig-b64']) {
-        printerr('auth verify requires --room, --participant, --nonce, and --sig-b64');
-        return EXIT.VALIDATION;
-      }
-      const kind = String(args.kind || 'ed25519').toLowerCase();
-      const body = {
-        room_id: room,
-        participant_id: participant,
-        nonce: String(args.nonce),
-        signature_kind: kind,
-        sig_b64: String(args['sig-b64'])
-      };
-      if (kind === 'ed25519') {
-        if (!args['pub-b64']) {
-          printerr('ed25519 requires --pub-b64');
-          return EXIT.VALIDATION;
-        }
-        body.public_key_b64 = String(args['pub-b64']);
-      } else {
-        if (!args['pub-ssh']) {
-          printerr('ssh requires --pub-ssh');
-          return EXIT.VALIDATION;
-        }
-        let val = String(args['pub-ssh']);
-        if (val.startsWith('@')) {
-          const p = val.slice(1);
-          try {
-            val = await fsp.readFile(p, 'utf8');
-          } catch {
-            printerr(`failed to read --pub-ssh file: ${p}`);
-            return EXIT.VALIDATION;
-          }
-        }
-        body.public_key_ssh = val.trim();
-      }
+              .min(1)
+          })
+        )
+        .min(1)
+        .max(5),
+      citations: z
+        .array(
+          z.object({
+            url: z.string().url(),
+            title: z.string().optional()
+          })
+        )
+        .min(2),
+      client_nonce: z.string().min(8),
+      signature_kind: z.enum(['ssh', 'ed25519']).optional(),
+      signature_b64: z.string().optional(),
+      signer_fingerprint: z.string().optional()
+    })
+  };
 
-      try {
-        const res = await fetch(`${apiUrl.replace(/\/$/, '')}/auth/verify`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data?.ok !== true) {
-          if (args.json)
-            print(JSON.stringify({ ok: false, status: res.status, error: data?.error }));
-          else printerr(data?.error || `Server error ${res.status}`);
-          return EXIT.AUTH;
-        }
-        // Save session if successful
-        await writeJson(sessPath, {
-          room_id: data.room_id,
-          participant_id: data.participant_id,
-          jwt: data.jwt,
-          expires_at: data.expires_at,
-          login_via: 'ssh'
-        });
-        if (args.json) print(JSON.stringify(data));
-        else print('ok');
-        return EXIT.OK;
-      } catch (e) {
-        printerr(e?.message || String(e));
-        return EXIT.NETWORK;
-      }
-    }
-    default:
-      // Shouldn't reach here because validateArgs checks allowed commands,
-      // but return a safe error code if it does.
-      printerr(`Unknown command: ${cmd}${subcmd ? ' ' + subcmd : ''}`);
-      help();
-      return EXIT.NOT_FOUND;
-  }
-}
-
-// Top-level runner centralizes process.exit so tests can call main()
-async function run() {
   try {
-    const code = await main();
-    process.exit(Number.isInteger(code) ? code : EXIT.OK);
+    const module = await import(commandFile);
+    return await module.run(args, context);
   } catch (err) {
-    // CLIError may carry an exitCode
-    const exitCode = err && err.exitCode ? err.exitCode : EXIT.NETWORK;
-    printerr(err?.stack || err?.message || String(err));
-    process.exit(exitCode);
+    printerr(err.stack || err.message || String(err));
+    return EXIT.FAIL;
   }
 }
 
-run();
+main()
+  .then((code) => process.exit(code))
+  .catch((err) => {
+    printerr(err);
+    process.exit(EXIT.FAIL);
+  });

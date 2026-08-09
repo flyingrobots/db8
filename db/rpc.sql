@@ -361,11 +361,13 @@ END;
 $$;
 
 -- Views
+DROP VIEW IF EXISTS view_current_round CASCADE;
 CREATE OR REPLACE VIEW view_current_round AS
   SELECT DISTINCT ON (room_id) room_id, id as round_id, idx, phase, submit_deadline_unix, published_at_unix, continue_vote_close_unix
   FROM rounds
   ORDER BY room_id, idx DESC;
 
+DROP VIEW IF EXISTS view_continue_tally CASCADE;
 CREATE OR REPLACE VIEW view_continue_tally AS
   SELECT r.room_id, r.id as round_id,
     COALESCE(SUM(CASE WHEN v.kind='continue' AND (v.ballot->>'choice')='continue' THEN 1 ELSE 0 END), 0) AS yes,
@@ -375,11 +377,13 @@ CREATE OR REPLACE VIEW view_continue_tally AS
   GROUP BY r.room_id, r.id;
 
 -- Read-only views for safe consumption (RLS-ready)
+DROP VIEW IF EXISTS submissions_view CASCADE;
 CREATE OR REPLACE VIEW submissions_view AS
   SELECT
     s.id,
     r.room_id,
     s.round_id,
+    r.idx,
     CASE 
       WHEN (rm.config->>'attribution_mode') = 'masked' 
            AND r.phase = 'submit' 
@@ -398,6 +402,7 @@ CREATE OR REPLACE VIEW submissions_view AS
   JOIN rooms rm ON rm.id = r.room_id
   JOIN participants p ON p.id = s.author_id;
 
+DROP VIEW IF EXISTS votes_view CASCADE;
 CREATE OR REPLACE VIEW votes_view AS
   SELECT
     v.id,
@@ -410,20 +415,24 @@ CREATE OR REPLACE VIEW votes_view AS
   FROM votes v
   JOIN rounds r ON r.id = v.round_id;
 
+DROP VIEW IF EXISTS participants_view CASCADE;
 CREATE OR REPLACE VIEW participants_view AS
   SELECT id, room_id, anon_name, role, ssh_fingerprint, created_at
   FROM participants;
 
+DROP VIEW IF EXISTS rounds_view CASCADE;
 CREATE OR REPLACE VIEW rounds_view AS
   SELECT id, room_id, idx, phase, submit_deadline_unix, published_at_unix, continue_vote_close_unix
   FROM rounds;
 
 -- Aggregated submissions with flags for secure consumption
+DROP VIEW IF EXISTS submissions_with_flags_view CASCADE;
 CREATE OR REPLACE VIEW submissions_with_flags_view AS
   SELECT
     s.id,
     r.room_id,
     s.round_id,
+    r.idx,
     CASE 
       WHEN (rm.config->>'attribution_mode') = 'masked' 
            AND r.phase = 'submit' 
@@ -462,12 +471,25 @@ CREATE OR REPLACE VIEW submissions_with_flags_view AS
      GROUP BY sf.submission_id
   ) f ON f.submission_id = s.id;
 
+DROP VIEW IF EXISTS view_final_tally CASCADE;
+CREATE OR REPLACE VIEW view_final_tally AS
+  SELECT
+    f.round_id,
+    r.room_id,
+    COUNT(*) FILTER (WHERE f.approval = true) AS approves,
+    COUNT(*) FILTER (WHERE f.approval = false) AS rejects,
+    COUNT(*) AS total
+  FROM final_votes f
+  JOIN rounds r ON r.id = f.round_id
+  GROUP BY f.round_id, r.room_id;
+
 -- Harden views to avoid qual pushdown across RLS boundaries
 ALTER VIEW submissions_view SET (security_barrier = true);
 ALTER VIEW votes_view SET (security_barrier = true);
 ALTER VIEW participants_view SET (security_barrier = true);
 ALTER VIEW rounds_view SET (security_barrier = true);
 ALTER VIEW submissions_with_flags_view SET (security_barrier = true);
+ALTER VIEW view_final_tally SET (security_barrier = true);
 
 -- Notify function
 CREATE OR REPLACE FUNCTION notify_rounds_change() RETURNS trigger AS $fn$
@@ -600,8 +622,8 @@ BEGIN
   END IF;
 
   -- Case 1: explicit sha256:<hex> or plain 64-hex
-  IF p_input ~ '^(sha256:)?[0-9a-fA-F]{64}$' THEN
-    v_hex := lower(replace(p_input, 'sha256:', ''));
+  IF p_input ~* '^(sha256:)?[0-9a-f]{64}$' THEN
+    v_hex := lower(regexp_replace(p_input, '^sha256:', '', 'i'));
     v_norm := 'sha256:' || v_hex;
   ELSE
     -- Case 2: try base64 decode and hash
@@ -680,7 +702,7 @@ BEGIN
 
   INSERT INTO verification_verdicts (round_id, submission_id, reporter_id, claim_id, verdict, rationale, client_nonce)
   VALUES (p_round_id, p_submission_id, p_reporter_id, NULLIF(p_claim_id, ''), p_verdict, NULLIF(p_rationale, ''), NULLIF(p_client_nonce, ''))
-  ON CONFLICT (round_id, reporter_id, submission_id, coalesce(claim_id, ''))
+  ON CONFLICT (round_id, reporter_id, submission_id, coalesce(claim_id, ''), (COALESCE(NULLIF(client_nonce, ''), '')))
   DO UPDATE SET verdict = EXCLUDED.verdict, rationale = COALESCE(EXCLUDED.rationale, verification_verdicts.rationale)
   RETURNING id INTO v_id;
 
@@ -856,17 +878,6 @@ CREATE OR REPLACE VIEW view_score_aggregates AS
 
 ALTER VIEW view_score_aggregates SET (security_barrier = true);
 
-CREATE OR REPLACE VIEW view_final_tally AS
-  SELECT
-    round_id,
-    COUNT(*) FILTER (WHERE approval = true) AS approves,
-    COUNT(*) FILTER (WHERE approval = false) AS rejects,
-    COUNT(*) AS total
-  FROM final_votes
-  GROUP BY round_id;
-
-ALTER VIEW view_final_tally SET (security_barrier = true);
-
 -- reputation_update_round: deterministic Elo update for a completed round
 CREATE OR REPLACE FUNCTION reputation_update_round(
   p_round_id uuid
@@ -941,5 +952,166 @@ BEGIN
     jsonb_build_object('round_id', p_round_id),
     jsonb_build_object('action', 'reputation_update')
   );
+END;
+$$;
+
+-- research_cache_upsert: store a URL snapshot
+CREATE OR REPLACE FUNCTION research_cache_upsert(
+  p_url text,
+  p_url_hash text,
+  p_snapshot jsonb
+) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO research_cache (url, url_hash, snapshot)
+  VALUES (p_url, p_url_hash, p_snapshot)
+  ON CONFLICT (url_hash) DO UPDATE SET snapshot = EXCLUDED.snapshot;
+END;
+$$;
+
+-- research_usage_increment: track and enforce fetch quotas
+CREATE OR REPLACE FUNCTION research_usage_increment(
+  p_room_id uuid,
+  p_round_id uuid,
+  p_max integer
+) RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_count integer;
+BEGIN
+  INSERT INTO research_usage (room_id, round_id, fetch_count)
+  VALUES (p_room_id, p_round_id, 1)
+  ON CONFLICT (room_id, round_id) DO UPDATE SET fetch_count = research_usage.fetch_count + 1
+  RETURNING fetch_count INTO v_count;
+
+  IF p_max > 0 AND v_count > p_max THEN
+    RAISE EXCEPTION 'quota_exceeded' USING ERRCODE = '22023';
+  END IF;
+
+  RETURN v_count;
+END;
+$$;
+
+-- view_unsigned_published_rounds: rounds that are published but lack a journal entry
+DROP VIEW IF EXISTS view_unsigned_published_rounds CASCADE;
+CREATE OR REPLACE VIEW view_unsigned_published_rounds AS
+  WITH pub AS (
+    SELECT 
+      r.room_id, 
+      r.id AS round_id, 
+      r.idx, 
+      r.phase, 
+      r.submit_deadline_unix, 
+      r.published_at_unix, 
+      r.continue_vote_close_unix
+    FROM rounds_view r
+    LEFT JOIN journals j ON j.room_id = r.room_id AND j.round_idx = r.idx
+    WHERE r.phase = 'published' AND j.room_id IS NULL
+  )
+  SELECT 
+    p.*, 
+    COALESCE(t.yes, 0) AS yes, 
+    COALESCE(t.no, 0) AS no
+  FROM pub p
+  LEFT JOIN view_continue_tally t ON t.room_id = p.room_id AND t.round_id = p.round_id;
+
+ALTER VIEW view_unsigned_published_rounds SET (security_barrier = true);
+
+-- dlq_push: push a failed payload to the DLQ
+CREATE OR REPLACE FUNCTION dlq_push(
+  p_payload jsonb
+) RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN pgmq.send('db8_dlq', p_payload);
+END;
+$$;
+
+-- heartbeat: signal orchestrator liveness
+CREATE OR REPLACE FUNCTION orchestrator_heartbeat(
+  p_id text
+) RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  INSERT INTO orchestrator_heartbeat (id, last_seen_at)
+  VALUES (p_id, now())
+  ON CONFLICT (id) DO UPDATE SET last_seen_at = now();
+END;
+$$;
+
+-- recover_abandoned_barrier: cleanup rounds stuck in submit if orchestrator died
+CREATE OR REPLACE FUNCTION recover_abandoned_barrier(
+  p_timeout_seconds integer DEFAULT 60
+) RETURNS integer
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_count integer := 0;
+BEGIN
+  -- If no active heartbeats in the last X seconds, assume orchestrator died
+  IF NOT EXISTS (
+    SELECT 1 FROM orchestrator_heartbeat 
+    WHERE last_seen_at > now() - (p_timeout_seconds * interval '1 second')
+  ) THEN
+    -- CONCEPTUAL: In a real system, we'd take over or force a flip.
+    -- For db8 M7, we'll force-publish due rounds that were abandoned.
+    PERFORM round_publish_due();
+    GET DIAGNOSTICS v_count = ROW_COUNT;
+  END IF;
+  RETURN v_count;
+END;
+$$;
+
+-- submission_flag: Allows participants/mods to flag a submission.
+-- Returns the new flag count for that submission.
+CREATE OR REPLACE FUNCTION submission_flag(
+  p_submission_id uuid,
+  p_reporter_id text,
+  p_reporter_role text,
+  p_reason text
+) RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_count integer;
+  v_round uuid;
+BEGIN
+  -- Validate submission exists
+  SELECT round_id INTO v_round FROM submissions WHERE id = p_submission_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'submission_not_found' USING ERRCODE = '22023';
+  END IF;
+
+  -- Insert flag (ignore duplicate reporter on same submission)
+  INSERT INTO submission_flags(submission_id, reporter_id, reporter_role, reason)
+  VALUES (p_submission_id, p_reporter_id, p_reporter_role, p_reason)
+  ON CONFLICT (submission_id, reporter_id) DO NOTHING;
+
+  -- Return updated count
+  SELECT COUNT(*)::int INTO v_count FROM submission_flags WHERE submission_id = p_submission_id;
+
+  PERFORM admin_audit_log_write(
+    'flag',
+    'flag',
+    p_submission_id,
+    NULL,
+    'user',
+    jsonb_build_object('reporter_id', p_reporter_id),
+    jsonb_build_object('reason', p_reason)
+  );
+
+  RETURN v_count;
 END;
 $$;

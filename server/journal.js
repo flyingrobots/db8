@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { Buffer } from 'node:buffer';
-import { canonicalizeJCS, canonicalizeSorted, sha256Hex } from './utils.js';
+import { canonicalizeJCS, canonicalizeSorted, sha256Hex, log } from './utils.js';
 
 /**
  * createSigner creates an Ed25519 signer and public key export.
@@ -17,12 +17,12 @@ export function createSigner({ privateKeyPem, publicKeyPem, canonMode = 'sorted'
     } catch (err) {
       const msg =
         'Invalid SIGNING_PRIVATE_KEY or SIGNING_PUBLIC_KEY PEM format. Provide valid PEM-encoded Ed25519 keys.';
+      log.error(msg, { error: err.message });
       throw new Error(msg, { cause: err });
     }
   } else {
-    // Dev-only in-memory keypair
-    console.warn(
-      '[journal] Using in-memory dev keypair — provide SIGNING_PRIVATE_KEY and SIGNING_PUBLIC_KEY (PEM) in production.'
+    log.warn(
+      'Using in-memory dev keypair — provide SIGNING_PRIVATE_KEY and SIGNING_PUBLIC_KEY (PEM) in production.'
     );
     const { publicKey: pub, privateKey: priv } = crypto.generateKeyPairSync('ed25519');
     privateKey = priv;

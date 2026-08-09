@@ -102,6 +102,8 @@
     "relrowsecurity",
     "regs",
     "collab",
+    "proname",
+    "Runbook",
     "timestep",
     "timesteps",
     "Timestep",
@@ -131,7 +133,11 @@
     "milliwatts",
     "disanalogy",
     "Flink",
-    "interruptible"
+    "interruptible",
+    "SSHSIG",
+    "confrelid",
+    "conrelid",
+    "contype"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }

@@ -12,9 +12,8 @@ describe('Attribution Control (M4)', () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: dbUrl });
     __setDbPool(pool);
-    await pool.query(
-      'truncate rooms, participants, rounds, submissions, votes, final_votes, admin_audit_log cascade'
-    );
+    // Note: avoid global TRUNCATE here to prevent race conditions with other tests if possible,
+    // or ensure unique IDs are used everywhere.
   });
 
   afterAll(async () => {
@@ -25,56 +24,104 @@ describe('Attribution Control (M4)', () => {
     const roomId = '60000000-0000-0000-0000-000000000001';
     const roundId = '60000000-0000-0000-0000-000000000002';
     const participantId = '60000000-0000-0000-0000-000000000003';
+    const submissionId = '60000000-0000-0000-0000-000000000004';
 
-    // Seed room with masked attribution
-    await pool.query(
-      'insert into rooms(id, title, config) values ($1, $2, \'{"attribution_mode": "masked"}\')',
-      [roomId, 'Masked Room']
-    );
-    await pool.query("insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, 'submit')", [
-      roundId,
-      roomId
-    ]);
-    await pool.query(
-      "insert into participants(id, room_id, anon_name) values ($1, $2, 'Agent 1')",
-      [participantId, roomId]
-    );
-    await pool.query(
-      "insert into submissions(round_id, author_id, content, canonical_sha256, client_nonce) values ($1, $2, 'Content', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'nonce-1')",
-      [roundId, participantId]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
 
-    // Query view as a DIFFERENT participant
-    await pool.query("set db8.participant_id = '00000000-0000-0000-0000-000000000000'");
-    const res = await pool.query(
-      'select * from submissions_view where id = (select id from submissions limit 1)'
-    );
+      // Seed room with masked attribution
+      await client.query(
+        'insert into rooms(id, title, config) values ($1, $2, $3::jsonb) on conflict (id) do update set title = excluded.title, config = excluded.config',
+        [roomId, 'Masked Room', '{"attribution_mode":"masked"}']
+      );
+      await client.query(
+        "insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, 'submit') on conflict (id) do update set room_id = excluded.room_id, phase = excluded.phase",
+        [roundId, roomId]
+      );
+      await client.query(
+        'insert into participants(id, room_id, anon_name) values ($1, $2, $3) on conflict (id) do update set room_id = excluded.room_id, anon_name = excluded.anon_name',
+        [participantId, roomId, 'Agent 1']
+      );
+      await client.query(
+        "insert into submissions(id, round_id, author_id, content, canonical_sha256, client_nonce) values ($1, $2, $3, 'Content', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'nonce-attrib-1') on conflict (id) do nothing",
+        [submissionId, roundId, participantId]
+      );
 
-    // In 'submit' phase, other authors should be NULL if masked
-    expect(res.rows[0].author_id).toBeNull();
-    expect(res.rows[0].author_anon_name).toBe('Agent 1');
+      // Query view as a DIFFERENT participant
+      await client.query("select set_config('db8.participant_id', $1, true)", [
+        '00000000-0000-0000-0000-000000000000'
+      ]);
+      const res = await client.query('select * from submissions_view where id = $1', [
+        submissionId
+      ]);
 
-    // Query view as the AUTHOR
-    await pool.query("select set_config('db8.participant_id', $1, false)", [participantId]);
-    const resAuth = await pool.query('select * from submissions_view where author_id = $1', [
-      participantId
-    ]);
-    expect(resAuth.rows.length).toBe(1);
-    expect(resAuth.rows[0].author_id).toBe(participantId);
+      // In 'submit' phase, other authors should be NULL if masked
+      expect(res.rows[0].author_id).toBeNull();
+      expect(res.rows[0].author_anon_name).toBe('Agent 1');
+
+      // Query view as the AUTHOR
+      await client.query("select set_config('db8.participant_id', $1, true)", [participantId]);
+      const resAuth = await client.query('select * from submissions_view where id = $1', [
+        submissionId
+      ]);
+      expect(resAuth.rows.length).toBe(1);
+      expect(resAuth.rows[0].author_id).toBe(participantId);
+    } finally {
+      try {
+        await client.query('rollback');
+      } catch {
+        /* ignore */
+      }
+      client.release();
+    }
   });
 
   it('submissions_view should reveal author_id in masked mode if phase is NOT submit', async () => {
-    const roundId = '60000000-0000-0000-0000-000000000002';
-    const participantId = '60000000-0000-0000-0000-000000000003';
+    const roomId = '60000000-0000-0000-0000-000000000010';
+    const roundId = '60000000-0000-0000-0000-000000000011';
+    const participantId = '60000000-0000-0000-0000-000000000012';
+    const submissionId = '60000000-0000-0000-0000-000000000013';
 
-    await pool.query("update rounds set phase = 'published' where id = $1", [roundId]);
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
 
-    // Query view as a DIFFERENT participant
-    await pool.query("set db8.participant_id = '00000000-0000-0000-0000-000000000000'");
-    const res = await pool.query('select * from submissions_view where round_id = $1', [roundId]);
+      await client.query(
+        'insert into rooms(id, title, config) values ($1, $2, $3::jsonb) on conflict (id) do update set title = excluded.title, config = excluded.config',
+        [roomId, 'Masked Room Published', '{"attribution_mode":"masked"}']
+      );
+      await client.query(
+        "insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, 'published') on conflict (id) do update set room_id = excluded.room_id, phase = excluded.phase",
+        [roundId, roomId]
+      );
+      await client.query(
+        'insert into participants(id, room_id, anon_name) values ($1, $2, $3) on conflict (id) do update set room_id = excluded.room_id, anon_name = excluded.anon_name',
+        [participantId, roomId, 'Agent 1']
+      );
+      await client.query(
+        "insert into submissions(id, round_id, author_id, content, canonical_sha256, client_nonce) values ($1, $2, $3, 'Content', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'nonce-attrib-2') on conflict (id) do nothing",
+        [submissionId, roundId, participantId]
+      );
 
-    // After submit phase, id is visible but UI should still prefer anon_name
-    expect(res.rows[0].author_id).toBe(participantId);
-    expect(res.rows[0].author_anon_name).toBe('Agent 1');
+      // Query view as a DIFFERENT participant
+      await client.query("select set_config('db8.participant_id', $1, true)", [
+        '00000000-0000-0000-0000-000000000000'
+      ]);
+      const res = await client.query('select * from submissions_view where id = $1', [
+        submissionId
+      ]);
+
+      // After submit phase, id is visible but UI should still prefer anon_name
+      expect(res.rows[0].author_id).toBe(participantId);
+      expect(res.rows[0].author_anon_name).toBe('Agent 1');
+    } finally {
+      try {
+        await client.query('rollback');
+      } catch {
+        /* ignore */
+      }
+      client.release();
+    }
   });
 });

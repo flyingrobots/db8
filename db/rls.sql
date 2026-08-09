@@ -12,6 +12,8 @@ alter table if exists final_votes enable row level security;
 alter table if exists scores enable row level security;
 alter table if exists reputation enable row level security;
 alter table if exists reputation_tag enable row level security;
+alter table if exists research_cache enable row level security;
+alter table if exists research_usage enable row level security;
 
 -- Minimal read policy on submissions:
 --  - During 'submit': only the author can read their own row
@@ -67,6 +69,35 @@ with check (
 
 drop policy if exists rounds_test_delete_policy on rounds;
 create policy rounds_test_delete_policy on rounds
+for delete to public
+using (
+  current_database() LIKE '%\_test' ESCAPE '\' OR current_database() LIKE 'test\_%' ESCAPE '\'
+);
+
+-- Allow deletes in test databases for teardown helpers
+drop policy if exists final_votes_test_delete_policy on final_votes;
+create policy final_votes_test_delete_policy on final_votes
+for delete to public
+using (
+  current_database() LIKE '%\_test' ESCAPE '\' OR current_database() LIKE 'test\_%' ESCAPE '\'
+);
+
+drop policy if exists scores_test_delete_policy on scores;
+create policy scores_test_delete_policy on scores
+for delete to public
+using (
+  current_database() LIKE '%\_test' ESCAPE '\' OR current_database() LIKE 'test\_%' ESCAPE '\'
+);
+
+drop policy if exists reputation_test_delete_policy on reputation;
+create policy reputation_test_delete_policy on reputation
+for delete to public
+using (
+  current_database() LIKE '%\_test' ESCAPE '\' OR current_database() LIKE 'test\_%' ESCAPE '\'
+);
+
+drop policy if exists reputation_tag_test_delete_policy on reputation_tag;
+create policy reputation_tag_test_delete_policy on reputation_tag
 for delete to public
 using (
   current_database() LIKE '%\_test' ESCAPE '\' OR current_database() LIKE 'test\_%' ESCAPE '\'
@@ -188,6 +219,26 @@ create policy reputation_tag_read_policy on reputation_tag for select using (tru
 
 drop policy if exists reputation_tag_no_write_policy on reputation_tag;
 create policy reputation_tag_no_write_policy on reputation_tag
+for all to public
+using (false)
+with check (false);
+
+-- Research Cache: readable by anyone
+drop policy if exists research_cache_read_policy on research_cache;
+create policy research_cache_read_policy on research_cache for select using (true);
+
+drop policy if exists research_cache_no_write_policy on research_cache;
+create policy research_cache_no_write_policy on research_cache
+for all to public
+using (false)
+with check (false);
+
+-- Research Usage: readable by anyone
+drop policy if exists research_usage_read_policy on research_usage;
+create policy research_usage_read_policy on research_usage for select using (true);
+
+drop policy if exists research_usage_no_write_policy on research_usage;
+create policy research_usage_no_write_policy on research_usage
 for all to public
 using (false)
 with check (false);

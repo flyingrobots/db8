@@ -25,19 +25,27 @@ describe('Room Lifecycle (M4)', () => {
     const roundId = '77777777-0000-0000-0000-000000000002';
     const participantId = '77777777-0000-0000-0000-000000000003';
 
-    await pool.query(
-      'insert into rooms(id, title, status) values ($1, $2, $3) on conflict (id) do update set status = excluded.status',
-      [roomId, 'Lifecycle Room Unique', 'active']
-    );
+    // Seed from scratch. ON CONFLICT DO NOTHING left the previous run's terminal
+    // state in place — the round stayed 'final' and the room stayed 'closed' —
+    // so a re-run asserted against stale rows instead of exercising the
+    // transition, and the vote insert below collided on its fixed client_nonce.
+    // Deleting the room cascades to rounds, participants and votes.
+    await pool.query('delete from rooms where id = $1', [roomId]);
+    await pool.query('insert into rooms(id, title, status) values ($1, $2, $3)', [
+      roomId,
+      'Lifecycle Room Unique',
+      'active'
+    ]);
     // Round is published and vote window closed
     await pool.query(
-      "insert into rounds(id, room_id, idx, phase, continue_vote_close_unix) values ($1, $2, 0, 'published', 100) on conflict (id) do nothing",
+      "insert into rounds(id, room_id, idx, phase, continue_vote_close_unix) values ($1, $2, 0, 'published', 100)",
       [roundId, roomId]
     );
-    await pool.query(
-      'insert into participants(id, room_id, anon_name) values ($1, $2, $3) on conflict (id) do nothing',
-      [participantId, roomId, 'voter_unique_1']
-    );
+    await pool.query('insert into participants(id, room_id, anon_name) values ($1, $2, $3)', [
+      participantId,
+      roomId,
+      'voter_unique_1'
+    ]);
 
     // Tally is No (or equal), so it should transition to final
     await pool.query(
