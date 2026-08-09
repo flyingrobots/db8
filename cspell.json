@@ -134,7 +134,12 @@
     "disanalogy",
     "Flink",
     "interruptible",
-    "SSHSIG"
+    "SSHSIG",
+    "factivity",
+    "Goguen",
+    "Hintikka",
+    "Kratzer",
+    "Kripke"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
