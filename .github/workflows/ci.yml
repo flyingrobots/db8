@@ -9,7 +9,10 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # Must match docker-compose.test.yml. Stock postgres has no pgmq, so the
+        # DLQ extension and every test that depends on it fail here while passing
+        # locally. Pinned by digest for the same reason the compose file is.
+        image: quay.io/tembo/pg16-pgmq@sha256:7f80d046257d585d1af9d19cf28bd355a4b854b0a7d643c02ebbe6b84457868a
         env:
           POSTGRES_PASSWORD: test
           POSTGRES_DB: db8_test
@@ -66,10 +69,16 @@ jobs:
 
       - name: DB setup
         env:
-          PGURL: postgresql://postgres:test@localhost:54329/db8_test
-        run: |
-          if [ -f db/schema.sql ]; then psql "$PGURL" -f db/schema.sql; fi
-          if [ -f db/rpc.sql ]; then psql "$PGURL" -f db/rpc.sql || true; fi
+          DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
+          DB8_TEST_OUTPUT: quiet
+        # Use the same preparer the local harness and build-test.yml use, rather
+        # than a bespoke psql invocation. The old form applied only schema.sql and
+        # rpc.sql — never db/rls.sql, so every RLS policy in the repo went
+        # unexercised by the CI that gates merges — and ran psql without
+        # ON_ERROR_STOP, so failing statements were reported as success and the
+        # suite then ran against a partially built database. `|| true` on rpc.sql
+        # swallowed the rest.
+        run: npm run test:prepare-db
 
       - name: Tests
         env:
