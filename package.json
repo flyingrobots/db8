@@ -7,8 +7,8 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "prepare": "git config core.hooksPath .githooks",
-    "postinstall": "node -e \"try{require('@rollup/rollup-linux-x64-gnu');process.exit(0)}catch(e){process.exit(1)}\" || npm i @rollup/rollup-linux-x64-gnu@latest || true",
+    "prepare": "node scripts/install-hooks.js",
+    "postinstall": "node -e \"if(process.platform!=='linux'||process.arch!=='x64')process.exit(0);try{require('@rollup/rollup-linux-x64-gnu');process.exit(0)}catch(e){process.exit(1)}\" || npm i --no-save --ignore-scripts @rollup/rollup-linux-x64-gnu@latest || true",
     "lint": "eslint .",
     "lint:md": "markdownlint -c .markdownlint.jsonc \"**/*.md\" --ignore node_modules --ignore web/.next --ignore .obsidian",
     "lint:md:fix": "markdownlint -c .markdownlint.jsonc \"**/*.md\" --ignore node_modules --ignore web/.next --ignore .obsidian --fix",
