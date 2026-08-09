@@ -137,7 +137,10 @@
     "SSHSIG",
     "confrelid",
     "conrelid",
-    "contype"
+    "contype",
+    "unwritable",
+    "worktree",
+    "worktrees"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
