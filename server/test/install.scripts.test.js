@@ -57,15 +57,15 @@ describe('hook installation', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'db8-readonly-hooks-'));
     try {
       execFileSync('git', ['init', '-q'], { cwd: dir });
-      // git writes config through a config.lock sibling and renames it, so a
-      // read-only config file is not enough — the directory must be
-      // unwritable for the write to genuinely fail.
-      fs.chmodSync(path.join(dir, '.git'), 0o555);
+      // Hold the config lock. git writes config through a config.lock sibling
+      // and refuses when one already exists, so this fails for any user —
+      // unlike chmod, which root ignores, and the test container runs as root.
+      fs.writeFileSync(path.join(dir, '.git', 'config.lock'), '');
       const res = runInstaller(dir);
       expect(res.code).not.toBe(0);
     } finally {
       try {
-        fs.chmodSync(path.join(dir, '.git'), 0o755);
+        fs.unlinkSync(path.join(dir, '.git', 'config.lock'));
       } catch {
         // best effort
       }
