@@ -214,7 +214,12 @@ CREATE TABLE admin_audit_log (
   action        text        NOT NULL,
   entity_type   text        NOT NULL,
   entity_id     uuid        NOT NULL,
-  actor_id      uuid        REFERENCES participants(id) ON DELETE SET NULL,
+  -- Deliberately no foreign key. An audit log is a historical record and must
+  -- survive deletion of the participant it names. A FK with ON DELETE SET NULL
+  -- also contradicts admin_audit_actor_oneof_ck below: nulling actor_id leaves
+  -- both actor columns null, the check rejects the update, and the delete
+  -- fails — so any participant who had ever been audited could never be removed.
+  actor_id      uuid,
   system_actor  text,
   actor_context jsonb       NOT NULL DEFAULT '{}'::jsonb,
   details       jsonb       NOT NULL DEFAULT '{}'::jsonb,
