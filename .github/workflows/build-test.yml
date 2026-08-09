@@ -69,7 +69,8 @@ jobs:
           DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
           DB8_TEST_PG: '1'
           CI: true
-        run: npm run test:inner
+        # Serialised — see ci.yml.
+        run: npx vitest run --no-file-parallelism
 
       # Idempotency plus the DB-gated suites — see the matching step in ci.yml
       # for why both gates live in one pass.
