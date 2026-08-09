@@ -1,8 +1,16 @@
 ---
-lastUpdated: 2025-10-04
+lastUpdated: 2026-08-09
 ---
 
 # Changelog
+
+## 2026-08-09 — `GET /journal` indexed lookups (breaking)
+
+- `GET /journal?room_id&idx=<n>` now returns **404** when the room has no such round, in both the database and in-memory paths. It previously returned **200** carrying the room's _latest_ journal, so a request for round 999 was answered with round 0 under `ok: true`.
+- A non-integer or negative `idx` now returns **400** `invalid_idx`. It was previously coerced (`Number('abc')` → `NaN`) and silently fell through to the latest journal.
+- The not-found response carries a 404 status rather than a 200 with `ok: false`; callers branching on status code read the old form as success.
+
+Callers that treated any 2xx as "journal found" must now handle 404, and callers that passed unchecked `idx` values must handle 400.
 
 ## 2025-10-04 — PR #118 merged (M2 foundations)
 
