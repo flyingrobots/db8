@@ -19,23 +19,34 @@ describe('Audit Trail Integration', () => {
   });
 
   it('room_create should be audit-logged (implied via watcher or manual call)', async () => {
-    const roomId = '33373337-0000-0000-0000-000000000001';
-    const roundId = '33373337-0000-0000-0000-000000000002';
-    const participantId = '33373337-0000-0000-0000-000000000003';
+    const roomId = '33343334-0000-0000-0000-000000000001';
+    const roundId = '33343334-0000-0000-0000-000000000002';
+    const participantId = '33343334-0000-0000-0000-000000000003';
 
-    // Seed data with ON CONFLICT to avoid parallel collision issues
-    await pool.query('insert into rooms(id, title) values ($1, $2) on conflict (id) do nothing', [
-      roomId,
-      'Audit Room Unique'
-    ]);
-    await pool.query(
-      'insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, $3) on conflict (id) do nothing',
+    // Seed data (fail-fast if constraints collide unexpectedly)
+    const roomRes = await pool.query(
+      `insert into rooms(id, title) values ($1, $2)
+       on conflict (id) do update set title = excluded.title
+       returning id`,
+      [roomId, 'Audit Room Unique']
+    );
+    expect(roomRes.rows.length).toBe(1);
+
+    const roundRes = await pool.query(
+      `insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, $3)
+       on conflict (id) do update set room_id = excluded.room_id, phase = excluded.phase
+       returning id`,
       [roundId, roomId, 'submit']
     );
-    await pool.query(
-      'insert into participants(id, room_id, anon_name) values ($1, $2, $3) on conflict (id) do nothing',
+    expect(roundRes.rows.length).toBe(1);
+
+    const partRes = await pool.query(
+      `insert into participants(id, room_id, anon_name) values ($1, $2, $3)
+       on conflict (id) do update set room_id = excluded.room_id, anon_name = excluded.anon_name
+       returning id`,
       [participantId, roomId, 'audit_anon_unique']
     );
+    expect(partRes.rows.length).toBe(1);
 
     // Call submission_upsert
     await pool.query('select submission_upsert($1, $2, $3, $4, $5, $6, $7)', [
@@ -59,22 +70,33 @@ describe('Audit Trail Integration', () => {
   });
 
   it('vote_submit should be audit-logged', async () => {
-    const roomId = '33373337-0000-0000-0000-000000000020';
-    const roundId = '33373337-0000-0000-0000-000000000021';
-    const participantId = '33373337-0000-0000-0000-000000000022';
+    const roomId = '33343334-0000-0000-0000-000000000010';
+    const roundId = '33343334-0000-0000-0000-000000000011';
+    const participantId = '33343334-0000-0000-0000-000000000012';
 
-    await pool.query('insert into rooms(id, title) values ($1, $2) on conflict (id) do nothing', [
-      roomId,
-      'Vote Audit Room'
-    ]);
-    await pool.query(
-      'insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, $3) on conflict (id) do nothing',
+    const roomRes = await pool.query(
+      `insert into rooms(id, title) values ($1, $2)
+       on conflict (id) do update set title = excluded.title
+       returning id`,
+      [roomId, 'Vote Audit Room']
+    );
+    expect(roomRes.rows.length).toBe(1);
+
+    const roundRes = await pool.query(
+      `insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, $3)
+       on conflict (id) do update set room_id = excluded.room_id, phase = excluded.phase
+       returning id`,
       [roundId, roomId, 'published']
     );
-    await pool.query(
-      'insert into participants(id, room_id, anon_name) values ($1, $2, $3) on conflict (id) do nothing',
-      [participantId, roomId, 'vote_audit_anon']
+    expect(roundRes.rows.length).toBe(1);
+
+    const partRes = await pool.query(
+      `insert into participants(id, room_id, anon_name) values ($1, $2, $3)
+       on conflict (id) do update set room_id = excluded.room_id, anon_name = excluded.anon_name
+       returning id`,
+      [participantId, roomId, 'vote_test_anon']
     );
+    expect(partRes.rows.length).toBe(1);
 
     // Call vote_submit
     await pool.query('select vote_submit($1, $2, $3, $4, $5)', [
@@ -95,16 +117,22 @@ describe('Audit Trail Integration', () => {
   });
 
   it('round_publish_due should be audit-logged', async () => {
-    const roomId = '33373337-0000-0000-0000-000000000010';
-    const roundId = '33373337-0000-0000-0000-000000000011';
+    const roomId = '33343334-0000-0000-0000-000000000020';
+    const roundId = '33343334-0000-0000-0000-000000000021';
 
     // Seed a due round
-    await pool.query('insert into rooms(id, title) values ($1, $2) on conflict (id) do nothing', [
-      roomId,
-      'Due Room Unique'
-    ]);
-    await pool.query(
-      'insert into rounds(id, room_id, idx, phase, submit_deadline_unix) values ($1, $2, 0, $3, $4) on conflict (id) do nothing',
+    const roomRes = await pool.query(
+      `insert into rooms(id, title) values ($1, $2)
+       on conflict (id) do update set title = excluded.title
+       returning id`,
+      [roomId, 'Due Room Unique']
+    );
+    expect(roomRes.rows.length).toBe(1);
+
+    const roundRes = await pool.query(
+      `insert into rounds(id, room_id, idx, phase, submit_deadline_unix) values ($1, $2, 0, $3, $4)
+       on conflict (id) do update set room_id = excluded.room_id, phase = excluded.phase, submit_deadline_unix = excluded.submit_deadline_unix
+       returning id`,
       [
         roundId,
         roomId,
@@ -112,6 +140,7 @@ describe('Audit Trail Integration', () => {
         100 // long ago
       ]
     );
+    expect(roundRes.rows.length).toBe(1);
 
     // Call round_publish_due
     await pool.query('select round_publish_due()');
