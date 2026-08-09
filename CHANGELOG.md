@@ -10,7 +10,7 @@ lastUpdated: 2026-08-09
 - A non-integer or negative `idx` now returns **400** `invalid_idx`. It was previously coerced (`Number('abc')` → `NaN`) and silently fell through to the latest journal.
 - The not-found response carries a 404 status rather than a 200 with `ok: false`; callers branching on status code read the old form as success.
 
-Callers that treated any 2xx as "journal found" must now handle 404, and callers that passed unvalidated `idx` values must handle 400.
+Callers that treated any 2xx as "journal found" must now handle 404, and callers that passed unchecked `idx` values must handle 400.
 
 ## 2025-10-04 — PR #118 merged (M2 foundations)
 
