@@ -62,10 +62,12 @@ jobs:
           DB8_TEST_OUTPUT: quiet
         run: npm run test:prepare-db
 
+      # Both passes must run the same set — see ci.yml.
       - name: Run tests (pass 1 — fresh database)
         env:
           DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
           DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
+          DB8_TEST_PG: '1'
           CI: true
         run: npm run test:inner
 

@@ -80,9 +80,14 @@ jobs:
         # swallowed the rest.
         run: npm run test:prepare-db
 
+      # Both passes must run the same set, or the extra DB-gated suites are
+      # only ever exercised against a dirty database and pass 2 is comparing
+      # against a different suite than pass 1.
       - name: Tests (pass 1 — fresh database)
         env:
           DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
+          DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
+          DB8_TEST_PG: '1'
         run: npm test
 
       # Pass 2 carries two gates at once.
