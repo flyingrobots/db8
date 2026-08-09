@@ -74,6 +74,35 @@ using (
   current_database() LIKE '%\_test' ESCAPE '\' OR current_database() LIKE 'test\_%' ESCAPE '\'
 );
 
+-- Allow deletes in test databases for teardown helpers
+drop policy if exists final_votes_test_delete_policy on final_votes;
+create policy final_votes_test_delete_policy on final_votes
+for delete to public
+using (
+  current_database() LIKE '%\_test' ESCAPE '\' OR current_database() LIKE 'test\_%' ESCAPE '\'
+);
+
+drop policy if exists scores_test_delete_policy on scores;
+create policy scores_test_delete_policy on scores
+for delete to public
+using (
+  current_database() LIKE '%\_test' ESCAPE '\' OR current_database() LIKE 'test\_%' ESCAPE '\'
+);
+
+drop policy if exists reputation_test_delete_policy on reputation;
+create policy reputation_test_delete_policy on reputation
+for delete to public
+using (
+  current_database() LIKE '%\_test' ESCAPE '\' OR current_database() LIKE 'test\_%' ESCAPE '\'
+);
+
+drop policy if exists reputation_tag_test_delete_policy on reputation_tag;
+create policy reputation_tag_test_delete_policy on reputation_tag
+for delete to public
+using (
+  current_database() LIKE '%\_test' ESCAPE '\' OR current_database() LIKE 'test\_%' ESCAPE '\'
+);
+
 drop policy if exists votes_read_policy on votes;
 create policy votes_read_policy on votes for select using (true);
 
