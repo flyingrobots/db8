@@ -5,7 +5,11 @@
 ._*
 
 # Node / Core
-node_modules/
+# No trailing slash: that form matches directories only, so a symlink named
+# node_modules (as git worktrees commonly need) would slip past and be committed
+# as an absolute-path symlink. The bare name matches dirs, files and symlinks at
+# any depth, so web/node_modules is covered too.
+node_modules
 .npm-cache/
 logs/
 *.log
