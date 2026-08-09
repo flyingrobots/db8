@@ -69,12 +69,12 @@ jobs:
           CI: true
         run: npm run test:inner
 
-      # Idempotency gate — see the matching step in ci.yml. Reuses the database
-      # pass 1 left behind, which is the only way to catch tests that depend on
-      # starting from empty.
-      - name: Run tests (pass 2 — same database, idempotency gate)
+      # Idempotency plus the DB-gated suites — see the matching step in ci.yml
+      # for why both live in one pass and why parallelism is disabled here.
+      - name: Run tests (pass 2 — same database, DB-gated, idempotency gate)
         env:
           DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
           DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
+          DB8_TEST_PG: '1'
           CI: true
-        run: npm run test:inner
+        run: npx vitest run --no-file-parallelism

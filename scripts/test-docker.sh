@@ -55,6 +55,6 @@ docker compose -f "$COMPOSE_FILE" run $DOCKER_TTY --rm tests bash -lc '
   npm run test:prepare-db
   echo "── pass 1 of 2: fresh database ──"
   npm run test:inner
-  echo "── pass 2 of 2: same database (idempotency gate) ──"
-  npm run test:inner
+  echo "── pass 2 of 2: same database, DB-gated (idempotency gate) ──"
+  DB8_TEST_PG=1 npx vitest run --no-file-parallelism
 '
