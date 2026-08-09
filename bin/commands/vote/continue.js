@@ -12,11 +12,11 @@ export async function run(args, context) {
 
   const parsed = z
     .object({
-      room: z.string().uuid(),
-      participant: z.string().uuid(),
+      room: z.guid(),
+      participant: z.guid(),
       jwt: z.string().min(1),
       choice: z.enum(['continue', 'end']),
-      round: z.string().uuid().optional(),
+      round: z.guid().optional(),
       nonce: z.string().min(8).optional()
     })
     .safeParse({
@@ -51,7 +51,7 @@ export async function run(args, context) {
         };
       }
       const rid = body?.round?.round_id;
-      if (!rid || !z.string().uuid().safeParse(rid).success) {
+      if (!rid || !z.guid().safeParse(rid).success) {
         return {
           ok: false,
           code: EXIT.NOT_FOUND,
