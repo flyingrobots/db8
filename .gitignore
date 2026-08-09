@@ -29,8 +29,9 @@ pnpm-debug.log*
 .env.*.local
 
 # db8 signing keys (local-only; never commit)
-.db8_signing_key
-.db8_signing_key.pub
+# The wildcard also covers the .tmp.<pid>.<rand> staging files used to publish
+# the pair atomically; those are unlinked on success but can survive a crash.
+.db8_signing_key*
 
 # Next.js / Frontend
 .next/
