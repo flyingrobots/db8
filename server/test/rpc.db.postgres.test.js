@@ -1,7 +1,5 @@
 import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
 import request from 'supertest';
-import fs from 'node:fs';
-import path from 'node:path';
 import { Pool } from 'pg';
 import app, { __setDbPool } from '../rpc.js';
 import { canonicalizeSorted, canonicalizeJCS, sha256Hex } from '../utils.js';
@@ -14,31 +12,35 @@ const suite = shouldRun ? describe : describe.skip;
 
 suite('Postgres-backed RPC integration', () => {
   let pool;
+  // Unique to this file: the 00000000-… space it used previously is shared by
+  // nine other test files.
+  const ROUND_ID = '0b8e0000-0000-0000-0000-000000000002';
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: dbUrl });
     __setDbPool(pool);
 
-    const schemaSql = fs.readFileSync(path.resolve('db/schema.sql'), 'utf8');
-    const rpcSql = fs.readFileSync(path.resolve('db/rpc.sql'), 'utf8');
-    await pool.query(schemaSql);
-    await pool.query(rpcSql);
+    // The database is prepared once by `npm run test:prepare-db` before the
+    // suite runs. Re-applying db/schema.sql here re-ran its leading
+    // `DROP TABLE IF EXISTS admin_audit_log CASCADE`, taking schema-wide
+    // ACCESS EXCLUSIVE locks while sibling test files were mid-query — which
+    // is what deadlocked the DB-gated suites, not the TRUNCATE below it.
 
     await pool.query(
       `insert into rooms (id, title)
-       values ('00000000-0000-0000-0000-000000000001', 'Local Demo Room')
+       values ('0b8e0000-0000-0000-0000-000000000001', 'Local Demo Room')
        on conflict (id) do nothing`
     );
     await pool.query(
       `insert into rounds (id, room_id, idx, phase, submit_deadline_unix)
-       values ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 0, 'submit', 0)
+       values ('0b8e0000-0000-0000-0000-000000000002', '0b8e0000-0000-0000-0000-000000000001', 0, 'submit', 0)
        on conflict (id) do nothing`
     );
     await pool.query(
       `insert into participants (id, room_id, anon_name, role)
        values
-         ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'pg-author', 'debater'),
-         ('00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', 'pg-voter', 'debater')
+         ('0b8e0000-0000-0000-0000-000000000003', '0b8e0000-0000-0000-0000-000000000001', 'pg-author', 'debater'),
+         ('0b8e0000-0000-0000-0000-000000000004', '0b8e0000-0000-0000-0000-000000000001', 'pg-voter', 'debater')
        on conflict (id) do nothing`
     );
   });
@@ -49,22 +51,24 @@ suite('Postgres-backed RPC integration', () => {
   });
 
   beforeEach(async () => {
-    const tables = ['submission_flags', 'submissions', 'votes'];
-    const existing = [];
-    for (const table of tables) {
-      const res = await pool.query('select to_regclass($1) as reg', [`public.${table}`]);
-      if (res.rows[0]?.reg) existing.push(`"public"."${table}"`);
-    }
-    if (existing.length > 0) {
-      await pool.query(`TRUNCATE ${existing.join(', ')} RESTART IDENTITY CASCADE;`);
-    }
+    // Delete only this file's own rows, scoped by its round. The previous
+    // TRUNCATE emptied submissions, votes and submission_flags outright —
+    // shared tables that nine other test files write to — under an ACCESS
+    // EXCLUSIVE lock, so it both deadlocked against and silently destroyed
+    // their fixtures.
+    await pool.query(
+      'delete from submission_flags where submission_id in (select id from submissions where round_id = $1)',
+      [ROUND_ID]
+    );
+    await pool.query('delete from submissions where round_id = $1', [ROUND_ID]);
+    await pool.query('delete from votes where round_id = $1', [ROUND_ID]);
   });
 
   it('persists submissions through submission_upsert', async () => {
     const body = {
-      room_id: '00000000-0000-0000-0000-000000000001',
-      round_id: '00000000-0000-0000-0000-000000000002',
-      author_id: '00000000-0000-0000-0000-000000000003',
+      room_id: '0b8e0000-0000-0000-0000-000000000001',
+      round_id: '0b8e0000-0000-0000-0000-000000000002',
+      author_id: '0b8e0000-0000-0000-0000-000000000003',
       phase: 'submit',
       deadline_unix: 0,
       content: 'Hello from pg',
@@ -108,13 +112,13 @@ suite('Postgres-backed RPC integration', () => {
           set phase='published',
               published_at_unix = $1::bigint,
               continue_vote_close_unix = $2::bigint
-        where id = '00000000-0000-0000-0000-000000000002'`,
+        where id = '0b8e0000-0000-0000-0000-000000000002'`,
       [now, now + 60]
     );
     const body = {
-      room_id: '00000000-0000-0000-0000-000000000001',
-      round_id: '00000000-0000-0000-0000-000000000002',
-      voter_id: '00000000-0000-0000-0000-000000000004',
+      room_id: '0b8e0000-0000-0000-0000-000000000001',
+      round_id: '0b8e0000-0000-0000-0000-000000000002',
+      voter_id: '0b8e0000-0000-0000-0000-000000000004',
       choice: 'continue',
       client_nonce: 'pg-vote-1234'
     };

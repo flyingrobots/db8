@@ -1,7 +1,5 @@
 import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
 import request from 'supertest';
-import fs from 'node:fs';
-import path from 'node:path';
 import { Pool } from 'pg';
 import app, { __setDbPool } from '../rpc.js';
 
@@ -13,17 +11,17 @@ const suite = shouldRun ? describe : describe.skip;
 
 suite('Postgres-backed verification RPCs', () => {
   let pool;
+  const ROUND_ID = '30000000-0000-0000-0000-000000000002';
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: dbUrl });
     __setDbPool(pool);
 
-    const schemaSql = fs.readFileSync(path.resolve('db/schema.sql'), 'utf8');
-    const rpcSql = fs.readFileSync(path.resolve('db/rpc.sql'), 'utf8');
-    const rlsSql = fs.readFileSync(path.resolve('db/rls.sql'), 'utf8');
-    await pool.query(schemaSql);
-    await pool.query(rpcSql);
-    await pool.query(rlsSql);
+    // The database is prepared once by `npm run test:prepare-db` before the
+    // suite runs. Re-applying db/schema.sql here re-ran its leading
+    // `DROP TABLE IF EXISTS admin_audit_log CASCADE`, taking schema-wide
+    // ACCESS EXCLUSIVE locks while sibling test files were mid-query — which
+    // is what deadlocked the DB-gated suites, not the TRUNCATE below it.
 
     // Fail fast if critical tables are missing
     const regs = await pool.query(
@@ -59,17 +57,11 @@ suite('Postgres-backed verification RPCs', () => {
   });
 
   beforeEach(async () => {
-    const tables = ['verification_verdicts', 'submissions'];
-    const existing = [];
-    for (const table of tables) {
-      const res = await pool.query('select to_regclass($1) as reg', [`public.${table}`]);
-      if (res.rows[0]?.reg) existing.push(`"public"."${table}"`);
-    }
-    if (existing.length > 0) {
-      await pool.query(`TRUNCATE ${existing.join(', ')} RESTART IDENTITY CASCADE;`);
-      // eslint-disable-next-line no-console
-      console.log('[truncate]', existing.join(', '));
-    }
+    // Scoped to this file's own round. The previous TRUNCATE emptied
+    // verification_verdicts and submissions outright, which are shared with
+    // other suites, under an ACCESS EXCLUSIVE lock.
+    await pool.query('delete from verification_verdicts where round_id = $1', [ROUND_ID]);
+    await pool.query('delete from submissions where round_id = $1', [ROUND_ID]);
   });
 
   it('verify_submit stores and verify_summary aggregates', async () => {
