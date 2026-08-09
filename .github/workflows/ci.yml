@@ -88,11 +88,7 @@ jobs:
           DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
           DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
           DB8_TEST_PG: '1'
-        # Serialised for the same reason as pass 2 on this branch: the gated
-        # suites re-apply the schema and TRUNCATE shared tables, so running them
-        # alongside the rest deadlocks. Both flags come out once the fixtures
-        # are self-scoped.
-        run: npx vitest run --no-file-parallelism
+        run: npm test
 
       # Pass 2 carries two gates at once.
       #
