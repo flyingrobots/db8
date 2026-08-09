@@ -80,10 +80,21 @@ jobs:
         # swallowed the rest.
         run: npm run test:prepare-db
 
-      - name: Tests
+      - name: Tests (pass 1 — fresh database)
         env:
           DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
         run: npm test
+
+      # Idempotency gate. The postgres service persists across steps, so this
+      # pass reuses the database pass 1 left behind — the only way to catch a
+      # test that silently depends on starting from empty. Three real bugs lived
+      # in this blind spot, including a schema contradiction that made audited
+      # participants permanently undeletable.
+      - name: Tests (pass 2 — same database, idempotency gate)
+        env:
+          DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
+          DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
+        run: npm run test:inner
 
       - name: Tests (Postgres RPC integration)
         env:
