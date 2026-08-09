@@ -9,10 +9,9 @@ import yaml from 'js-yaml';
 // against a dirty database — never a fresh one — and the idempotency signal is
 // not a comparison at all.
 //
-// js-yaml is a transitive dependency here rather than a declared one; if that
-// ever changes these assertions should move to raw-text matching rather than
-// pulling in a dependency for a lint-shaped check.
 const workflows = ['ci.yml', 'build-test.yml'];
+
+const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
 function testSteps(file) {
   const doc = yaml.load(fs.readFileSync(path.join('.github/workflows', file), 'utf8'));
@@ -21,6 +20,19 @@ function testSteps(file) {
 }
 
 describe('CI test passes stay comparable', () => {
+  // This file parses YAML, so js-yaml has to be a declared dependency. It was
+  // previously reachable only as a transitive of eslint and markdown-link-check,
+  // which means a dependency bump — one is already open — could remove it and
+  // break this suite with a module-not-found that has nothing to do with CI.
+  it('declares js-yaml rather than relying on a transitive copy', () => {
+    const declared = {
+      ...(pkg.dependencies || {}),
+      ...(pkg.devDependencies || {}),
+      ...(pkg.optionalDependencies || {})
+    };
+    expect(Object.keys(declared)).toContain('js-yaml');
+  });
+
   for (const file of workflows) {
     it(`${file} has both passes`, () => {
       const steps = testSteps(file);
