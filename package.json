@@ -19,7 +19,7 @@
     "test:docker": "bash ./scripts/test-docker.sh",
     "test:prepare-db": "node ./scripts/prepare-db.js",
     "test:inner": "vitest run",
-    "typecheck": "echo 'No TypeScript. ✅'",
+    "typecheck": "echo 'No TypeScript. \u2705'",
     "bootstrap": "bash ./scripts/bootstrap.sh",
     "dev:db": "docker compose up -d db && sleep 2 && echo 'DB on :54329'",
     "stop:db": "docker compose down",
