@@ -92,8 +92,10 @@ export function getPersistentSigningKeys() {
       // cannot decode carries no information, so republishing it loses nothing.
       // A file that decodes to a different key is a real conflict and needs a
       // human, because it means signatures are being published unverifiable.
-      let onDisk = null;
-      let raw = null;
+      // No initial values: every path below assigns both, and eslint's
+      // no-useless-assignment flags a value that is never read.
+      let onDisk;
+      let raw;
       try {
         raw = fs.readFileSync(pubPath, 'utf8');
         onDisk = spki(raw);

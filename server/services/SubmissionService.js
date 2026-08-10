@@ -82,13 +82,13 @@ export class SubmissionService {
         return { submission_id, canonical_sha256 };
       } catch (e) {
         const msg = typeof e === 'string' ? e : e?.message || String(e) || 'db_error';
-        if (/invalid_nonce/i.test(msg)) throw new Error('invalid_nonce');
+        if (/invalid_nonce/i.test(msg)) throw new Error('invalid_nonce', { cause: e });
 
         // Log DB error and fall back to memory (except invalid_nonce handled above)
         console.error('[SubmissionService] DB error, falling back to memory:', msg);
 
         if (this.config.enforceServerNonces && !this.validateAndConsumeNonceMemory(input)) {
-          throw new Error('invalid_nonce');
+          throw new Error('invalid_nonce', { cause: e });
         }
 
         return this._createInMemory(key, input, canonical_sha256, msg);

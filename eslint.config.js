@@ -1,5 +1,5 @@
 import js from '@eslint/js';
-import pluginImport from 'eslint-plugin-import';
+import pluginImport from 'eslint-plugin-import-x';
 import pluginNode from 'eslint-plugin-n';
 import pluginSecurity from 'eslint-plugin-security';
 import pluginUnicorn from 'eslint-plugin-unicorn';
@@ -28,7 +28,9 @@ export default [
       react: pluginReact
     },
     settings: {
-      'import/resolver': {
+      // eslint-plugin-import-x reads its own settings key regardless of the
+      // name it is registered under, so this cannot be 'import/resolver'.
+      'import-x/resolver': {
         node: {
           extensions: ['.js', '.jsx', '.json'],
           moduleDirectory: ['node_modules', './node_modules', 'web/node_modules']
