@@ -4,7 +4,7 @@
   "private": false,
   "type": "module",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "prepare": "node scripts/install-hooks.js",
@@ -19,7 +19,7 @@
     "test:docker": "bash ./scripts/test-docker.sh",
     "test:prepare-db": "node ./scripts/prepare-db.js",
     "test:inner": "vitest run",
-    "typecheck": "echo 'No TypeScript. ✅'",
+    "typecheck": "echo 'No TypeScript. \u2705'",
     "bootstrap": "bash ./scripts/bootstrap.sh",
     "dev:db": "docker compose up -d db && sleep 2 && echo 'DB on :54329'",
     "stop:db": "docker compose down",
@@ -39,15 +39,16 @@
     ]
   },
   "devDependencies": {
-    "@eslint/js": "^9.37.0",
+    "@eslint/js": "^10.0.1",
     "cspell": "^8.13.2",
-    "eslint": "^9.37.0",
+    "eslint": "^10.8.1",
     "eslint-import-resolver-alias": "^1.1.2",
     "eslint-plugin-import": "^2.29.1",
-    "eslint-plugin-n": "^17.10.3",
+    "eslint-plugin-import-x": "^4.17.1",
+    "eslint-plugin-n": "^18.3.0",
     "eslint-plugin-react": "^7.35.0",
-    "eslint-plugin-security": "^3.0.1",
-    "eslint-plugin-unicorn": "^61.0.2",
+    "eslint-plugin-security": "^4.0.1",
+    "eslint-plugin-unicorn": "^73.0.0",
     "js-yaml": "^4.1.0",
     "lint-staged": "^17.3.0",
     "markdown-link-check": "^3.15.0",

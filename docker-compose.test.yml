@@ -12,7 +12,7 @@ services:
       - db8_test_pgdata:/var/lib/postgresql/data
 
   tests:
-    image: node:20-bookworm
+    image: node:22-bookworm
     working_dir: /app
     depends_on:
       db:
