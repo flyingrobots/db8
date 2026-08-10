@@ -4,11 +4,11 @@
   "private": false,
   "type": "module",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
-    "prepare": "git config core.hooksPath .githooks",
-    "postinstall": "node -e \"try{require('@rollup/rollup-linux-x64-gnu');process.exit(0)}catch(e){process.exit(1)}\" || npm i @rollup/rollup-linux-x64-gnu@latest || true",
+    "prepare": "node scripts/install-hooks.js",
+    "postinstall": "node -e \"if(process.platform!=='linux'||process.arch!=='x64')process.exit(0);try{require('@rollup/rollup-linux-x64-gnu');process.exit(0)}catch(e){process.exit(1)}\" || npm i --no-save --ignore-scripts @rollup/rollup-linux-x64-gnu@latest || true",
     "lint": "eslint .",
     "lint:md": "markdownlint -c .markdownlint.jsonc \"**/*.md\" --ignore node_modules --ignore web/.next --ignore .obsidian",
     "lint:md:fix": "markdownlint -c .markdownlint.jsonc \"**/*.md\" --ignore node_modules --ignore web/.next --ignore .obsidian --fix",
@@ -19,7 +19,7 @@
     "test:docker": "bash ./scripts/test-docker.sh",
     "test:prepare-db": "node ./scripts/prepare-db.js",
     "test:inner": "vitest run",
-    "typecheck": "echo 'No TypeScript. ✅'",
+    "typecheck": "echo 'No TypeScript. \u2705'",
     "bootstrap": "bash ./scripts/bootstrap.sh",
     "dev:db": "docker compose up -d db && sleep 2 && echo 'DB on :54329'",
     "stop:db": "docker compose down",
@@ -39,18 +39,20 @@
     ]
   },
   "devDependencies": {
-    "@eslint/js": "^9.37.0",
+    "@eslint/js": "^10.0.1",
     "cspell": "^8.13.2",
-    "eslint": "^9.37.0",
+    "eslint": "^10.8.1",
     "eslint-import-resolver-alias": "^1.1.2",
     "eslint-plugin-import": "^2.29.1",
-    "eslint-plugin-n": "^17.10.3",
+    "eslint-plugin-import-x": "^4.17.1",
+    "eslint-plugin-n": "^18.3.0",
     "eslint-plugin-react": "^7.35.0",
-    "eslint-plugin-security": "^3.0.1",
-    "eslint-plugin-unicorn": "^61.0.2",
-    "lint-staged": "^16.2.3",
-    "markdown-link-check": "^3.12.2",
-    "markdownlint": "^0.33.0",
+    "eslint-plugin-security": "^4.0.1",
+    "eslint-plugin-unicorn": "^73.0.0",
+    "js-yaml": "^4.1.0",
+    "lint-staged": "^17.3.0",
+    "markdown-link-check": "^3.15.0",
+    "markdownlint": "^0.41.1",
     "markdownlint-cli": "^0.45.0",
     "prettier": "^3.3.3",
     "supertest": "^7.0.0",
@@ -59,7 +61,7 @@
   "dependencies": {
     "canonicalize": "2.1.0",
     "express": "^5.1.0",
-    "zod": "^3.25.76"
+    "zod": "^4.4.3"
   },
   "optionalDependencies": {
     "@rollup/rollup-linux-x64-gnu": "^4.54.0",

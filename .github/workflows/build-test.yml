@@ -15,7 +15,7 @@ jobs:
       - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - name: Install deps
         run: npm ci
@@ -32,7 +32,9 @@ jobs:
     timeout-minutes: 25
     services:
       postgres:
-        image: postgres:16-alpine
+        # Must match docker-compose.test.yml: stock postgres has no pgmq, which
+        # the M7 dead-letter queue and its tests require.
+        image: quay.io/tembo/pg16-pgmq@sha256:7f80d046257d585d1af9d19cf28bd355a4b854b0a7d643c02ebbe6b84457868a
         env:
           POSTGRES_PASSWORD: test
           POSTGRES_DB: db8_test
@@ -48,7 +50,7 @@ jobs:
       - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install deps
@@ -60,9 +62,21 @@ jobs:
           DB8_TEST_OUTPUT: quiet
         run: npm run test:prepare-db
 
-      - name: Run tests (vitest)
+      # Both passes must run the same set — see ci.yml.
+      - name: Run tests (pass 1 — fresh database)
         env:
           DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
           DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
+          DB8_TEST_PG: '1'
+          CI: true
+        run: npm run test:inner
+
+      # Idempotency plus the DB-gated suites — see the matching step in ci.yml
+      # for why both gates live in one pass.
+      - name: Run tests (pass 2 — same database, DB-gated, idempotency gate)
+        env:
+          DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
+          DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/db8_test
+          DB8_TEST_PG: '1'
           CI: true
         run: npm run test:inner

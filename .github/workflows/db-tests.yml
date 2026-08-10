@@ -25,7 +25,9 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # Must match docker-compose.test.yml: stock postgres has no pgmq, which
+        # the M7 dead-letter queue and its tests require.
+        image: quay.io/tembo/pg16-pgmq@sha256:7f80d046257d585d1af9d19cf28bd355a4b854b0a7d643c02ebbe6b84457868a
         ports: ['5432:5432']
         env:
           POSTGRES_PASSWORD: test
@@ -42,7 +44,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - run: npm ci
       - name: Install web dependencies
         run: npm ci --prefix web

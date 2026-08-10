@@ -43,11 +43,21 @@ export class RoomService {
           });
         const submissionsRes = await this.pool
           .query(
-            'SELECT * FROM submissions_view WHERE room_id = $1 ORDER BY idx ASC, submitted_at ASC',
+            `select id,
+                    author_id,
+                    author_anon_name,
+                    content,
+                    canonical_sha256,
+                    submitted_at,
+                    flag_count,
+                    flag_details
+               from submissions_with_flags_view
+              where room_id = $1
+              order by idx asc, submitted_at asc nulls last, id asc`,
             [roomId]
           )
           .catch((e) => {
-            throw new Error(`submissions_view: ${e.message}`);
+            throw new Error(`submissions_with_flags_view: ${e.message}`);
           });
         const verifyRes = await this.pool
           .query('SELECT * FROM verification_verdicts_view WHERE room_id = $1', [roomId])
@@ -63,10 +73,12 @@ export class RoomService {
           const transcript = submissionsRes.rows.map((row) => ({
             submission_id: row.id,
             author_id: row.author_id,
+            author_anon_name: row.author_anon_name,
             content: row.content,
             canonical_sha256: row.canonical_sha256,
             submitted_at: row.submitted_at,
-            flag_count: Number(row.flag_count || 0)
+            flag_count: Number(row.flag_count || 0),
+            flags: Array.isArray(row.flag_details) ? row.flag_details : []
           }));
 
           const flagged = transcript

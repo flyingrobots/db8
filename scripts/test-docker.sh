@@ -36,4 +36,25 @@ if [ ! -t 0 ]; then
   DOCKER_TTY="-T"
 fi
 
-docker compose -f "$COMPOSE_FILE" run $DOCKER_TTY --rm tests bash -lc 'node ./scripts/ensure-signing-keys.js && npm ci && npm run test:prepare-db && npm run test:inner'
+# The suite runs twice against the same database on purpose.
+#
+# Pass 1 is the normal run. Pass 2 is the idempotency gate: it reuses the
+# database pass 1 left behind, which is the only way to catch tests that depend
+# on starting from empty. Three real bugs hid behind this exact blind spot —
+# a schema contradiction that made audited participants undeletable, a fixture
+# that asserted against the previous run's terminal state, and a quota test that
+# passed vacuously because its round was already spent. All three were invisible
+# to a harness that tore the volume down after a single pass.
+#
+# Signing keys are deliberately NOT pre-seeded. Doing so used to hide a race in
+# getPersistentSigningKeys by ensuring it never had to generate a pair; the
+# generation path is now correct and CI should exercise it for real.
+docker compose -f "$COMPOSE_FILE" run $DOCKER_TTY --rm tests bash -lc '
+  set -euo pipefail
+  npm ci
+  npm run test:prepare-db
+  echo "── pass 1 of 2: fresh database ──"
+  npm run test:inner
+  echo "── pass 2 of 2: same database, DB-gated (idempotency gate) ──"
+  DB8_TEST_PG=1 npm run test:inner
+'

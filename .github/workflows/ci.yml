@@ -9,7 +9,10 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # Must match docker-compose.test.yml. Stock postgres has no pgmq, so the
+        # DLQ extension and every test that depends on it fail here while passing
+        # locally. Pinned by digest for the same reason the compose file is.
+        image: quay.io/tembo/pg16-pgmq@sha256:7f80d046257d585d1af9d19cf28bd355a4b854b0a7d643c02ebbe6b84457868a
         env:
           POSTGRES_PASSWORD: test
           POSTGRES_DB: db8_test
@@ -28,7 +31,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: |
             package-lock.json
@@ -44,7 +47,7 @@ jobs:
 
       - name: Detect path changes
         id: changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             web:
@@ -66,15 +69,45 @@ jobs:
 
       - name: DB setup
         env:
-          PGURL: postgresql://postgres:test@localhost:54329/db8_test
-        run: |
-          if [ -f db/schema.sql ]; then psql "$PGURL" -f db/schema.sql; fi
-          if [ -f db/rpc.sql ]; then psql "$PGURL" -f db/rpc.sql || true; fi
+          DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
+          DB8_TEST_OUTPUT: quiet
+        # Use the same preparer the local harness and build-test.yml use, rather
+        # than a bespoke psql invocation. The old form applied only schema.sql and
+        # rpc.sql — never db/rls.sql, so every RLS policy in the repo went
+        # unexercised by the CI that gates merges — and ran psql without
+        # ON_ERROR_STOP, so failing statements were reported as success and the
+        # suite then ran against a partially built database. `|| true` on rpc.sql
+        # swallowed the rest.
+        run: npm run test:prepare-db
 
-      - name: Tests
+      # Both passes must run the same set, or the extra DB-gated suites are
+      # only ever exercised against a dirty database and pass 2 is comparing
+      # against a different suite than pass 1.
+      - name: Tests (pass 1 — fresh database)
         env:
           DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
+          DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
+          DB8_TEST_PG: '1'
         run: npm test
+
+      # Pass 2 carries two gates at once.
+      #
+      # Idempotency: the postgres service persists across steps, so this reuses
+      # the database pass 1 left behind — the only way to catch a test that
+      # silently depends on starting from empty. Three real bugs lived in that
+      # blind spot, including a schema contradiction that made audited
+      # participants permanently undeletable.
+      #
+      # DB8_TEST_PG unlocks six DB-gated suites that no workflow ran, which is
+      # how a journal endpoint that answered idx=999 with the latest round
+      # reached main. They run in parallel with everything else: their
+      # fixtures are self-scoped now.
+      - name: Tests (pass 2 — same database, DB-gated, idempotency gate)
+        env:
+          DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
+          DB8_TEST_DATABASE_URL: postgresql://postgres:test@localhost:54329/db8_test
+          DB8_TEST_PG: '1'
+        run: npm run test:inner
 
       - name: Tests (Postgres RPC integration)
         env:

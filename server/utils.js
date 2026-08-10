@@ -35,6 +35,21 @@ export const log = {
     console.error(JSON.stringify({ level: 'error', t: Date.now(), msg, ...details }))
 };
 
+// Ed25519 public keys are derivable from the private key, so the private key is
+// the single source of truth and the .pub file is only a published convenience.
+// Correctness never depends on reading it, which is what makes concurrent
+// startup safe.
+function derivePublicPem(privateKeyPem) {
+  return crypto
+    .createPublicKey(crypto.createPrivateKey(privateKeyPem))
+    .export({ type: 'spki', format: 'pem' })
+    .toString();
+}
+
+function spki(pem) {
+  return crypto.createPublicKey(pem).export({ type: 'spki', format: 'der' }).toString('base64');
+}
+
 // M7: Ensure signing keys exist
 export function getPersistentSigningKeys() {
   const privPath = process.env.SIGNING_PRIVATE_KEY_PATH || './.db8_signing_key';
@@ -47,34 +62,108 @@ export function getPersistentSigningKeys() {
     };
   }
 
-  try {
-    if (fs.existsSync(privPath) && fs.existsSync(pubPath)) {
-      return {
-        privateKeyPem: fs.readFileSync(privPath, 'utf8'),
-        publicKeyPem: fs.readFileSync(pubPath, 'utf8')
-      };
+  // Publish the public half atomically. Every process derives identical bytes
+  // from the same private key, so clobbering via rename is safe — and rename
+  // means a concurrent reader sees the old file or the new one, never a
+  // half-written one.
+  const publishPublic = (pem) => {
+    const tmp = `${pubPath}.tmp.${process.pid}.${crypto.randomBytes(6).toString('hex')}`;
+    try {
+      fs.writeFileSync(tmp, pem, { mode: 0o644 });
+      fs.renameSync(tmp, pubPath);
+    } catch (e) {
+      log.error('failed to write public key', { error: e.message });
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        // Best effort; a stray temp public key is inert.
+      }
     }
-  } catch (e) {
-    log.error('failed to read keys', { error: e.message });
+  };
+
+  // Adopt an existing private key. Never regenerate over one: every journal it
+  // has already signed would become unverifiable, silently.
+  const adopt = () => {
+    const privateKeyPem = fs.readFileSync(privPath, 'utf8');
+    const derivedPem = derivePublicPem(privateKeyPem);
+
+    if (fs.existsSync(pubPath)) {
+      // Distinguish a corrupt public file from a genuinely wrong one. A file we
+      // cannot decode carries no information, so republishing it loses nothing.
+      // A file that decodes to a different key is a real conflict and needs a
+      // human, because it means signatures are being published unverifiable.
+      // No initial values: every path below assigns both, and eslint's
+      // no-useless-assignment flags a value that is never read.
+      let onDisk;
+      let raw;
+      try {
+        raw = fs.readFileSync(pubPath, 'utf8');
+        onDisk = spki(raw);
+      } catch {
+        onDisk = null;
+      }
+
+      if (onDisk !== null) {
+        if (onDisk !== spki(derivedPem)) {
+          throw new Error(
+            `signing keys do not match: ${pubPath} is not the public half of ${privPath}. ` +
+              'Signatures made with this private key cannot be verified against the published ' +
+              'public key. Remove the stale public file to republish it, or restore the correct pair.'
+          );
+        }
+        return { privateKeyPem, publicKeyPem: raw };
+      }
+    }
+
+    // Missing or unreadable: rebuild from the private key. Exact, not a guess.
+    publishPublic(derivedPem);
+    return { privateKeyPem, publicKeyPem: derivedPem };
+  };
+
+  if (fs.existsSync(privPath)) return adopt();
+
+  if (fs.existsSync(pubPath)) {
+    throw new Error(
+      `signing key missing: ${pubPath} exists but ${privPath} does not. A private key cannot ` +
+        'be recovered from a public one; generating a fresh pair here would invalidate ' +
+        'everything already signed under the published key. Restore the private key, or ' +
+        'remove the public file to deliberately start a new identity.'
+    );
   }
 
-  // Generate and save
   log.warn('no signing keys found, generating new persistent pair');
-  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519', {
+  const { privateKey } = crypto.generateKeyPairSync('ed25519', {
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
   });
 
+  // Create the key atomically *with its contents already in place*. Opening the
+  // destination with 'wx' is not enough: that creates an empty file first, so a
+  // concurrent starter can observe the path existing and read a truncated key.
+  // Writing to a private temp file and hard-linking it into position makes the
+  // key appear complete or not at all, and link() fails rather than clobbering,
+  // so exactly one starter wins and the rest adopt its key.
+  const tmpPath = `${privPath}.tmp.${process.pid}.${crypto.randomBytes(6).toString('hex')}`;
   try {
-    const fd = fs.openSync(privPath, 'w', 0o600);
-    fs.writeFileSync(fd, privateKey);
-    fs.closeSync(fd);
-    fs.writeFileSync(pubPath, publicKey);
-  } catch (e) {
-    log.error('failed to save keys', { error: e.message });
+    fs.writeFileSync(tmpPath, privateKey, { mode: 0o600 });
+    try {
+      fs.linkSync(tmpPath, privPath);
+    } catch (e) {
+      if (e.code !== 'EEXIST') {
+        throw new Error(`failed to persist signing key at ${privPath}: ${e.message}`, { cause: e });
+      }
+      // Lost the race; the winner's key is already in place and is adopted below.
+    }
+  } finally {
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      // Best effort: a leftover temp key is inert, and failing here would mask
+      // whatever the caller actually needs to know.
+    }
   }
 
-  return { privateKeyPem: privateKey, publicKeyPem: publicKey };
+  return adopt();
 }
 
 export function sha256Hex(s) {

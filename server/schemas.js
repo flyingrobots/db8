@@ -16,9 +16,9 @@ export const Claim = z.object({
 export const Citation = z.object({ url: z.string().url(), title: z.string().optional() });
 
 export const SubmissionIn = z.object({
-  room_id: z.string().uuid(),
-  round_id: z.string().uuid(),
-  author_id: z.string().uuid(),
+  room_id: z.guid(),
+  round_id: z.guid(),
+  author_id: z.guid(),
   // Align phases with DB: submit|published|final
   phase: z.enum(['submit', 'published', 'final']),
   deadline_unix: z.number().int(),
@@ -32,9 +32,9 @@ export const SubmissionIn = z.object({
 });
 
 export const ContinueVote = z.object({
-  room_id: z.string().uuid(),
-  round_id: z.string().uuid(),
-  voter_id: z.string().uuid(),
+  room_id: z.guid(),
+  round_id: z.guid(),
+  voter_id: z.guid(),
   choice: z.enum(['continue', 'end']),
   client_nonce: z.string().min(8)
 });
@@ -51,7 +51,7 @@ export const RoomCreate = z.object({
 });
 
 export const SubmissionFlag = z.object({
-  submission_id: z.string().uuid(),
+  submission_id: z.guid(),
   reporter_id: z.string().min(1),
   reporter_role: z
     .enum(['participant', 'moderator', 'fact_checker', 'viewer', 'system'])
@@ -63,9 +63,9 @@ export const SubmissionFlag = z.object({
 export const SubmissionVerify = z
   .object({
     doc: z.object({
-      room_id: z.string().uuid(),
-      round_id: z.string().uuid(),
-      author_id: z.string().uuid(),
+      room_id: z.guid(),
+      round_id: z.guid(),
+      author_id: z.guid(),
       phase: z.enum(['submit', 'published', 'final']),
       deadline_unix: z.number().int(),
       content: z.string().min(1).max(4000),
@@ -91,7 +91,7 @@ export const SubmissionVerify = z
 // Participant fingerprint enrollment
 export const ParticipantFingerprintSet = z
   .object({
-    participant_id: z.string().uuid(),
+    participant_id: z.guid(),
     public_key_b64: z.string().optional(),
     fingerprint: z.string().optional()
   })
@@ -120,9 +120,9 @@ export const ParticipantFingerprintSet = z
 
 // M3: Verification submit payload
 export const VerifySubmit = z.object({
-  round_id: z.string().uuid(),
-  reporter_id: z.string().uuid(),
-  submission_id: z.string().uuid(),
+  round_id: z.guid(),
+  reporter_id: z.guid(),
+  submission_id: z.guid(),
   claim_id: z.string().optional(),
   verdict: z.enum(['true', 'false', 'unclear', 'needs_work']),
   rationale: z.string().max(2000).optional(),
@@ -130,17 +130,17 @@ export const VerifySubmit = z.object({
 });
 
 export const FinalVote = z.object({
-  round_id: z.string().uuid(),
-  voter_id: z.string().uuid(),
+  round_id: z.guid(),
+  voter_id: z.guid(),
   approval: z.boolean(),
-  ranking: z.array(z.string().uuid()).optional(),
+  ranking: z.array(z.guid()).optional(),
   client_nonce: z.string().min(8).optional()
 });
 
 export const ScoreSubmit = z.object({
-  round_id: z.string().uuid(),
-  judge_id: z.string().uuid(),
-  participant_id: z.string().uuid(),
+  round_id: z.guid(),
+  judge_id: z.guid(),
+  participant_id: z.guid(),
   e: z.number().int().min(0).max(100),
   r: z.number().int().min(0).max(100),
   c: z.number().int().min(0).max(100),
@@ -150,18 +150,18 @@ export const ScoreSubmit = z.object({
 });
 
 export const ScoreGet = z.object({
-  round_id: z.string().uuid()
+  round_id: z.guid()
 });
 
 export const ReputationGet = z.object({
-  participant_id: z.string().uuid(),
+  participant_id: z.guid(),
   tag: z.string().optional()
 });
 
 export const ResearchFetch = z.object({
-  room_id: z.string().uuid(),
-  round_id: z.string().uuid(),
-  participant_id: z.string().uuid(),
+  room_id: z.guid(),
+  round_id: z.guid(),
+  participant_id: z.guid(),
   url: z.string().url()
 });
 
@@ -171,13 +171,13 @@ export const ResearchCacheGet = z.object({
 
 // SSH Auth schemas
 export const AuthChallengeIn = z.object({
-  room_id: z.string().uuid(),
-  participant_id: z.string().uuid()
+  room_id: z.guid(),
+  participant_id: z.guid()
 });
 
 export const AuthVerifyIn = z.object({
-  room_id: z.string().uuid(),
-  participant_id: z.string().uuid(),
+  room_id: z.guid(),
+  participant_id: z.guid(),
   nonce: z.string().min(8),
   signature_kind: z.enum(['ed25519', 'ssh']),
   sig_b64: z.string().min(1),
