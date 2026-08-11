@@ -1,8 +1,17 @@
 ---
-lastUpdated: 2025-10-06
+lastUpdated: 2026-08-11
 ---
 
 # Documentation Overview
 
 - Provenance example: a sample submission document lives at `docs/examples/provenance-document-sample.json`. Use it as a reference shape when testing signing/verification flows.
 - See `docs/Provenance.md` for JCS canonicalization, enrollment, verification, and enforcement details (SSH and Ed25519), plus CLI examples.
+
+## Specifications
+
+- [Attribution Control](specs/AttributionControl.md) — who a submission is attributed to, and when that is revealed.
+- [Claim Terms](specs/ClaimTerms.md) — the structured claim AST, non-factive projection, and path addressing for verdicts.
+- [Orchestrator Heartbeat](specs/OrchestratorHeartbeat.md) — liveness signalling for the round orchestrator.
+- [Research Tools](specs/ResearchTools.md) — the research tool surface available during a round.
+- [Scoring and Reputation](specs/ScoringAndReputation.md) — how verdicts and votes become scores.
+- [Voting](specs/Voting.md) — the voting model and final-vote tallying.

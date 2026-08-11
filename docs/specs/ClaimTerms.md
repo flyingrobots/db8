@@ -1,7 +1,7 @@
 ---
-lastUpdated: 2026-08-08
+lastUpdated: 2026-08-11
 tags: [spec]
-milestone: M8: Structured Claims
+milestone: 'M8: Structured Claims'
 ---
 
 # Structured Claims
@@ -71,7 +71,11 @@ undeclared frame kind is a validation error, not a silently accepted string.
 
 **Framing never entails the bare proposition.** Wrapping `p` in any opaque frame must never let a consumer read `p` as asserted, and the converse also holds — asserting `p` is not asserting that anyone believes `p`.
 
-This is enforced in one place. `checkableClaims(term)` is the only sanctioned way to turn a term into propositions a fact-checker may rule on. It descends through transparent frames, every part of an `all`, the body of a `denial` (flipping polarity), and the `still` branch of a `concession`. It stops at every opaque frame, at `either`, at both branches of a `conditional`, and at the `even_if` branch of a `concession`.
+This is enforced in one place. `checkableClaims(term)` is the only sanctioned way to turn a term into propositions a fact-checker may rule on. It descends through transparent frames, every part of an affirmed `all`, the body of a `denial` (flipping polarity), and the `still` branch of a `concession`. It stops at every opaque frame, at `either`, at both branches of a `conditional`, and at the `even_if` branch of a `concession`.
+
+It also stops at a _denied_ `all`. "Not (A and B)" entails only that at least one conjunct fails, so denying each part would attribute to the author two claims they did not make. For the same reason an `either` must hold at least two **distinct** options: `either([P, P])` is not an unresolved choice, and since projection stops at every `either` it would otherwise let an author assert `P` while presenting it as a question for nobody to rule on.
+
+`assertsNothing(term)` answers a deliberately broader question — did this submission make any falsifiable claim at all — and so disagrees with `checkableClaims` on attributions and beliefs. "The study says P" yields no checkable proposition, but whether the study said it is itself checkable, and that outer node is exactly what a claim path is for.
 
 That last pair is why `concession` is its own node. In `conditional(when, then)` neither branch is asserted. In `concession(even_if, still)` the consequent _is_ asserted outright — that is the rhetorical force of conceding — while the premise is granted, not claimed.
 
@@ -79,9 +83,13 @@ Each result carries the proposition, its path, its polarity, and the transparent
 
 ## Predicates
 
-`predicate` is `snake_case`. A room may declare a vocabulary in its config; when it does, any predicate outside it is rejected at submit time with the offending name in the error.
+`predicate` is `snake_case`. By default a room accepts any predicate matching that shape.
 
-This matters more than it looks. Free-form predicates across independent authors produce near-zero overlap, which makes cross-debate aggregation — scoring, Elo, any research question spanning rooms — meaningless. db8 can close this at authoring time because participants submit against a schema, rather than having to recover predicates from prose after the fact. `predicatesOf(term)` exists to seed and audit a room's vocabulary.
+The default is open on purpose. Free-form predicates across independent authors produce near-zero overlap, which makes cross-debate aggregation — scoring, Elo, any research question spanning rooms — harder. But closing the set at authoring time costs more than it saves: a debate that cannot coin a term mid-debate cannot host a new idea, and pre-declaring the predicate set means deciding in advance which propositions are expressible, which is a bias vector aimed at exactly the thing db8 exists to adjudicate. Establishing that a given vocabulary lets every side state its case is an open research question, not a precondition a room should have to satisfy.
+
+So alignment is a **read-time** concern. `predicatesOf(term)` reports what a term actually used, and reconciliation — synonym maps, clustering — happens over recorded claims rather than by refusing them at the door.
+
+`validateTerm(term, { predicates })` implements an opt-in **strict mode** for rooms that want a closed vocabulary. When strict mode is on the vocabulary is declared up front, at room creation, and an undeclared predicate is rejected at submit time with the offending name in the error. Bootstrapping a vocabulary from round 1 is not supported: it carries the same bias as pre-declaring it, minus the deliberation.
 
 ## Paths and verdicts
 
@@ -90,21 +98,25 @@ A path names one node: `$`, `$.body`, `$.parts[1].body`. A verdict records the p
 - verdict at `$` on an `attribution` node — the source does not say that
 - verdict at `$.body` — the source says it, and it is false
 
+Every path db8 emits resolves. Validation errors are reported at addressable nodes only — a bad temporal frame is reported at the `framed` node that owns it, never at `$…frame`, because `frame` is not a child slot and `atPath` would not resolve it.
+
 Paths are stable because child order is frozen. Any transformation that reorders `all.parts` detaches every path that pointed into it, so terms are stored as authored and rewrites are not permitted without an accompanying path transport.
 
 ## Limits
 
-Depth is capped at 16 and size at 256 nodes. Both are checked before schema validation so an over-nested term reports the real cause. Numbers in payloads must be finite — `NaN` and `Infinity` have no JSON form and would break canonical hashing.
+Depth is capped at 16 and size at 256 nodes, inclusive: reaching a limit is legal, exceeding it is not. Both are checked before schema validation so an over-nested term reports the real cause, and both count claim payloads, which are arbitrary JSON and would otherwise exhaust the stack inside the validator.
+
+Numbers in payloads must be finite — `NaN` and `Infinity` have no JSON form and would break canonical hashing. A payload may not use the key `__proto__`: JavaScript cannot carry it as ordinary data, so a payload containing it would validate and come back mutated, and terms are stored as authored.
 
 ## Canonical form
 
-Terms canonicalize through db8's existing JCS path (`CANON_MODE=sorted` for the legacy ordering), so `termHash()` is a content address usable for signing and for binding a verdict to exactly the claim that was made. Key order is normalized; child order is not, because child order is meaning.
+Terms canonicalize through db8's existing JCS path (`CANON_MODE=sorted` for the legacy ordering), so `termHash()` is a content address usable for signing and for binding a verdict to exactly the claim that was made. `termHash()` validates first and throws on an invalid term: an unvalidated term can carry payloads with no JSON form, and a content address that collides is not a content address. An unrecognized mode is an error rather than a silent fall back to JCS, so a typo cannot quietly change what gets signed. Key order is normalized; child order is not, because child order is meaning.
 
 ## Status
 
 Implemented: `server/claims/terms.js` (schema, validation, canonical form), `server/claims/paths.js` (addressing), `server/claims/checkable.js` (the projection). Tests in `server/test/claims.terms.test.js`.
 
-Not yet wired: `SubmissionIn.claims` still takes the flat shape, `verification_verdicts` has no `claim_path` column, and rooms have no `predicates` config key. Those are the next slice.
+Not yet wired: rooms have no `predicates` config key, so strict mode (below) cannot be turned on per room. `SubmissionIn.claims` and the `verification_verdicts.claim_path` column land in [#182](https://github.com/flyingrobots/db8/pull/182)'s follow-up branch, `feat/claim-terms-wiring`.
 
 ## Prior art
 

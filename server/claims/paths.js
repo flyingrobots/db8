@@ -1,4 +1,4 @@
-import { CHILD_KEYS } from './terms.js';
+import { CHILD_KEYS, LIST_KEYS, isNode, formatPath } from './terms.js';
 
 // Path addressing for claim terms.
 //
@@ -8,18 +8,10 @@ import { CHILD_KEYS } from './terms.js';
 // says it and it is false". Those are different findings, and db8's flat
 // claim_id could not tell them apart.
 
-const LIST_KEYS = new Set(['parts', 'options']);
-
-function isNode(value) {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** Render a path as a stable string, e.g. `$.parts[1].body`. */
-export function formatPath(path) {
-  let out = '$';
-  for (const step of path ?? []) out += typeof step === 'number' ? `[${step}]` : `.${step}`;
-  return out;
-}
+// The structural primitives live in terms.js, which owns the node contract. A
+// second copy here drifts from the path grammar the moment a child slot changes,
+// and path resolution then starts returning undefined for legitimate nodes.
+export { formatPath };
 
 /** Parse `$.parts[1].body` back into `['parts', 1, 'body']`. */
 export function parsePath(text) {
@@ -41,8 +33,16 @@ export function parsePath(text) {
  * Returns undefined when the path does not name a real node — traversal only
  * follows the child slots the node kind actually declares, so a wrong path
  * fails rather than silently landing on arbitrary data.
+ *
+ * `null` is rejected rather than coerced to the root: `parsePath` returns null
+ * for malformed input, and treating that as "no steps" would let a bad verdict
+ * path silently rule on the whole term instead of failing.
+ *
+ * Precondition: `term` must have passed `validateTerm`; this traversal enforces
+ * neither MAX_DEPTH nor MAX_NODES.
  */
 export function atPath(term, path) {
+  if (path !== undefined && !Array.isArray(path)) return undefined;
   let node = term;
   const steps = path ?? [];
   for (let i = 0; i < steps.length; i += 1) {

@@ -10,7 +10,10 @@ export function canonicalizeSorted(value) {
     if (seen.has(v)) throw new Error('Cannot canonicalize circular structure');
     seen.add(v);
     if (Array.isArray(v)) return v.map(walk);
-    const out = {};
+    // Null prototype, because `out.__proto__ = x` on an ordinary object is a
+    // prototype assignment, not an own property: the key vanishes and a payload
+    // containing `__proto__` canonicalizes identically to one without it.
+    const out = Object.create(null);
     for (const k of Object.keys(v).sort()) out[k] = walk(v[k]);
     return out;
   };

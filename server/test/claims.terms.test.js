@@ -3,11 +3,15 @@ import {
   validateTerm,
   canonicalTerm,
   termHash,
+  predicatesOf,
   FRAME_KINDS,
-  TRANSPARENT_FRAMES
+  TRANSPARENT_FRAMES,
+  MAX_DEPTH,
+  MAX_NODES
 } from '../claims/terms.js';
-import { pathsOf, atPath, formatPath } from '../claims/paths.js';
-import { checkableClaims } from '../claims/checkable.js';
+import { pathsOf, atPath, formatPath, parsePath } from '../claims/paths.js';
+import { canonicalizeSorted } from '../utils.js';
+import { checkableClaims, assertsNothing } from '../claims/checkable.js';
 
 const named = (name) => ({ kind: 'named', name });
 const prop = (subject, predicate, object) => ({
@@ -173,6 +177,70 @@ describe('claim terms — non-factivity', () => {
   });
 });
 
+describe('claim terms — denial does not distribute over a conjunction', () => {
+  // "not (A and B)" entails only that at least one conjunct fails. Emitting a
+  // denial of each would hand the verifier two claims the author never made.
+  it('yields nothing checkable for a denied conjunction', () => {
+    const term = { kind: 'denial', body: { kind: 'all', parts: [REMOTE_WORK, SHIPS_TUESDAY] } };
+    expect(validateTerm(term).ok).toBe(true);
+    expect(checkableClaims(term)).toEqual([]);
+  });
+
+  it('still denies a single proposition under a denial', () => {
+    const term = { kind: 'denial', body: REMOTE_WORK };
+    expect(checkableClaims(term).map((c) => c.polarity)).toEqual(['deny']);
+  });
+
+  it('affirms a doubly denied conjunction, since the polarity is back to affirm', () => {
+    const inner = { kind: 'all', parts: [REMOTE_WORK, SHIPS_TUESDAY] };
+    const term = { kind: 'denial', body: { kind: 'denial', body: inner } };
+    expect(checkableClaims(term).map((c) => c.polarity)).toEqual(['affirm', 'affirm']);
+  });
+});
+
+describe('claim terms — assertsNothing', () => {
+  it('is true when every proposition sits behind a disjunction', () => {
+    expect(assertsNothing({ kind: 'either', options: [REMOTE_WORK, SHIPS_TUESDAY] })).toBe(true);
+  });
+
+  it('is false for a bare proposition', () => {
+    expect(assertsNothing(REMOTE_WORK)).toBe(false);
+  });
+
+  // "the study says P" suppresses P, but whether the study said it is itself
+  // falsifiable — and it is the exact outer-node finding claim paths exist for.
+  it('is false for an attribution, whose relation is checkable even though P is not', () => {
+    const term = {
+      kind: 'framed',
+      frame: { kind: 'attribution', source: named('the_study') },
+      body: REMOTE_WORK
+    };
+    expect(checkableClaims(term)).toEqual([]);
+    expect(assertsNothing(term)).toBe(false);
+  });
+
+  it('is false for a belief, for the same reason', () => {
+    const term = {
+      kind: 'framed',
+      frame: { kind: 'belief', holder: named('opponent') },
+      body: REMOTE_WORK
+    };
+    expect(assertsNothing(term)).toBe(false);
+  });
+
+  // Projection stops at every either, so `either([P, P])` would let an author
+  // assert P while presenting it as an unresolved choice.
+  it('rejects an either whose options are all the same term', () => {
+    expect(validateTerm({ kind: 'either', options: [REMOTE_WORK, REMOTE_WORK] }).ok).toBe(false);
+    expect(validateTerm({ kind: 'either', options: [REMOTE_WORK, SHIPS_TUESDAY] }).ok).toBe(true);
+  });
+
+  it('is true for a hypothetical, which attributes the proposition to no one', () => {
+    const term = { kind: 'framed', frame: { kind: 'hypothetical' }, body: REMOTE_WORK };
+    expect(assertsNothing(term)).toBe(true);
+  });
+});
+
 describe('claim terms — all vs either are distinguishable', () => {
   it('hashes a conjunction and a disjunction differently', () => {
     const conjunction = { kind: 'all', parts: [REMOTE_WORK, SHIPS_TUESDAY] };
@@ -220,7 +288,7 @@ describe('claim terms — path addressing for verdicts', () => {
     body: REMOTE_WORK
   };
 
-  it('resolves the root, the frame node, and the inner proposition', () => {
+  it('resolves the root and the inner proposition', () => {
     expect(atPath(term, [])).toBe(term);
     expect(atPath(term, ['body'])).toBe(REMOTE_WORK);
   });
@@ -243,5 +311,168 @@ describe('claim terms — path addressing for verdicts', () => {
   it('returns undefined for a path that does not resolve', () => {
     expect(atPath(term, ['parts', 0])).toBeUndefined();
     expect(atPath(term, ['body', 'body'])).toBeUndefined();
+  });
+
+  // parsePath signals failure with null. Letting that reach atPath as "no steps"
+  // would resolve the root, so a malformed verdict path would silently rule on
+  // the whole term instead of being rejected.
+  it('rejects a null path rather than resolving the root', () => {
+    expect(parsePath('$.bogus[')).toBeNull();
+    expect(atPath(term, parsePath('$.bogus['))).toBeUndefined();
+    expect(atPath(term, null)).toBeUndefined();
+  });
+
+  it('round-trips every enumerated path through formatPath and parsePath', () => {
+    const t = {
+      kind: 'all',
+      parts: [{ kind: 'denial', body: REMOTE_WORK }, SHIPS_TUESDAY]
+    };
+    for (const path of pathsOf(t)) {
+      expect(parsePath(formatPath(path))).toEqual(path);
+      expect(atPath(t, parsePath(formatPath(path)))).toBe(atPath(t, path));
+    }
+  });
+
+  it('rejects malformed path strings', () => {
+    for (const bad of ['', 'body', '$..body', '$.parts[]', '$.parts[0', '$[0]x', '$.']) {
+      expect(parsePath(bad)).toBeNull();
+    }
+  });
+
+  it('treats the empty path as the root and nothing else', () => {
+    expect(parsePath('$')).toEqual([]);
+    expect(atPath(term, [])).toBe(term);
+  });
+});
+
+describe('claim terms — validation boundaries', () => {
+  const nest = (depth) => {
+    let t = REMOTE_WORK;
+    for (let i = 0; i < depth; i += 1) t = { kind: 'denial', body: t };
+    return t;
+  };
+
+  // The error says "exceeds", so reaching the cap must be legal. MAX_NODES uses
+  // the same convention and the two must not disagree on their own boundary.
+  it('accepts exactly MAX_DEPTH levels of nesting and rejects one more', () => {
+    expect(validateTerm(nest(MAX_DEPTH)).ok).toBe(true);
+    const over = validateTerm(nest(MAX_DEPTH + 1));
+    expect(over.ok).toBe(false);
+    expect(over.errors[0].message).toMatch(/exceeds maximum nesting depth/);
+  });
+
+  it('accepts exactly MAX_NODES nodes and rejects one more', () => {
+    const conj = (n) => ({
+      kind: 'all',
+      parts: Array.from({ length: n }, () => REMOTE_WORK)
+    });
+    expect(validateTerm(conj(MAX_NODES - 1)).ok).toBe(true);
+    const over = validateTerm(conj(MAX_NODES));
+    expect(over.ok).toBe(false);
+    expect(over.errors[0].message).toMatch(/exceeds maximum size/);
+  });
+
+  // A claim payload is arbitrary JSON, and measure() stops at claim nodes. If the
+  // payload is not counted, a deep enough one exhausts the stack in Zod instead of
+  // returning a validation error.
+  it('bounds nesting inside a claim payload instead of overflowing the stack', () => {
+    let deep = 1;
+    for (let i = 0; i < 50_000; i += 1) deep = [deep];
+    const result = validateTerm(prop('x', 'has', deep));
+    expect(result.ok).toBe(false);
+    expect(result.errors[0].message).toMatch(/exceeds maximum/);
+  });
+});
+
+describe('claim terms — claim payloads', () => {
+  const RECORD_PAYLOAD = prop('report', 'contains', { pages: 12, title: 'findings' });
+  const ARRAY_PAYLOAD = prop('report', 'lists', ['a', 'b', 3]);
+  const ENTITY_PAYLOAD = prop('report', 'authored_by', {
+    kind: 'entity',
+    value: named('the_study')
+  });
+
+  it('accepts record, array, and entity-reference payloads', () => {
+    for (const term of [RECORD_PAYLOAD, ARRAY_PAYLOAD, ENTITY_PAYLOAD]) {
+      expect(validateTerm(term).ok).toBe(true);
+    }
+  });
+
+  // z.union takes the first member that parses. Without an explicit rejection a
+  // malformed entity matches the generic record branch and persists as a record
+  // wearing an entity badge — and terms are stored as authored.
+  it('rejects a record that claims the entity discriminator but is not one', () => {
+    const bad = prop('report', 'authored_by', { kind: 'entity', value: 'the_study' });
+    expect(validateTerm(bad).ok).toBe(false);
+  });
+});
+
+describe('claim terms — content addressing', () => {
+  it('lists every predicate in sorted order', () => {
+    const term = {
+      kind: 'all',
+      parts: [SHIPS_TUESDAY, REMOTE_WORK, prop('team', 'adopted', 'remote_work')]
+    };
+    expect(predicatesOf(term)).toEqual(['adopted', 'reduces', 'ships_on']);
+  });
+
+  it('refuses to content-address a term that would not validate', () => {
+    expect(() => termHash({ kind: 'claim', predicate: 'BAD CASE' })).toThrow();
+  });
+
+  // Zod's record parser drops `__proto__`, so a payload carrying it would come
+  // back from validation mutated — and a term that hashes to an address its own
+  // authored form does not produce is not content-addressed at all.
+  it('rejects a __proto__ payload rather than silently dropping it', () => {
+    const withProto = prop('x', 'has', JSON.parse('{"__proto__":{"a":1}}'));
+    const result = validateTerm(withProto);
+    expect(result.ok).toBe(false);
+    expect(result.errors[0].message).toMatch(/reserved key/);
+  });
+
+  it('rejects a __proto__ key nested inside a payload', () => {
+    const nested = prop('x', 'has', { outer: [JSON.parse('{"__proto__":1}')] });
+    expect(validateTerm(nested).ok).toBe(false);
+  });
+
+  // Independent of the above: the sorted canonicalizer must not conflate a key it
+  // is given with one it was not, or two distinct values share one address.
+  it('preserves a __proto__ key through the sorted canonicalizer', () => {
+    expect(canonicalizeSorted(JSON.parse('{"__proto__":{"a":1}}'))).not.toBe(
+      canonicalizeSorted({})
+    );
+  });
+
+  // config-builder rejects an unknown CANON_MODE. Silently falling back to jcs
+  // here would let a typo change what gets signed without anyone noticing.
+  it('rejects an unrecognized canonicalization mode instead of falling back', () => {
+    const prev = process.env.DB8_CANON_MODE;
+    process.env.DB8_CANON_MODE = 'sorted_v2';
+    try {
+      expect(() => canonicalTerm(REMOTE_WORK)).toThrow(/DB8_CANON_MODE/);
+    } finally {
+      if (prev === undefined) delete process.env.DB8_CANON_MODE;
+      else process.env.DB8_CANON_MODE = prev;
+    }
+  });
+});
+
+describe('claim terms — temporal frame errors are addressable', () => {
+  // Every path db8 hands out must resolve, because a verdict may be filed against
+  // it. `frame` is not a declared child slot, so the error belongs on the framed
+  // node that owns it.
+  it('reports a bad temporal frame at a path that atPath can resolve', () => {
+    const term = {
+      kind: 'all',
+      parts: [SHIPS_TUESDAY, { kind: 'framed', frame: { kind: 'temporal' }, body: REMOTE_WORK }]
+    };
+    const result = validateTerm(term);
+    expect(result.ok).toBe(false);
+
+    const [error] = result.errors;
+    expect(error.message).toMatch(/temporal frame requires/);
+    const resolved = atPath(term, parsePath(error.path));
+    expect(resolved).toBeDefined();
+    expect(resolved.kind).toBe('framed');
   });
 });
