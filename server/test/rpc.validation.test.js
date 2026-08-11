@@ -5,4 +5,3 @@ describe('RPC validation (placeholders)', () => {
   it.todo('enforces <=5 claims');
   it.todo('stable canonical sha256');
 });
-

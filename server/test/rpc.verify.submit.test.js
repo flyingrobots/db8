@@ -78,15 +78,13 @@ describe('POST /rpc/verify.submit (memory path)', () => {
   it('rejects malformed UUIDs and missing fields', async () => {
     const bad = await request(app).post('/rpc/verify.submit').send({ verdict: 'true' });
     expect(bad.status).toBeGreaterThanOrEqual(400);
-    const badIds = await request(app)
-      .post('/rpc/verify.submit')
-      .send({
-        round_id: 'not-a-uuid',
-        reporter_id: 'x',
-        submission_id: 'y',
-        verdict: 'true',
-        client_nonce: 'v'
-      });
+    const badIds = await request(app).post('/rpc/verify.submit').send({
+      round_id: 'not-a-uuid',
+      reporter_id: 'x',
+      submission_id: 'y',
+      verdict: 'true',
+      client_nonce: 'v'
+    });
     expect(badIds.status).toBeGreaterThanOrEqual(400);
   });
 

@@ -141,13 +141,16 @@
     "unwritable",
     "worktree",
     "worktrees",
+    "amannn",
+    "commitmsg",
+    "EDITMSG",
     "factivity",
-    "factive",
-    "unvalidated",
-    "Goguen",
-    "Hintikka",
+    "Kripke",
     "Kratzer",
-    "Kripke"
+    "Hintikka",
+    "Goguen",
+    "unvalidated",
+    "factive"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
