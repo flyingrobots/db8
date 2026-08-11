@@ -127,6 +127,10 @@ describe('claim terms — non-factivity', () => {
         hedge: { kind: 'hedge', expression: 'may' },
         evaluative: { kind: 'evaluative' }
       }[kind];
+      // Without this, adding a frame kind and forgetting to map it here makes
+      // `frame` undefined, checkableClaims returns [], and the loop reports the
+      // new kind opaque without having tested it.
+      expect(frame, `${kind} has no fixture`).toBeDefined();
       const t = { kind: 'framed', frame, body: REMOTE_WORK };
       expect(checkableClaims(t), `${kind} must be opaque`).toEqual([]);
     }
@@ -457,6 +461,16 @@ describe('claim terms — claim payloads', () => {
     const bad = prop('report', 'authored_by', { kind: 'entity', value: 'the_study' });
     expect(validateTerm(bad).ok).toBe(false);
   });
+
+  // The guard is `o.kind !== 'entity'`. Widen it to `!('kind' in o)` - a
+  // plausible tightening - and every record carrying a `kind` field starts
+  // failing. A rejection test alone pins one point, not the boundary.
+  it('still accepts a record whose kind is anything other than entity', () => {
+    for (const kind of ['section', 'entity_ref', 'ENTITY', '']) {
+      const term = prop('report', 'contains', { kind, value: 'x' });
+      expect(validateTerm(term).ok, `kind=${JSON.stringify(kind)}`).toBe(true);
+    }
+  });
 });
 
 describe('claim terms — content addressing', () => {
@@ -489,10 +503,14 @@ describe('claim terms — content addressing', () => {
 
   // Independent of the above: the sorted canonicalizer must not conflate a key it
   // is given with one it was not, or two distinct values share one address.
-  it('preserves a __proto__ key through the sorted canonicalizer', () => {
-    expect(canonicalizeSorted(JSON.parse('{"__proto__":{"a":1}}'))).not.toBe(
-      canonicalizeSorted({})
-    );
+  // Named exactly, because `!== '{}'` also passes for outputs that still lose
+  // the value - `{"__proto__":null}` or `{"__proto__":{}}`.
+  it('preserves a __proto__ key and its value through the sorted canonicalizer', () => {
+    expect(canonicalizeSorted(JSON.parse('{"__proto__":{"a":1}}'))).toBe('{"__proto__":{"a":1}}');
+  });
+
+  it('keeps a __proto__ key distinct from a sibling in the sorted canonicalizer', () => {
+    expect(canonicalizeSorted(JSON.parse('{"__proto__":1,"a":2}'))).toBe('{"__proto__":1,"a":2}');
   });
 
   // config-builder rejects an unknown CANON_MODE. Silently falling back to jcs
