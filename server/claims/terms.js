@@ -158,16 +158,25 @@ function findForbiddenKeys(value, found) {
 // canonicalizer both recurse through it, so it has to count against the same
 // limits as the term itself — otherwise a deep enough payload raises a
 // RangeError from inside a function documented to return a validation result.
+// Every value *inside* a payload container counts, scalars included. Counting
+// only containers made `Array(1e6).fill(0)` two nodes, so a payload could pass
+// the cap while Zod and the canonicalizer still had to walk a million elements.
+//
+// A claim's own scalar payload is not counted: it is a field of the claim, not a
+// node of its own, and counting it would halve the effective term budget.
 function measurePayload(value, depth, state) {
   if (depth > state.maxDepth) state.maxDepth = depth;
+  state.count += 1;
   if (value === null || typeof value !== 'object') return;
   if (state.count > MAX_NODES || state.maxDepth > MAX_DEPTH) return;
-  state.count += 1;
-  if (Array.isArray(value)) {
-    for (const item of value) measurePayload(item, depth + 1, state);
-    return;
+
+  const children = Array.isArray(value) ? value : Object.values(value);
+  for (const child of children) {
+    measurePayload(child, depth + 1, state);
+    // Stop as soon as the term is over budget. Without this the traversal still
+    // visits all million elements to report a limit it already knows is broken.
+    if (state.count > MAX_NODES || state.maxDepth > MAX_DEPTH) return;
   }
-  for (const key of Object.keys(value)) measurePayload(value[key], depth + 1, state);
 }
 
 // Depth and size are checked before Zod so an over-nested term reports the real
@@ -181,6 +190,9 @@ function measure(node, depth, state, path) {
   }
   if (state.count > MAX_NODES) return;
   if (node.kind === 'claim') {
+    // Only a structured payload is measured; a scalar one is a field of this
+    // claim and is already accounted for by the node itself.
+    if (node.object === null || typeof node.object !== 'object') return;
     const before = state.maxDepth;
     measurePayload(node.object, depth, state);
     if (state.maxDepth > before) state.deepestPath = path;

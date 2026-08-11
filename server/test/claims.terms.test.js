@@ -260,27 +260,41 @@ describe('claim terms — assertsNothing', () => {
 
   // Every case above answers at depth zero. These reach the descent, which is
   // the part that can actually break: the CHILD_KEYS loop and its list handling.
-  it('finds an attribution buried under a list slot', () => {
-    const attributed = {
-      kind: 'framed',
-      frame: { kind: 'attribution', source: named('the_study') },
-      body: REMOTE_WORK
-    };
-    // `either` so nothing is checkable; the answer must come from the descent.
-    const underEither = { kind: 'either', options: [attributed, SHIPS_TUESDAY] };
-    expect(checkableClaims(underEither)).toEqual([]);
-    expect(assertsNothing(underEither)).toBe(false);
+  const ATTRIBUTED = {
+    kind: 'framed',
+    frame: { kind: 'attribution', source: named('the_study') },
+    body: REMOTE_WORK
+  };
+
+  it('finds an attribution buried in an asserted list slot', () => {
+    // Both parts of an affirmed conjunction are asserted, so the attribution
+    // relation inside one of them is too.
+    const term = { kind: 'all', parts: [ATTRIBUTED, SHIPS_TUESDAY] };
+    expect(assertsNothing(term)).toBe(false);
   });
 
-  it('finds an attribution buried under a non-list slot', () => {
-    const attributed = {
-      kind: 'framed',
-      frame: { kind: 'belief', holder: named('opponent') },
-      body: REMOTE_WORK
-    };
-    const underConditional = { kind: 'conditional', when: attributed, then: SHIPS_TUESDAY };
-    expect(checkableClaims(underConditional)).toEqual([]);
-    expect(assertsNothing(underConditional)).toBe(false);
+  it('finds an attribution buried in an asserted non-list slot', () => {
+    const term = { kind: 'concession', even_if: SHIPS_TUESDAY, still: ATTRIBUTED };
+    expect(assertsNothing(term)).toBe(false);
+  });
+
+  // An opaque ancestor suspends everything beneath it, including a relational
+  // frame. "Suppose the study says P" asserts neither P nor that the study
+  // said it.
+  it('is true when an attribution sits under an opaque frame', () => {
+    const term = { kind: 'framed', frame: { kind: 'hypothetical' }, body: ATTRIBUTED };
+    expect(checkableClaims(term)).toEqual([]);
+    expect(assertsNothing(term)).toBe(true);
+  });
+
+  it('is true when an attribution sits in an unasserted branch', () => {
+    expect(assertsNothing({ kind: 'either', options: [ATTRIBUTED, SHIPS_TUESDAY] })).toBe(true);
+    expect(assertsNothing({ kind: 'conditional', when: ATTRIBUTED, then: SHIPS_TUESDAY })).toBe(
+      true
+    );
+    expect(assertsNothing({ kind: 'concession', even_if: ATTRIBUTED, still: ATTRIBUTED })).toBe(
+      false
+    );
   });
 
   it('stays true when a buried frame is opaque but not relational', () => {
@@ -294,6 +308,48 @@ describe('claim terms — assertsNothing', () => {
   it('is true for a hypothetical, which attributes the proposition to no one', () => {
     const term = { kind: 'framed', frame: { kind: 'hypothetical' }, body: REMOTE_WORK };
     expect(assertsNothing(term)).toBe(true);
+  });
+});
+
+describe('claim terms — denial does not distribute over a concession', () => {
+  // "Even if X, Y still holds" asserts Y and grants X. Denying it rejects the
+  // concessive relation - X may well defeat Y - so it does not entail not-Y.
+  it('yields nothing checkable for a denied concession', () => {
+    const term = {
+      kind: 'denial',
+      body: { kind: 'concession', even_if: SHIPS_TUESDAY, still: REMOTE_WORK }
+    };
+    expect(validateTerm(term).ok).toBe(true);
+    expect(checkableClaims(term)).toEqual([]);
+  });
+
+  it('still asserts the consequent when the concession is affirmed', () => {
+    const term = { kind: 'concession', even_if: SHIPS_TUESDAY, still: REMOTE_WORK };
+    expect(checkableClaims(term).map((c) => c.polarity)).toEqual(['affirm']);
+  });
+});
+
+describe('claim terms — payload size', () => {
+  // Every payload value counts, not just containers. A wide array of scalars
+  // passed the node cap while Zod and canonicalization still had to walk all
+  // of it.
+  it('rejects a payload with more scalar elements than the node cap', () => {
+    const wide = prop('x', 'has', new Array(MAX_NODES * 4).fill(0));
+    const result = validateTerm(wide);
+    expect(result.ok).toBe(false);
+    expect(result.errors[0].message).toMatch(/exceeds maximum size/);
+  });
+
+  it('still accepts a payload comfortably inside the cap', () => {
+    expect(validateTerm(prop('x', 'has', new Array(8).fill(0))).ok).toBe(true);
+    expect(validateTerm(prop('x', 'has', { a: 1, b: 'two', c: [3, 4] })).ok).toBe(true);
+  });
+
+  it('returns promptly for a very wide payload instead of walking all of it', () => {
+    const huge = prop('x', 'has', new Array(1_000_000).fill(0));
+    const started = Date.now();
+    expect(validateTerm(huge).ok).toBe(false);
+    expect(Date.now() - started).toBeLessThan(250);
   });
 });
 
