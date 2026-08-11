@@ -735,6 +735,24 @@ $$;
 
 -- claim_path is appended, not inserted: CREATE OR REPLACE VIEW may add columns
 -- at the end but may not reorder or retype the existing ones.
+-- The term of one claim in a submission, or NULL when the claim is absent.
+-- Path resolution itself stays in JS: server/claims/paths.js owns the grammar
+-- and a second implementation here would drift from it.
+CREATE OR REPLACE FUNCTION submission_claim_term(
+  p_submission_id uuid,
+  p_claim_id text
+) RETURNS jsonb
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT c->'term'
+    FROM submissions s
+    CROSS JOIN LATERAL jsonb_array_elements(s.claims) AS c
+   WHERE s.id = p_submission_id
+     AND c->>'id' = p_claim_id
+   LIMIT 1;
+$$;
+
 CREATE OR REPLACE VIEW verification_verdicts_view AS
   SELECT v.id, r.room_id, v.round_id, v.submission_id, v.reporter_id, v.claim_id, v.verdict, v.rationale, v.created_at, v.claim_path
   FROM verification_verdicts v

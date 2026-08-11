@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { atPath, parsePath } from '../claims/paths.js';
 
 /**
  * VerificationService handles submission verdicts and claim-level aggregates.
@@ -14,7 +15,42 @@ export class VerificationService {
     return this.dbRef.pool;
   }
 
+  /**
+   * A path that parses is not a path that exists. The schema proves the syntax;
+   * only the claim's own term can say whether the node is there, and binding a
+   * verdict to a node is what the column is for.
+   *
+   * Resolution stays here rather than in SQL because server/claims/paths.js owns
+   * the grammar — a plpgsql copy would be a second implementation to drift.
+   * @throws {Error} claim_path_not_found
+   */
+  async assertPathResolves(input) {
+    if (!input.claim_path || !input.claim_id) return;
+
+    let term;
+    if (this.pool) {
+      const r = await this.pool.query('SELECT submission_claim_term($1::uuid,$2::text) AS term', [
+        input.submission_id,
+        input.claim_id
+      ]);
+      term = r.rows[0]?.term;
+    } else {
+      const claims = this.memSubmissionIndex?.get(input.submission_id)?.claims;
+      term = claims?.find((c) => c?.id === input.claim_id)?.term;
+    }
+
+    // No term to check against is not the same as a bad path; leave that to the
+    // existing claim_id handling rather than inventing a failure here.
+    if (!term) return;
+
+    if (atPath(term, parsePath(input.claim_path)) === undefined) {
+      throw new Error('claim_path_not_found');
+    }
+  }
+
   async submitVerdict(input) {
+    await this.assertPathResolves(input);
+
     // The path is part of the identity: a verdict on the attribution and a
     // verdict on the inner proposition are different findings, not a repeat.
     const key = `${input.round_id}:${input.reporter_id}:${input.submission_id}:${input.claim_id || 'none'}:${input.claim_path || 'whole'}`;
