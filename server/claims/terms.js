@@ -247,9 +247,12 @@ export function formatPath(path) {
  *
  * @param {unknown} term          the candidate term
  * @param {object}  [opts]
- * @param {string[]} [opts.predicates] declared predicate vocabulary; when supplied,
- *   any predicate outside it is rejected. Room-level vocabularies are what make
- *   claims comparable across debates — without one, every author invents their own.
+ * @param {string[]} [opts.predicates] opt-in strict mode. Omit it and any
+ *   snake_case predicate is accepted, which is the default: a closed vocabulary
+ *   stops a debate coining a term mid-debate and decides in advance which
+ *   propositions are expressible. Supply it and the room has declared a
+ *   vocabulary up front; predicates outside it are rejected. Cross-debate
+ *   alignment is otherwise a read-time concern — see `predicatesOf`.
  * @returns {{ok: boolean, errors: Array<{path: string, message: string}>, value?: object}}
  */
 export function validateTerm(term, opts = {}) {

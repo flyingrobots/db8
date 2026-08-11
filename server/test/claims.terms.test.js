@@ -525,6 +525,42 @@ describe('claim terms — content addressing', () => {
   });
 });
 
+describe('claim terms — error paths vs verdict paths', () => {
+  // Two different grammars, and the spec has to say so. Verdict paths name
+  // nodes and must resolve. Validation error paths are diagnostics and may name
+  // a field inside a node — Zod reports `$.predicate`, `$.object`,
+  // `$.subject.name`, none of which are addressable. Pinning this stops the
+  // stricter frame behaviour from being mistaken for a universal guarantee.
+  const cases = [
+    {
+      label: 'bad frame kind',
+      term: { kind: 'framed', frame: { kind: 'vibes' }, body: REMOTE_WORK }
+    },
+    { label: 'non-finite payload', term: prop('inflation', 'rate_is', Number.POSITIVE_INFINITY) },
+    { label: 'bad predicate', term: prop('x', 'BAD CASE', null) }
+  ];
+
+  it('emits field-level error paths that do not resolve as nodes', () => {
+    for (const { label, term } of cases) {
+      const result = validateTerm(term);
+      expect(result.ok, label).toBe(false);
+      // Documented as diagnostics, not verdict targets.
+      expect(atPath(term, parsePath(result.errors[0].path)), label).toBeUndefined();
+    }
+  });
+
+  it('enumerates only addressable nodes for verdicts', () => {
+    const term = {
+      kind: 'framed',
+      frame: { kind: 'attribution', source: named('the_study') },
+      body: REMOTE_WORK
+    };
+    for (const path of pathsOf(term)) {
+      expect(atPath(term, path)).toBeDefined();
+    }
+  });
+});
+
 describe('claim terms — temporal frame errors are addressable', () => {
   // Every path db8 hands out must resolve, because a verdict may be filed against
   // it. `frame` is not a declared child slot, so the error belongs on the framed

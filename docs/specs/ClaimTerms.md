@@ -98,7 +98,13 @@ A path names one node: `$`, `$.body`, `$.parts[1].body`. A verdict records the p
 - verdict at `$` on an `attribution` node — the source does not say that
 - verdict at `$.body` — the source says it, and it is false
 
-Every path db8 emits resolves. Validation errors are reported at addressable nodes only — a bad temporal frame is reported at the `framed` node that owns it, never at `$…frame`, because `frame` is not a child slot and `atPath` would not resolve it.
+Verdict paths and validation error paths are two different grammars, and only the first is addressable.
+
+A **verdict path** names a node. Every path `pathsOf()` enumerates resolves through `atPath()`, and a verdict may only target one of those.
+
+A **validation error path** is a diagnostic and may name a field inside a node. Schema errors from Zod report `$.predicate`, `$.object`, `$.subject.name` and the like; none of those resolve as nodes, because the fields they name are not child slots. Do not feed an error path to `atPath()` and expect a node back.
+
+Where db8 writes the error itself it reports at the owning node: a bad temporal frame is reported at the `framed` node, not at `$…frame`, since `frame` is not a child slot.
 
 Paths are stable because child order is frozen. Any transformation that reorders `all.parts` detaches every path that pointed into it, so terms are stored as authored and rewrites are not permitted without an accompanying path transport.
 
