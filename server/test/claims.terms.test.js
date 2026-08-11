@@ -24,6 +24,25 @@ const prop = (subject, predicate, object) => ({
 const REMOTE_WORK = prop('remote_work', 'reduces', 'productivity');
 const SHIPS_TUESDAY = prop('release', 'ships_on', 'tuesday');
 
+// Env mutation is restored even when the body throws, so one failing
+// expectation cannot leak a canonicalization mode into unrelated tests.
+function withEnv(vars, fn) {
+  const prev = {};
+  for (const [k, v] of Object.entries(vars)) {
+    prev[k] = process.env[k];
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
 describe('claim terms — shape', () => {
   it('accepts every node kind', () => {
     const terms = [
@@ -108,6 +127,10 @@ describe('claim terms — non-factivity', () => {
         hedge: { kind: 'hedge', expression: 'may' },
         evaluative: { kind: 'evaluative' }
       }[kind];
+      // Without this, adding a frame kind and forgetting to map it here makes
+      // `frame` undefined, checkableClaims returns [], and the loop reports the
+      // new kind opaque without having tested it.
+      expect(frame, `${kind} has no fixture`).toBeDefined();
       const t = { kind: 'framed', frame, body: REMOTE_WORK };
       expect(checkableClaims(t), `${kind} must be opaque`).toEqual([]);
     }
@@ -235,9 +258,98 @@ describe('claim terms — assertsNothing', () => {
     expect(validateTerm({ kind: 'either', options: [REMOTE_WORK, SHIPS_TUESDAY] }).ok).toBe(true);
   });
 
+  // Every case above answers at depth zero. These reach the descent, which is
+  // the part that can actually break: the CHILD_KEYS loop and its list handling.
+  const ATTRIBUTED = {
+    kind: 'framed',
+    frame: { kind: 'attribution', source: named('the_study') },
+    body: REMOTE_WORK
+  };
+
+  it('finds an attribution buried in an asserted list slot', () => {
+    // Both parts of an affirmed conjunction are asserted, so the attribution
+    // relation inside one of them is too.
+    const term = { kind: 'all', parts: [ATTRIBUTED, SHIPS_TUESDAY] };
+    expect(assertsNothing(term)).toBe(false);
+  });
+
+  it('finds an attribution buried in an asserted non-list slot', () => {
+    const term = { kind: 'concession', even_if: SHIPS_TUESDAY, still: ATTRIBUTED };
+    expect(assertsNothing(term)).toBe(false);
+  });
+
+  // An opaque ancestor suspends everything beneath it, including a relational
+  // frame. "Suppose the study says P" asserts neither P nor that the study
+  // said it.
+  it('is true when an attribution sits under an opaque frame', () => {
+    const term = { kind: 'framed', frame: { kind: 'hypothetical' }, body: ATTRIBUTED };
+    expect(checkableClaims(term)).toEqual([]);
+    expect(assertsNothing(term)).toBe(true);
+  });
+
+  it('is true when an attribution sits in an unasserted branch', () => {
+    expect(assertsNothing({ kind: 'either', options: [ATTRIBUTED, SHIPS_TUESDAY] })).toBe(true);
+    expect(assertsNothing({ kind: 'conditional', when: ATTRIBUTED, then: SHIPS_TUESDAY })).toBe(
+      true
+    );
+    expect(assertsNothing({ kind: 'concession', even_if: ATTRIBUTED, still: ATTRIBUTED })).toBe(
+      false
+    );
+  });
+
+  it('stays true when a buried frame is opaque but not relational', () => {
+    const hypo = (body) => ({ kind: 'framed', frame: { kind: 'hypothetical' }, body });
+    const buried = { kind: 'either', options: [hypo(REMOTE_WORK), hypo(SHIPS_TUESDAY)] };
+    const term = { kind: 'conditional', when: buried, then: hypo(REMOTE_WORK) };
+    expect(validateTerm(term).ok).toBe(true);
+    expect(assertsNothing(term)).toBe(true);
+  });
+
   it('is true for a hypothetical, which attributes the proposition to no one', () => {
     const term = { kind: 'framed', frame: { kind: 'hypothetical' }, body: REMOTE_WORK };
     expect(assertsNothing(term)).toBe(true);
+  });
+});
+
+describe('claim terms — denial does not distribute over a concession', () => {
+  // "Even if X, Y still holds" asserts Y and grants X. Denying it rejects the
+  // concessive relation - X may well defeat Y - so it does not entail not-Y.
+  it('yields nothing checkable for a denied concession', () => {
+    const term = {
+      kind: 'denial',
+      body: { kind: 'concession', even_if: SHIPS_TUESDAY, still: REMOTE_WORK }
+    };
+    expect(validateTerm(term).ok).toBe(true);
+    expect(checkableClaims(term)).toEqual([]);
+  });
+
+  it('still asserts the consequent when the concession is affirmed', () => {
+    const term = { kind: 'concession', even_if: SHIPS_TUESDAY, still: REMOTE_WORK };
+    expect(checkableClaims(term).map((c) => c.polarity)).toEqual(['affirm']);
+  });
+});
+
+describe('claim terms — payload size', () => {
+  // Every payload value counts, not just containers. A wide array of scalars
+  // passed the node cap while Zod and canonicalization still had to walk all
+  // of it.
+  it('rejects a payload with more scalar elements than the node cap', () => {
+    const wide = prop('x', 'has', new Array(MAX_NODES * 4).fill(0));
+    const result = validateTerm(wide);
+    expect(result.ok).toBe(false);
+    expect(result.errors[0].message).toMatch(/exceeds maximum size/);
+  });
+
+  it('still accepts a payload comfortably inside the cap', () => {
+    expect(validateTerm(prop('x', 'has', new Array(8).fill(0))).ok).toBe(true);
+    expect(validateTerm(prop('x', 'has', { a: 1, b: 'two', c: [3, 4] })).ok).toBe(true);
+  });
+
+  it('returns promptly for a very wide payload instead of walking all of it', () => {
+    const huge = prop('x', 'has', new Array(1_000_000).fill(0));
+    const started = Date.now();
+    expect(validateTerm(huge).ok).toBe(false);
+    expect(Date.now() - started).toBeLessThan(250);
   });
 });
 
@@ -405,6 +517,16 @@ describe('claim terms — claim payloads', () => {
     const bad = prop('report', 'authored_by', { kind: 'entity', value: 'the_study' });
     expect(validateTerm(bad).ok).toBe(false);
   });
+
+  // The guard is `o.kind !== 'entity'`. Widen it to `!('kind' in o)` - a
+  // plausible tightening - and every record carrying a `kind` field starts
+  // failing. A rejection test alone pins one point, not the boundary.
+  it('still accepts a record whose kind is anything other than entity', () => {
+    for (const kind of ['section', 'entity_ref', 'ENTITY', '']) {
+      const term = prop('report', 'contains', { kind, value: 'x' });
+      expect(validateTerm(term).ok, `kind=${JSON.stringify(kind)}`).toBe(true);
+    }
+  });
 });
 
 describe('claim terms — content addressing', () => {
@@ -437,22 +559,78 @@ describe('claim terms — content addressing', () => {
 
   // Independent of the above: the sorted canonicalizer must not conflate a key it
   // is given with one it was not, or two distinct values share one address.
-  it('preserves a __proto__ key through the sorted canonicalizer', () => {
-    expect(canonicalizeSorted(JSON.parse('{"__proto__":{"a":1}}'))).not.toBe(
-      canonicalizeSorted({})
-    );
+  // Named exactly, because `!== '{}'` also passes for outputs that still lose
+  // the value - `{"__proto__":null}` or `{"__proto__":{}}`.
+  it('preserves a __proto__ key and its value through the sorted canonicalizer', () => {
+    expect(canonicalizeSorted(JSON.parse('{"__proto__":{"a":1}}'))).toBe('{"__proto__":{"a":1}}');
+  });
+
+  it('keeps a __proto__ key distinct from a sibling in the sorted canonicalizer', () => {
+    expect(canonicalizeSorted(JSON.parse('{"__proto__":1,"a":2}'))).toBe('{"__proto__":1,"a":2}');
   });
 
   // config-builder rejects an unknown CANON_MODE. Silently falling back to jcs
   // here would let a typo change what gets signed without anyone noticing.
   it('rejects an unrecognized canonicalization mode instead of falling back', () => {
-    const prev = process.env.DB8_CANON_MODE;
-    process.env.DB8_CANON_MODE = 'sorted_v2';
-    try {
-      expect(() => canonicalTerm(REMOTE_WORK)).toThrow(/DB8_CANON_MODE/);
-    } finally {
-      if (prev === undefined) delete process.env.DB8_CANON_MODE;
-      else process.env.DB8_CANON_MODE = prev;
+    withEnv({ CANON_MODE: 'sorted_v2' }, () => {
+      expect(() => canonicalTerm(REMOTE_WORK)).toThrow(/CANON_MODE/);
+    });
+  });
+
+  // Claim terms are signing-adjacent. The server canonicalizes through the
+  // validated CANON_MODE that config-builder enforces; DB8_CANON_MODE is a CLI
+  // alias and must not move server hashes off that path.
+  //
+  // Mode selection is asserted through validation rather than through output,
+  // deliberately: `sorted` and `jcs` produce byte-identical results for every
+  // payload a claim term can hold, so comparing canonical strings would pass no
+  // matter which mode were selected. Which variable is *read* is observable;
+  // which canonicalizer runs is not.
+  it('ignores an invalid mode smuggled in through DB8_CANON_MODE', () => {
+    withEnv({ CANON_MODE: 'jcs', DB8_CANON_MODE: 'sorted_v2' }, () => {
+      expect(() => canonicalTerm(REMOTE_WORK)).not.toThrow();
+    });
+  });
+
+  it('still rejects that same invalid mode when it comes from CANON_MODE', () => {
+    withEnv({ CANON_MODE: 'sorted_v2', DB8_CANON_MODE: undefined }, () => {
+      expect(() => canonicalTerm(REMOTE_WORK)).toThrow(/CANON_MODE/);
+    });
+  });
+});
+
+describe('claim terms — error paths vs verdict paths', () => {
+  // Two different grammars, and the spec has to say so. Verdict paths name
+  // nodes and must resolve. Validation error paths are diagnostics and may name
+  // a field inside a node — Zod reports `$.predicate`, `$.object`,
+  // `$.subject.name`, none of which are addressable. Pinning this stops the
+  // stricter frame behaviour from being mistaken for a universal guarantee.
+  const cases = [
+    {
+      label: 'bad frame kind',
+      term: { kind: 'framed', frame: { kind: 'vibes' }, body: REMOTE_WORK }
+    },
+    { label: 'non-finite payload', term: prop('inflation', 'rate_is', Number.POSITIVE_INFINITY) },
+    { label: 'bad predicate', term: prop('x', 'BAD CASE', null) }
+  ];
+
+  it('emits field-level error paths that do not resolve as nodes', () => {
+    for (const { label, term } of cases) {
+      const result = validateTerm(term);
+      expect(result.ok, label).toBe(false);
+      // Documented as diagnostics, not verdict targets.
+      expect(atPath(term, parsePath(result.errors[0].path)), label).toBeUndefined();
+    }
+  });
+
+  it('enumerates only addressable nodes for verdicts', () => {
+    const term = {
+      kind: 'framed',
+      frame: { kind: 'attribution', source: named('the_study') },
+      body: REMOTE_WORK
+    };
+    for (const path of pathsOf(term)) {
+      expect(atPath(term, path)).toBeDefined();
     }
   });
 });

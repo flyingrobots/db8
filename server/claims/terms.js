@@ -134,10 +134,11 @@ export function isNode(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-// `__proto__` is a legal JSON key that JavaScript cannot carry as ordinary data:
-// Zod's record parser drops it, so a payload containing it would validate and
-// come back mutated. Terms are stored as authored and content-addressed, so
-// silently losing part of a payload is the one outcome that cannot stand — the
+// `__proto__` arrives intact — JSON.parse keeps it as an own data property — but
+// prototype-sensitive processing downstream reinterprets or drops it: Zod's
+// record parser drops it, and an ordinary-object accumulator turns it into a
+// prototype assignment. Terms are stored as authored and content-addressed, so a
+// payload that comes back mutated is the one outcome that cannot stand; the
 // author gets an error instead.
 const FORBIDDEN_PAYLOAD_KEYS = Object.freeze(['__proto__']);
 
@@ -157,16 +158,25 @@ function findForbiddenKeys(value, found) {
 // canonicalizer both recurse through it, so it has to count against the same
 // limits as the term itself — otherwise a deep enough payload raises a
 // RangeError from inside a function documented to return a validation result.
+// Every value *inside* a payload container counts, scalars included. Counting
+// only containers made `Array(1e6).fill(0)` two nodes, so a payload could pass
+// the cap while Zod and the canonicalizer still had to walk a million elements.
+//
+// A claim's own scalar payload is not counted: it is a field of the claim, not a
+// node of its own, and counting it would halve the effective term budget.
 function measurePayload(value, depth, state) {
   if (depth > state.maxDepth) state.maxDepth = depth;
+  state.count += 1;
   if (value === null || typeof value !== 'object') return;
   if (state.count > MAX_NODES || state.maxDepth > MAX_DEPTH) return;
-  state.count += 1;
-  if (Array.isArray(value)) {
-    for (const item of value) measurePayload(item, depth + 1, state);
-    return;
+
+  const children = Array.isArray(value) ? value : Object.values(value);
+  for (const child of children) {
+    measurePayload(child, depth + 1, state);
+    // Stop as soon as the term is over budget. Without this the traversal still
+    // visits all million elements to report a limit it already knows is broken.
+    if (state.count > MAX_NODES || state.maxDepth > MAX_DEPTH) return;
   }
-  for (const key of Object.keys(value)) measurePayload(value[key], depth + 1, state);
 }
 
 // Depth and size are checked before Zod so an over-nested term reports the real
@@ -180,6 +190,9 @@ function measure(node, depth, state, path) {
   }
   if (state.count > MAX_NODES) return;
   if (node.kind === 'claim') {
+    // Only a structured payload is measured; a scalar one is a field of this
+    // claim and is already accounted for by the node itself.
+    if (node.object === null || typeof node.object !== 'object') return;
     const before = state.maxDepth;
     measurePayload(node.object, depth, state);
     if (state.maxDepth > before) state.deepestPath = path;
@@ -199,7 +212,7 @@ function measure(node, depth, state, path) {
 // One traversal, driven by CHILD_KEYS. Every structural walk in this module is a
 // filter over it — a second copy of the descent logic drifts from the path
 // grammar the moment a child slot is added.
-function walkNodes(node, path, visit) {
+export function walkNodes(node, path, visit) {
   if (!isNode(node) || typeof node.kind !== 'string') return;
   visit(node, path);
   for (const key of CHILD_KEYS[node.kind] ?? []) {
@@ -247,9 +260,15 @@ export function formatPath(path) {
  *
  * @param {unknown} term          the candidate term
  * @param {object}  [opts]
- * @param {string[]} [opts.predicates] declared predicate vocabulary; when supplied,
- *   any predicate outside it is rejected. Room-level vocabularies are what make
- *   claims comparable across debates — without one, every author invents their own.
+ * @param {string[]} [opts.predicates] opt-in strict mode.
+ *   Omitted (the default): the vocabulary is open and any snake_case predicate
+ *   is accepted. Supplied: the room has declared its vocabulary up front and
+ *   any predicate outside it is rejected.
+ *
+ *   Open is the default because closing the set stops a debate coining a term
+ *   mid-debate and decides in advance which propositions are expressible. With
+ *   an open vocabulary, cross-debate alignment is a read-time concern — see
+ *   `predicatesOf`.
  * @returns {{ok: boolean, errors: Array<{path: string, message: string}>, value?: object}}
  */
 export function validateTerm(term, opts = {}) {
@@ -334,16 +353,22 @@ export function validateTerm(term, opts = {}) {
   return { ok: true, errors: [], value: parsed.data };
 }
 
-// config-builder rejects an unrecognized CANON_MODE. Silently falling back to
-// jcs here would let a typo change what gets signed with no diagnostic, and the
-// CLI (bin/db8.js) reads the same pair of variables — the two must not disagree
-// about which mode is in force.
+// Claim terms are signing-adjacent, so they canonicalize through the same
+// validated CANON_MODE the rest of the server uses (server/canonicalizer.js,
+// via config-builder). DB8_CANON_MODE is deliberately NOT read here: it is a
+// CLI alias, and letting it win would move signed material off the documented
+// server path.
+//
+// The validation is duplicated from config-builder rather than imported because
+// server/canonicalizer.js calls loadConfig() at module scope, and this module is
+// reached from bin/db8.js through server/schemas.js — importing it would load
+// server configuration into the CLI.
 function canonicalizer() {
-  const raw = process.env.DB8_CANON_MODE || process.env.CANON_MODE || 'jcs';
+  const raw = process.env.CANON_MODE ?? 'jcs';
   const mode = String(raw).toLowerCase().trim() || 'jcs';
   if (mode === 'sorted') return canonicalizeSorted;
   if (mode === 'jcs') return canonicalizeJCS;
-  throw new Error(`Invalid DB8_CANON_MODE: '${raw}'. Allowed: sorted|jcs`);
+  throw new Error(`Invalid CANON_MODE: '${raw}'. Allowed: sorted|jcs`);
 }
 
 /** Canonical serialization of a term. Key order is normalized; child order is not. */

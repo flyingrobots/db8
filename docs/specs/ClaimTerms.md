@@ -73,9 +73,11 @@ undeclared frame kind is a validation error, not a silently accepted string.
 
 This is enforced in one place. `checkableClaims(term)` is the only sanctioned way to turn a term into propositions a fact-checker may rule on. It descends through transparent frames, every part of an affirmed `all`, the body of a `denial` (flipping polarity), and the `still` branch of a `concession`. It stops at every opaque frame, at `either`, at both branches of a `conditional`, and at the `even_if` branch of a `concession`.
 
-It also stops at a _denied_ `all`. "Not (A and B)" entails only that at least one conjunct fails, so denying each part would attribute to the author two claims they did not make. For the same reason an `either` must hold at least two **distinct** options: `either([P, P])` is not an unresolved choice, and since projection stops at every `either` it would otherwise let an author assert `P` while presenting it as a question for nobody to rule on.
+It also stops at a _denied_ `all` and a _denied_ `concession`. "Not (A and B)" entails only that at least one conjunct fails, so denying each part would attribute to the author two claims they did not make. For the same reason an `either` must hold at least two **distinct** options: `either([P, P])` is not an unresolved choice, and since projection stops at every `either` it would otherwise let an author assert `P` while presenting it as a question for nobody to rule on.
 
 `assertsNothing(term)` answers a deliberately broader question — did this submission make any falsifiable claim at all — and so disagrees with `checkableClaims` on attributions and beliefs. "The study says P" yields no checkable proposition, but whether the study said it is itself checkable, and that outer node is exactly what a claim path is for.
+
+Both share one descent, so a relational frame is suspended by an opaque ancestor exactly as a proposition is: "suppose the study says P" asserts neither P nor that the study said it, and an attribution inside an `either` or a `conditional` branch asserts nothing either.
 
 That last pair is why `concession` is its own node. In `conditional(when, then)` neither branch is asserted. In `concession(even_if, still)` the consequent _is_ asserted outright — that is the rhetorical force of conceding — while the premise is granted, not claimed.
 
@@ -98,15 +100,23 @@ A path names one node: `$`, `$.body`, `$.parts[1].body`. A verdict records the p
 - verdict at `$` on an `attribution` node — the source does not say that
 - verdict at `$.body` — the source says it, and it is false
 
-Every path db8 emits resolves. Validation errors are reported at addressable nodes only — a bad temporal frame is reported at the `framed` node that owns it, never at `$…frame`, because `frame` is not a child slot and `atPath` would not resolve it.
+Verdict paths and validation error paths share one syntax and serve two different uses. The difference is what a path is allowed to name, not how it is written, so one parser handles both.
+
+A **verdict path** names a node. Every path `pathsOf()` enumerates resolves through `atPath()`, and a verdict may only target one of those.
+
+A **validation error path** is a diagnostic and may additionally name a field inside a node — a wider namespace, parsed identically. Schema errors from Zod report `$.predicate`, `$.object`, `$.subject.name` and the like; none of those resolve as nodes, because the fields they name are not child slots. Do not feed an error path to `atPath()` and expect a node back.
+
+Where db8 writes the error itself it reports at the owning node: a bad temporal frame is reported at the `framed` node, not at `$…frame`, since `frame` is not a child slot.
 
 Paths are stable because child order is frozen. Any transformation that reorders `all.parts` detaches every path that pointed into it, so terms are stored as authored and rewrites are not permitted without an accompanying path transport.
 
 ## Limits
 
-Depth is capped at 16 and size at 256 nodes, inclusive: reaching a limit is legal, exceeding it is not. Both are checked before schema validation so an over-nested term reports the real cause, and both count claim payloads, which are arbitrary JSON and would otherwise exhaust the stack inside the validator.
+Depth is capped at 16 and size at 256 nodes, inclusive: reaching a limit is legal, exceeding it is not. Both are checked before schema validation so an over-nested term reports the real cause.
 
-Numbers in payloads must be finite — `NaN` and `Infinity` have no JSON form and would break canonical hashing. A payload may not use the key `__proto__`: JavaScript cannot carry it as ordinary data, so a payload containing it would validate and come back mutated, and terms are stored as authored.
+Claim payloads count against both. A payload is arbitrary JSON, and every value inside a container counts — scalars included — because Zod and the canonicalizer walk all of them. A claim's own scalar payload is the one exception: it is a field of that claim rather than a node, so it is already accounted for. Measurement stops as soon as a limit is exceeded, so an oversized payload is rejected without being traversed.
+
+Numbers in payloads must be finite — `NaN` and `Infinity` have no JSON form and would break canonical hashing. A payload may not use the key `__proto__`. `JSON.parse()` does preserve it as an own data property, so it arrives intact — but prototype-sensitive processing downstream reinterprets or drops it. Zod's record parser drops it, and an ordinary-object accumulator turns it into a prototype assignment. Either way the payload that gets stored and content-addressed is no longer the payload that was authored, so the key is refused rather than silently altered.
 
 ## Canonical form
 

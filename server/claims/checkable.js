@@ -1,4 +1,4 @@
-import { TRANSPARENT_FRAMES, CHILD_KEYS, isNode } from './terms.js';
+import { TRANSPARENT_FRAMES, isNode } from './terms.js';
 
 // The non-factivity projection.
 //
@@ -20,6 +20,8 @@ import { TRANSPARENT_FRAMES, CHILD_KEYS, isNode } from './terms.js';
 //   - a *denied* `all`: "not (A and B)" entails only that at least one conjunct
 //     fails, so denying each part would attribute two claims to an author who
 //     made neither
+//   - a *denied* `concession`: denying "even if X, Y still holds" rejects the
+//     concessive relation, not Y — X may defeat Y after all
 //   - both branches of a `conditional`, since neither is claimed outright
 //   - the `even_if` branch of a `concession`, which is granted, not claimed
 
@@ -31,6 +33,19 @@ import { TRANSPARENT_FRAMES, CHILD_KEYS, isNode } from './terms.js';
  * @property {object[]} context           transparent frames above it, outermost first
  */
 
+// Frames that suspend the proposition but assert a relation of their own. "The
+// study says P" does not claim P, yet whether the study said it is checkable —
+// and that outer node is exactly what a claim path is for. A hypothetical or a
+// hedge attributes the proposition to no one, so nothing is left to check.
+const RELATIONAL_FRAMES = Object.freeze(['attribution', 'belief']);
+
+/**
+ * Precondition: `term` must have passed `validateTerm`. This traversal enforces
+ * neither MAX_DEPTH nor MAX_NODES and will overflow the stack on unbounded input.
+ *
+ * @param {object} term
+ * @returns {CheckableClaim[]}
+ */
 /**
  * Precondition: `term` must have passed `validateTerm`. This traversal enforces
  * neither MAX_DEPTH nor MAX_NODES and will overflow the stack on unbounded input.
@@ -40,26 +55,40 @@ import { TRANSPARENT_FRAMES, CHILD_KEYS, isNode } from './terms.js';
  */
 export function checkableClaims(term) {
   const out = [];
+  project(term, (claim, path, polarity, context) => out.push({ claim, path, polarity, context }));
+  return out;
+}
 
+// One descent, so the two exported questions cannot disagree about what is in
+// asserted position. `onClaim` fires for propositions a checker may rule on;
+// `onRelation` fires for a frame whose own relation is asserted even though its
+// body is suspended.
+function project(term, onClaim, onRelation = () => {}) {
   const visit = (node, path, polarity, context) => {
     if (!isNode(node)) return;
 
     switch (node.kind) {
       case 'claim':
-        out.push({ claim: node, path, polarity, context });
+        onClaim(node, path, polarity, context);
         return;
 
       case 'framed': {
         const kind = node.frame?.kind;
-        if (!TRANSPARENT_FRAMES.includes(kind)) return; // opaque: assertion suspended
-        visit(node.body, [...path, 'body'], polarity, [...context, node.frame]);
+        if (TRANSPARENT_FRAMES.includes(kind)) {
+          visit(node.body, [...path, 'body'], polarity, [...context, node.frame]);
+          return;
+        }
+        // Opaque: the body is suspended. The frame's own relation may still be
+        // asserted, but only because we reached it in asserted position.
+        if (RELATIONAL_FRAMES.includes(kind)) onRelation(node, path);
         return;
       }
 
       case 'all':
-        if (!Array.isArray(node.parts)) return;
-        // Only under affirmation. A denied conjunction is handled below.
-        if (polarity !== 'affirm') return;
+        // Affirmed only. "not (A and B)" entails just that one conjunct fails,
+        // so denying each part would attribute two claims to an author who made
+        // neither.
+        if (!Array.isArray(node.parts) || polarity !== 'affirm') return;
         node.parts.forEach((part, i) => visit(part, [...path, 'parts', i], polarity, context));
         return;
 
@@ -68,6 +97,9 @@ export function checkableClaims(term) {
         return;
 
       case 'concession':
+        // Affirmed only, for the same reason as `all`: denying "even if X, Y
+        // still holds" rejects the concessive relation, not Y itself.
+        if (polarity !== 'affirm') return;
         visit(node.still, [...path, 'still'], polarity, context);
         return;
 
@@ -79,14 +111,7 @@ export function checkableClaims(term) {
   };
 
   visit(term, [], 'affirm', []);
-  return out;
 }
-
-// Frames that suspend the proposition but assert a relation of their own. "The
-// study says P" does not claim P, yet whether the study said it is checkable —
-// and that outer node is exactly what a claim path is for. A hypothetical or a
-// hedge attributes the proposition to no one, so nothing is left to check.
-const RELATIONAL_FRAMES = Object.freeze(['attribution', 'belief']);
 
 /**
  * True when the term makes no falsifiable claim of any kind — useful for telling
@@ -97,24 +122,17 @@ const RELATIONAL_FRAMES = Object.freeze(['attribution', 'belief']);
  * yields no checkable proposition yet is not empty, so the two disagree on that
  * case by design.
  *
+ * It shares one descent with `checkableClaims`, so an opaque ancestor suspends a
+ * relational frame the same way it suspends a proposition: "suppose the study
+ * says P" asserts neither P nor that the study said it.
+ *
  * Precondition: `term` must have passed `validateTerm`.
  */
 export function assertsNothing(term) {
-  if (checkableClaims(term).length > 0) return false;
-
-  let relational = false;
-  const visit = (node) => {
-    if (relational || !isNode(node)) return;
-    if (node.kind === 'framed' && RELATIONAL_FRAMES.includes(node.frame?.kind)) {
-      relational = true;
-      return;
-    }
-    for (const key of CHILD_KEYS[node.kind] ?? []) {
-      const child = node[key];
-      if (Array.isArray(child)) child.forEach(visit);
-      else visit(child);
-    }
+  let asserts = false;
+  const mark = () => {
+    asserts = true;
   };
-  visit(term);
-  return !relational;
+  project(term, mark, mark);
+  return !asserts;
 }
