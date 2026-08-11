@@ -6,7 +6,9 @@
   "ignorePaths": ["node_modules", "web/.next", ".obsidian", "package-lock.json"],
   "words": [
     "db8",
+    "factive",
     "Supabase",
+    "unvalidated",
     "Zod",
     "pgTAP",
     "SSE",
