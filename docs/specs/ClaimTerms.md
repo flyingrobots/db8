@@ -100,11 +100,11 @@ A path names one node: `$`, `$.body`, `$.parts[1].body`. A verdict records the p
 - verdict at `$` on an `attribution` node — the source does not say that
 - verdict at `$.body` — the source says it, and it is false
 
-Verdict paths and validation error paths are two different grammars, and only the first is addressable.
+Verdict paths and validation error paths share one syntax and serve two different uses. The difference is what a path is allowed to name, not how it is written, so one parser handles both.
 
 A **verdict path** names a node. Every path `pathsOf()` enumerates resolves through `atPath()`, and a verdict may only target one of those.
 
-A **validation error path** is a diagnostic and may name a field inside a node. Schema errors from Zod report `$.predicate`, `$.object`, `$.subject.name` and the like; none of those resolve as nodes, because the fields they name are not child slots. Do not feed an error path to `atPath()` and expect a node back.
+A **validation error path** is a diagnostic and may additionally name a field inside a node — a wider namespace, parsed identically. Schema errors from Zod report `$.predicate`, `$.object`, `$.subject.name` and the like; none of those resolve as nodes, because the fields they name are not child slots. Do not feed an error path to `atPath()` and expect a node back.
 
 Where db8 writes the error itself it reports at the owning node: a bad temporal frame is reported at the `framed` node, not at `$…frame`, since `frame` is not a child slot.
 

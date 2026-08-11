@@ -260,12 +260,15 @@ export function formatPath(path) {
  *
  * @param {unknown} term          the candidate term
  * @param {object}  [opts]
- * @param {string[]} [opts.predicates] opt-in strict mode. Omit it and any
- *   snake_case predicate is accepted, which is the default: a closed vocabulary
- *   stops a debate coining a term mid-debate and decides in advance which
- *   propositions are expressible. Supply it and the room has declared a
- *   vocabulary up front; predicates outside it are rejected. Cross-debate
- *   alignment is otherwise a read-time concern — see `predicatesOf`.
+ * @param {string[]} [opts.predicates] opt-in strict mode.
+ *   Omitted (the default): the vocabulary is open and any snake_case predicate
+ *   is accepted. Supplied: the room has declared its vocabulary up front and
+ *   any predicate outside it is rejected.
+ *
+ *   Open is the default because closing the set stops a debate coining a term
+ *   mid-debate and decides in advance which propositions are expressible. With
+ *   an open vocabulary, cross-debate alignment is a read-time concern — see
+ *   `predicatesOf`.
  * @returns {{ok: boolean, errors: Array<{path: string, message: string}>, value?: object}}
  */
 export function validateTerm(term, opts = {}) {
