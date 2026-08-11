@@ -44,7 +44,18 @@ describe('DB-backed RPC integration (Real DB)', () => {
       phase: 'submit',
       deadline_unix: 0,
       content: 'Real DB content',
-      claims: [{ id: 'c1', text: 'Real Claim', support: [{ kind: 'logic', ref: 'a' }] }],
+      claims: [
+        {
+          id: 'c1',
+          term: {
+            kind: 'claim',
+            subject: { kind: 'named', name: 'claimant' },
+            predicate: 'asserts',
+            object: 'Real Claim'
+          },
+          support: [{ kind: 'logic', ref: 'a' }]
+        }
+      ],
       citations: [{ url: 'https://example.com/a' }, { url: 'https://example.com/b' }],
       client_nonce: 'nonce-integration-real-db'
     };

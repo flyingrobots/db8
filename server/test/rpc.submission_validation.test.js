@@ -11,7 +11,18 @@ describe('POST /rpc/submission.create (validation)', () => {
       phase: 'submit',
       deadline_unix: 0,
       content: 'Hello world',
-      claims: [{ id: 'c1', text: 'Valid claim', support: [{ kind: 'logic', ref: 'r1' }] }],
+      claims: [
+        {
+          id: 'c1',
+          term: {
+            kind: 'claim',
+            subject: { kind: 'named', name: 'claimant' },
+            predicate: 'asserts',
+            object: 'Valid claim'
+          },
+          support: [{ kind: 'logic', ref: 'r1' }]
+        }
+      ],
       citations: [{ url: 'https://example.com' }],
       client_nonce: 'validation-test-1'
     };

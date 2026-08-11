@@ -10,7 +10,18 @@ export async function run(args, context) {
     phase: 'submit',
     deadline_unix: 0,
     content: '',
-    claims: [{ id: 'c1', text: '', support: [{ kind: 'citation', ref: '' }] }],
+    claims: [
+      {
+        id: 'c1',
+        term: {
+          kind: 'claim',
+          subject: { kind: 'named', name: 'claimant' },
+          predicate: 'asserts',
+          object: ''
+        },
+        support: [{ kind: 'citation', ref: '' }]
+      }
+    ],
     citations: [{ url: '' }]
   };
   await writeJson(file, template);

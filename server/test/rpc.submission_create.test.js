@@ -16,7 +16,18 @@ describe('POST /rpc/submission.create', () => {
       phase: 'submit',
       deadline_unix: 0,
       content: 'Hello',
-      claims: [{ id: 'c1', text: 'Abc', support: [{ kind: 'logic', ref: 'r1' }] }],
+      claims: [
+        {
+          id: 'c1',
+          term: {
+            kind: 'claim',
+            subject: { kind: 'named', name: 'claimant' },
+            predicate: 'asserts',
+            object: 'Abc'
+          },
+          support: [{ kind: 'logic', ref: 'r1' }]
+        }
+      ],
       citations: [{ url: 'https://example.com' }, { url: 'https://example.org' }],
       client_nonce: 'abc123456'
     };

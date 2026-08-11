@@ -24,7 +24,12 @@ async function writeDraft(baseDir, content) {
     claims: [
       {
         id: 'c1',
-        text: 'Claim text',
+        term: {
+          kind: 'claim',
+          subject: { kind: 'named', name: 'claimant' },
+          predicate: 'asserts',
+          object: 'Claim text'
+        },
         support: [{ kind: 'logic', ref: 'support-1' }]
       }
     ],

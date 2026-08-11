@@ -1,8 +1,12 @@
 import { z } from 'zod';
+import { ClaimTerm } from './claims/terms.js';
 
 export const Claim = z.object({
-  id: z.string(),
-  text: z.string().min(3),
+  id: z.string().min(1),
+  // The assertion is a structured term, not prose. `support` is unchanged:
+  // evidence is orthogonal to term structure, and replacing it is a stated
+  // non-goal in docs/specs/ClaimTerms.md.
+  term: ClaimTerm,
   support: z
     .array(
       z.object({

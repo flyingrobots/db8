@@ -12,7 +12,18 @@ describe('POST /rpc/submission.create (deadline)', () => {
       phase: 'submit',
       deadline_unix: past,
       content: 'Hello world',
-      claims: [{ id: 'c1', text: 'Valid claim', support: [{ kind: 'logic', ref: 'r1' }] }],
+      claims: [
+        {
+          id: 'c1',
+          term: {
+            kind: 'claim',
+            subject: { kind: 'named', name: 'claimant' },
+            predicate: 'asserts',
+            object: 'Valid claim'
+          },
+          support: [{ kind: 'logic', ref: 'r1' }]
+        }
+      ],
       citations: [{ url: 'https://example.com' }, { url: 'https://example.org' }],
       client_nonce: 'deadline-test-1'
     };

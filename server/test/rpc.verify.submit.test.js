@@ -27,7 +27,18 @@ describe('POST /rpc/verify.submit (memory path)', () => {
       phase: 'submit',
       deadline_unix: 0,
       content: 'Verification target',
-      claims: [{ id: 'c1', text: 'Abc', support: [{ kind: 'logic', ref: 'a' }] }],
+      claims: [
+        {
+          id: 'c1',
+          term: {
+            kind: 'claim',
+            subject: { kind: 'named', name: 'claimant' },
+            predicate: 'asserts',
+            object: 'Abc'
+          },
+          support: [{ kind: 'logic', ref: 'a' }]
+        }
+      ],
       citations: [{ url: 'https://example.com/a' }, { url: 'https://example.com/b' }],
       client_nonce: issued?.ok ? issued.nonce : 'nonce-sub-ver-1'
     };
@@ -78,15 +89,13 @@ describe('POST /rpc/verify.submit (memory path)', () => {
   it('rejects malformed UUIDs and missing fields', async () => {
     const bad = await request(app).post('/rpc/verify.submit').send({ verdict: 'true' });
     expect(bad.status).toBeGreaterThanOrEqual(400);
-    const badIds = await request(app)
-      .post('/rpc/verify.submit')
-      .send({
-        round_id: 'not-a-uuid',
-        reporter_id: 'x',
-        submission_id: 'y',
-        verdict: 'true',
-        client_nonce: 'v'
-      });
+    const badIds = await request(app).post('/rpc/verify.submit').send({
+      round_id: 'not-a-uuid',
+      reporter_id: 'x',
+      submission_id: 'y',
+      verdict: 'true',
+      client_nonce: 'v'
+    });
     expect(badIds.status).toBeGreaterThanOrEqual(400);
   });
 
