@@ -134,10 +134,11 @@ export function isNode(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-// `__proto__` is a legal JSON key that JavaScript cannot carry as ordinary data:
-// Zod's record parser drops it, so a payload containing it would validate and
-// come back mutated. Terms are stored as authored and content-addressed, so
-// silently losing part of a payload is the one outcome that cannot stand — the
+// `__proto__` arrives intact — JSON.parse keeps it as an own data property — but
+// prototype-sensitive processing downstream reinterprets or drops it: Zod's
+// record parser drops it, and an ordinary-object accumulator turns it into a
+// prototype assignment. Terms are stored as authored and content-addressed, so a
+// payload that comes back mutated is the one outcome that cannot stand; the
 // author gets an error instead.
 const FORBIDDEN_PAYLOAD_KEYS = Object.freeze(['__proto__']);
 

@@ -112,7 +112,7 @@ Paths are stable because child order is frozen. Any transformation that reorders
 
 Depth is capped at 16 and size at 256 nodes, inclusive: reaching a limit is legal, exceeding it is not. Both are checked before schema validation so an over-nested term reports the real cause, and both count claim payloads, which are arbitrary JSON and would otherwise exhaust the stack inside the validator.
 
-Numbers in payloads must be finite — `NaN` and `Infinity` have no JSON form and would break canonical hashing. A payload may not use the key `__proto__`: JavaScript cannot carry it as ordinary data, so a payload containing it would validate and come back mutated, and terms are stored as authored.
+Numbers in payloads must be finite — `NaN` and `Infinity` have no JSON form and would break canonical hashing. A payload may not use the key `__proto__`. `JSON.parse()` does preserve it as an own data property, so it arrives intact — but prototype-sensitive processing downstream reinterprets or drops it. Zod's record parser drops it, and an ordinary-object accumulator turns it into a prototype assignment. Either way the payload that gets stored and content-addressed is no longer the payload that was authored, so the key is refused rather than silently altered.
 
 ## Canonical form
 
