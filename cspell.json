@@ -143,7 +143,15 @@
     "worktrees",
     "amannn",
     "commitmsg",
-    "EDITMSG"
+    "EDITMSG",
+    "factivity",
+    "Kripke",
+    "Kratzer",
+    "Hintikka",
+    "Goguen",
+    "unasserted",
+    "unvalidated",
+    "factive"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
