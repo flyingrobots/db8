@@ -1,5 +1,22 @@
 import express from 'express';
 import { SubmissionIn, SubmissionFlag } from '../schemas.js';
+import { validateTerm } from '../claims/terms.js';
+
+// The schema already rejects an invalid term, so this gate is deliberate
+// redundancy at the trust boundary: it names the offending claim and returns the
+// term's own error paths, where a schema failure arrives as a serialized Zod
+// issue list. It is also the layer that survives someone swapping the schema.
+function termErrors(claims) {
+  const out = [];
+  for (const [index, claim] of (claims ?? []).entries()) {
+    const result = validateTerm(claim?.term);
+    if (result.ok) continue;
+    for (const error of result.errors) {
+      out.push({ claim_id: claim?.id ?? null, claim_index: index, ...error });
+    }
+  }
+  return out;
+}
 
 export function createSubmissionRouter({ submissionService, requireDbInProduction, memFlags }) {
   const router = express.Router();
@@ -8,6 +25,12 @@ export function createSubmissionRouter({ submissionService, requireDbInProductio
   router.post('/rpc/submission.create', requireDbInProduction, async (req, res) => {
     try {
       const input = SubmissionIn.parse(req.body);
+
+      const invalid = termErrors(input.claims);
+      if (invalid.length > 0) {
+        return res.status(400).json({ ok: false, error: 'invalid_claim_term', details: invalid });
+      }
+
       const result = await submissionService.create(input, { forceDlq: req.body._force_dlq });
       return res.json({ ok: true, ...result });
     } catch (err) {

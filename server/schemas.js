@@ -1,13 +1,31 @@
 import { z } from 'zod';
-import { ClaimTerm } from './claims/terms.js';
+import { validateTerm } from './claims/terms.js';
 import { parsePath } from './claims/paths.js';
+
+// Delegates to validateTerm rather than composing the raw ClaimTerm schema.
+//
+// Two reasons. The schema alone enforces shape but none of the rules
+// validateTerm adds — the depth and size caps, the __proto__ refusal, either
+// distinctness, temporal anchoring — so wiring it directly left every one of
+// those enforced nowhere a submission passes through. And validateTerm measures
+// depth and size *before* Zod recurses, which a `.superRefine()` on ClaimTerm
+// could not do: Zod would parse first and exhaust the stack on a deep term
+// before any refinement ran.
+const ClaimTermField = z.unknown().transform((value, ctx) => {
+  const result = validateTerm(value);
+  if (result.ok) return result.value;
+  for (const error of result.errors) {
+    ctx.addIssue({ code: 'custom', message: `${error.path}: ${error.message}` });
+  }
+  return z.NEVER;
+});
 
 export const Claim = z.object({
   id: z.string().min(1),
   // The assertion is a structured term, not prose. `support` is unchanged:
   // evidence is orthogonal to term structure, and replacing it is a stated
   // non-goal in docs/specs/ClaimTerms.md.
-  term: ClaimTerm,
+  term: ClaimTermField,
   support: z
     .array(
       z.object({

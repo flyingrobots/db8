@@ -90,3 +90,54 @@ describe('SubmissionIn carries structured claims', () => {
     expect(SubmissionIn.safeParse(submission(six)).success).toBe(false);
   });
 });
+
+// The submission path is the only gate that matters. Wiring `term` to the bare
+// ClaimTerm schema meant every guard validateTerm adds — the depth and size
+// caps, the __proto__ refusal, either distinctness, temporal anchoring — was
+// enforced nowhere a real submission passes through.
+describe('the submission path enforces validateTerm, not just the schema', () => {
+  const P = { kind: 'claim', subject: named('a'), predicate: 'is_true', object: null };
+  const nest = (depth) => {
+    let t = P;
+    for (let i = 0; i < depth; i += 1) t = { kind: 'denial', body: t };
+    return t;
+  };
+
+  const hostile = {
+    'over the depth cap': nest(20),
+    'wide scalar payload': {
+      kind: 'claim',
+      subject: named('x'),
+      predicate: 'has',
+      object: new Array(2000).fill(0)
+    },
+    '__proto__ payload': {
+      kind: 'claim',
+      subject: named('x'),
+      predicate: 'has',
+      object: JSON.parse('{"__proto__":{"a":1}}')
+    },
+    'duplicate either options': { kind: 'either', options: [P, P] },
+    'unanchored temporal frame': { kind: 'framed', frame: { kind: 'temporal' }, body: P }
+  };
+
+  // Control: a valid term must still pass, or the cases below prove nothing.
+  it('still accepts a valid submission', () => {
+    expect(SubmissionIn.safeParse(submission([claim(proposition)])).success).toBe(true);
+  });
+
+  for (const [label, term] of Object.entries(hostile)) {
+    it(`rejects ${label}`, () => {
+      expect(SubmissionIn.safeParse(submission([claim(term)])).success).toBe(false);
+    });
+  }
+
+  // Zod recurses through the term as it parses. Without the pre-check that
+  // measure() performs, a deep enough term exhausts the stack inside the
+  // validator instead of returning a validation failure.
+  it('reports a validation failure for a term deep enough to exhaust the stack', () => {
+    const result = SubmissionIn.safeParse(submission([claim(nest(10000))]));
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error.issues)).not.toMatch(/call stack/i);
+  });
+});
