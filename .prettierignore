@@ -1,0 +1,23 @@
+# Files that predate Prettier being run over the repository. They are exempt
+# rather than reformatted: rewriting them wholesale would bury unrelated diffs
+# and, for the workflow and compose files, risk churn in CI-critical YAML for
+# no functional gain. Remove an entry here when you are deliberately formatting
+# that file, not as a side effect of touching it.
+
+.github/dependabot.yml
+.github/ISSUE_TEMPLATE/bug.md
+.github/ISSUE_TEMPLATE/feature.md
+.github/ISSUE_TEMPLATE/task.md
+.github/workflows/ci.yml
+.github/workflows/db-tests.yml
+AGENTS.md
+docker-compose.test.yml
+docker-compose.yml
+package.json
+public/index.html
+public/kitchen-sink.html
+public/spectate.html
+server/rpc.js
+vitest.config.js
+web/app/globals.css
+web/test/e2e.room.flow.spec.js
