@@ -22,7 +22,7 @@ reproduced before it was fixed.
   - Validation errors are reported only at addressable paths. A bad temporal frame was reported at `$…frame`, which `atPath()` cannot resolve and `pathsOf()` never enumerates, so a client resolving the error path got `undefined`.
 - Content addressing
   - `termHash()` validates first and throws on an invalid term. It previously hashed anything, and since `JSON.stringify` writes `Infinity` as `null`, two distinct terms could share one address.
-  - An unrecognized `DB8_CANON_MODE`/`CANON_MODE` is now an error rather than a silent fall back to JCS, matching `config-builder`. A typo could previously change what got signed with no diagnostic.
+  - Claim canonicalization reads the validated `CANON_MODE` only. `DB8_CANON_MODE` is a CLI alias and no longer overrides it server-side, which had let signed material drift off the documented server path. An unrecognized `CANON_MODE` is now an error rather than a silent fall back to JCS, matching `config-builder`.
   - `canonicalizeSorted()` preserves a `__proto__` key. Its accumulator was an ordinary object, so assigning that key set the prototype instead of an own property and the key vanished — `{"__proto__": {...}}` hashed identically to `{}`.
 - Predicate vocabulary
   - Now documented as **opt-in strict mode**, not the default. A room accepts any `snake_case` predicate unless it declares a vocabulary up front. Closing the set at authoring time would stop a debate from coining a term mid-debate and would decide in advance which propositions are expressible. Cross-debate alignment is a read-time concern; `predicatesOf()` reports what a term used.

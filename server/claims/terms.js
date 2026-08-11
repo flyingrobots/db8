@@ -334,16 +334,22 @@ export function validateTerm(term, opts = {}) {
   return { ok: true, errors: [], value: parsed.data };
 }
 
-// config-builder rejects an unrecognized CANON_MODE. Silently falling back to
-// jcs here would let a typo change what gets signed with no diagnostic, and the
-// CLI (bin/db8.js) reads the same pair of variables — the two must not disagree
-// about which mode is in force.
+// Claim terms are signing-adjacent, so they canonicalize through the same
+// validated CANON_MODE the rest of the server uses (server/canonicalizer.js,
+// via config-builder). DB8_CANON_MODE is deliberately NOT read here: it is a
+// CLI alias, and letting it win would move signed material off the documented
+// server path.
+//
+// The validation is duplicated from config-builder rather than imported because
+// server/canonicalizer.js calls loadConfig() at module scope, and this module is
+// reached from bin/db8.js through server/schemas.js — importing it would load
+// server configuration into the CLI.
 function canonicalizer() {
-  const raw = process.env.DB8_CANON_MODE || process.env.CANON_MODE || 'jcs';
+  const raw = process.env.CANON_MODE ?? 'jcs';
   const mode = String(raw).toLowerCase().trim() || 'jcs';
   if (mode === 'sorted') return canonicalizeSorted;
   if (mode === 'jcs') return canonicalizeJCS;
-  throw new Error(`Invalid DB8_CANON_MODE: '${raw}'. Allowed: sorted|jcs`);
+  throw new Error(`Invalid CANON_MODE: '${raw}'. Allowed: sorted|jcs`);
 }
 
 /** Canonical serialization of a term. Key order is normalized; child order is not. */

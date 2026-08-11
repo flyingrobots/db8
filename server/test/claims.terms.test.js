@@ -24,6 +24,25 @@ const prop = (subject, predicate, object) => ({
 const REMOTE_WORK = prop('remote_work', 'reduces', 'productivity');
 const SHIPS_TUESDAY = prop('release', 'ships_on', 'tuesday');
 
+// Env mutation is restored even when the body throws, so one failing
+// expectation cannot leak a canonicalization mode into unrelated tests.
+function withEnv(vars, fn) {
+  const prev = {};
+  for (const [k, v] of Object.entries(vars)) {
+    prev[k] = process.env[k];
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
 describe('claim terms — shape', () => {
   it('accepts every node kind', () => {
     const terms = [
@@ -446,14 +465,30 @@ describe('claim terms — content addressing', () => {
   // config-builder rejects an unknown CANON_MODE. Silently falling back to jcs
   // here would let a typo change what gets signed without anyone noticing.
   it('rejects an unrecognized canonicalization mode instead of falling back', () => {
-    const prev = process.env.DB8_CANON_MODE;
-    process.env.DB8_CANON_MODE = 'sorted_v2';
-    try {
-      expect(() => canonicalTerm(REMOTE_WORK)).toThrow(/DB8_CANON_MODE/);
-    } finally {
-      if (prev === undefined) delete process.env.DB8_CANON_MODE;
-      else process.env.DB8_CANON_MODE = prev;
-    }
+    withEnv({ CANON_MODE: 'sorted_v2' }, () => {
+      expect(() => canonicalTerm(REMOTE_WORK)).toThrow(/CANON_MODE/);
+    });
+  });
+
+  // Claim terms are signing-adjacent. The server canonicalizes through the
+  // validated CANON_MODE that config-builder enforces; DB8_CANON_MODE is a CLI
+  // alias and must not move server hashes off that path.
+  //
+  // Mode selection is asserted through validation rather than through output,
+  // deliberately: `sorted` and `jcs` produce byte-identical results for every
+  // payload a claim term can hold, so comparing canonical strings would pass no
+  // matter which mode were selected. Which variable is *read* is observable;
+  // which canonicalizer runs is not.
+  it('ignores an invalid mode smuggled in through DB8_CANON_MODE', () => {
+    withEnv({ CANON_MODE: 'jcs', DB8_CANON_MODE: 'sorted_v2' }, () => {
+      expect(() => canonicalTerm(REMOTE_WORK)).not.toThrow();
+    });
+  });
+
+  it('still rejects that same invalid mode when it comes from CANON_MODE', () => {
+    withEnv({ CANON_MODE: 'sorted_v2', DB8_CANON_MODE: undefined }, () => {
+      expect(() => canonicalTerm(REMOTE_WORK)).toThrow(/CANON_MODE/);
+    });
   });
 });
 
