@@ -1,15 +1,25 @@
 #!/usr/bin/env bash
 msg_file="$1"
-pattern='^(revert: )?(feat|fix|docs|style|refactor|perf|test|build|ci|chore|ops|sec)(\(.+\))?: .+'
+
+# Conventional Commits: type(scope)?!?: description
+# The `!` marks a breaking change. CI validates the PR title with
+# amannn/action-semantic-pull-request, which accepts it, so omitting it here
+# refused commits that would pass review.
+pattern='^(revert: )?(feat|fix|docs|style|refactor|perf|test|build|ci|chore|ops|sec)(\([^)]+\))?!?: .+'
 merge_pattern='^Merge (branch|pull request|remote-tracking branch)'
 
-# Allow merge commits (auto-generated messages like "Merge branch ...")
-# by checking the message content rather than repository state.
-if grep -Eq "$merge_pattern" "$msg_file"; then
+# Only the subject line is validated. Matching anywhere in the file let a body
+# line carry a malformed subject past the check.
+subject="$(head -n 1 "$msg_file")"
+
+# Allow merge commits, whose messages git generates.
+if printf '%s' "$subject" | grep -Eq "$merge_pattern"; then
   exit 0
 fi
 
-if ! grep -Eq "$pattern" "$msg_file"; then
+if ! printf '%s' "$subject" | grep -Eq "$pattern"; then
   echo "✖ Commit message must follow Conventional Commits" >&2
+  echo "  got: $subject" >&2
+  echo "  expected: type(scope)?!?: description" >&2
   exit 1
 fi

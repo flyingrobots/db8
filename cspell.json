@@ -140,7 +140,10 @@
     "contype",
     "unwritable",
     "worktree",
-    "worktrees"
+    "worktrees",
+    "amannn",
+    "commitmsg",
+    "EDITMSG"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
