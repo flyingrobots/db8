@@ -646,6 +646,15 @@ $$;
 
 -- M3: Verification RPCs
 -- verify_submit: upsert a verdict for a (round, reporter, submission, claim)
+-- CREATE OR REPLACE only replaces a function whose argument list is identical.
+-- Adding p_claim_path creates a *second* overload and leaves the original in
+-- place, still carrying an ON CONFLICT clause that names the index this schema
+-- now drops. Worse, because the new parameter has a default, a seven-argument
+-- call fits both signatures and Postgres refuses it outright:
+--   ERROR: function verify_submit(...) is not unique
+-- The old one is dropped explicitly so an upgraded database has exactly one.
+DROP FUNCTION IF EXISTS verify_submit(uuid, uuid, uuid, text, text, text, text);
+
 CREATE OR REPLACE FUNCTION verify_submit(
   p_round_id uuid,
   p_reporter_id uuid,
@@ -654,7 +663,6 @@ CREATE OR REPLACE FUNCTION verify_submit(
   p_verdict text,
   p_rationale text,
   p_client_nonce text DEFAULT NULL,
-  -- Appended with a default so existing positional callers keep working.
   p_claim_path text DEFAULT NULL
 ) RETURNS uuid
 LANGUAGE plpgsql
