@@ -199,7 +199,7 @@ function measure(node, depth, state, path) {
 // One traversal, driven by CHILD_KEYS. Every structural walk in this module is a
 // filter over it — a second copy of the descent logic drifts from the path
 // grammar the moment a child slot is added.
-function walkNodes(node, path, visit) {
+export function walkNodes(node, path, visit) {
   if (!isNode(node) || typeof node.kind !== 'string') return;
   visit(node, path);
   for (const key of CHILD_KEYS[node.kind] ?? []) {

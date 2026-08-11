@@ -254,6 +254,39 @@ describe('claim terms — assertsNothing', () => {
     expect(validateTerm({ kind: 'either', options: [REMOTE_WORK, SHIPS_TUESDAY] }).ok).toBe(true);
   });
 
+  // Every case above answers at depth zero. These reach the descent, which is
+  // the part that can actually break: the CHILD_KEYS loop and its list handling.
+  it('finds an attribution buried under a list slot', () => {
+    const attributed = {
+      kind: 'framed',
+      frame: { kind: 'attribution', source: named('the_study') },
+      body: REMOTE_WORK
+    };
+    // `either` so nothing is checkable; the answer must come from the descent.
+    const underEither = { kind: 'either', options: [attributed, SHIPS_TUESDAY] };
+    expect(checkableClaims(underEither)).toEqual([]);
+    expect(assertsNothing(underEither)).toBe(false);
+  });
+
+  it('finds an attribution buried under a non-list slot', () => {
+    const attributed = {
+      kind: 'framed',
+      frame: { kind: 'belief', holder: named('opponent') },
+      body: REMOTE_WORK
+    };
+    const underConditional = { kind: 'conditional', when: attributed, then: SHIPS_TUESDAY };
+    expect(checkableClaims(underConditional)).toEqual([]);
+    expect(assertsNothing(underConditional)).toBe(false);
+  });
+
+  it('stays true when a buried frame is opaque but not relational', () => {
+    const hypo = (body) => ({ kind: 'framed', frame: { kind: 'hypothetical' }, body });
+    const buried = { kind: 'either', options: [hypo(REMOTE_WORK), hypo(SHIPS_TUESDAY)] };
+    const term = { kind: 'conditional', when: buried, then: hypo(REMOTE_WORK) };
+    expect(validateTerm(term).ok).toBe(true);
+    expect(assertsNothing(term)).toBe(true);
+  });
+
   it('is true for a hypothetical, which attributes the proposition to no one', () => {
     const term = { kind: 'framed', frame: { kind: 'hypothetical' }, body: REMOTE_WORK };
     expect(assertsNothing(term)).toBe(true);

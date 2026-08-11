@@ -1,4 +1,4 @@
-import { TRANSPARENT_FRAMES, CHILD_KEYS, isNode } from './terms.js';
+import { TRANSPARENT_FRAMES, isNode, walkNodes } from './terms.js';
 
 // The non-factivity projection.
 //
@@ -102,19 +102,13 @@ const RELATIONAL_FRAMES = Object.freeze(['attribution', 'belief']);
 export function assertsNothing(term) {
   if (checkableClaims(term).length > 0) return false;
 
+  // Descends with the shared walker rather than a private loop. A fourth
+  // traversal here would be the only one not consulting LIST_KEYS, and it would
+  // resolve a child slot differently from atPath and pathsOf the moment a slot's
+  // shape stopped being obvious from its runtime value.
   let relational = false;
-  const visit = (node) => {
-    if (relational || !isNode(node)) return;
-    if (node.kind === 'framed' && RELATIONAL_FRAMES.includes(node.frame?.kind)) {
-      relational = true;
-      return;
-    }
-    for (const key of CHILD_KEYS[node.kind] ?? []) {
-      const child = node[key];
-      if (Array.isArray(child)) child.forEach(visit);
-      else visit(child);
-    }
-  };
-  visit(term);
+  walkNodes(term, [], (node) => {
+    if (node.kind === 'framed' && RELATIONAL_FRAMES.includes(node.frame?.kind)) relational = true;
+  });
   return !relational;
 }
