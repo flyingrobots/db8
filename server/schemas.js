@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ClaimTerm } from './claims/terms.js';
+import { parsePath } from './claims/paths.js';
 
 export const Claim = z.object({
   id: z.string().min(1),
@@ -128,6 +129,13 @@ export const VerifySubmit = z.object({
   reporter_id: z.guid(),
   submission_id: z.guid(),
   claim_id: z.string().optional(),
+  // Which node of the claim term this verdict rules on. Absent means the claim
+  // as a whole. Without it, "the source does not say that" and "the source says
+  // it and is wrong" are the same row.
+  claim_path: z
+    .string()
+    .refine((v) => parsePath(v) !== null, { message: 'claim_path must be a valid term path' })
+    .optional(),
   verdict: z.enum(['true', 'false', 'unclear', 'needs_work']),
   rationale: z.string().max(2000).optional(),
   client_nonce: z.string().min(8)

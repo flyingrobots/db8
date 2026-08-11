@@ -653,7 +653,9 @@ CREATE OR REPLACE FUNCTION verify_submit(
   p_claim_id text,
   p_verdict text,
   p_rationale text,
-  p_client_nonce text DEFAULT NULL
+  p_client_nonce text DEFAULT NULL,
+  -- Appended with a default so existing positional callers keep working.
+  p_claim_path text DEFAULT NULL
 ) RETURNS uuid
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -700,9 +702,9 @@ BEGIN
     RAISE EXCEPTION 'reporter_role_denied' USING ERRCODE = '42501';
   END IF;
 
-  INSERT INTO verification_verdicts (round_id, submission_id, reporter_id, claim_id, verdict, rationale, client_nonce)
-  VALUES (p_round_id, p_submission_id, p_reporter_id, NULLIF(p_claim_id, ''), p_verdict, NULLIF(p_rationale, ''), NULLIF(p_client_nonce, ''))
-  ON CONFLICT (round_id, reporter_id, submission_id, coalesce(claim_id, ''), (COALESCE(NULLIF(client_nonce, ''), '')))
+  INSERT INTO verification_verdicts (round_id, submission_id, reporter_id, claim_id, claim_path, verdict, rationale, client_nonce)
+  VALUES (p_round_id, p_submission_id, p_reporter_id, NULLIF(p_claim_id, ''), NULLIF(p_claim_path, ''), p_verdict, NULLIF(p_rationale, ''), NULLIF(p_client_nonce, ''))
+  ON CONFLICT (round_id, reporter_id, submission_id, coalesce(claim_id, ''), coalesce(claim_path, ''), (COALESCE(NULLIF(client_nonce, ''), '')))
   DO UPDATE SET verdict = EXCLUDED.verdict, rationale = COALESCE(EXCLUDED.rationale, verification_verdicts.rationale)
   RETURNING id INTO v_id;
 

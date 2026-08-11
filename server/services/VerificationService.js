@@ -15,12 +15,14 @@ export class VerificationService {
   }
 
   async submitVerdict(input) {
-    const key = `${input.round_id}:${input.reporter_id}:${input.submission_id}:${input.claim_id || 'none'}`;
+    // The path is part of the identity: a verdict on the attribution and a
+    // verdict on the inner proposition are different findings, not a repeat.
+    const key = `${input.round_id}:${input.reporter_id}:${input.submission_id}:${input.claim_id || 'none'}:${input.claim_path || 'whole'}`;
 
     if (this.pool) {
       try {
         const r = await this.pool.query(
-          'SELECT verify_submit($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::text,$7::text) AS id',
+          'SELECT verify_submit($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::text,$7::text,$8::text) AS id',
           [
             input.round_id,
             input.reporter_id,
@@ -28,7 +30,8 @@ export class VerificationService {
             input.claim_id,
             input.verdict,
             input.rationale,
-            input.client_nonce
+            input.client_nonce,
+            input.claim_path ?? null
           ]
         );
         return { id: r.rows[0].id };
