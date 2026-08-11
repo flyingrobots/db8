@@ -71,12 +71,17 @@ export class VerificationService {
       if (parts[0] !== roundId) continue;
       const subId = parts[2];
       const claimId = parts[3] === 'none' ? null : parts[3];
-      const aggKey = `${subId}:${claimId || ''}`;
+      // Grouped by path, matching verify_summary. Without it this fallback
+      // merges the two findings claim_path exists to separate, and the same
+      // room reports differently depending on whether the database was up.
+      const claimPath = parts[4] === 'whole' ? null : parts[4];
+      const aggKey = `${subId}:${claimId || ''}:${claimPath || ''}`;
 
       if (!summaryMap.has(aggKey)) {
         summaryMap.set(aggKey, {
           submission_id: subId,
           claim_id: claimId,
+          claim_path: claimPath,
           true_count: 0,
           false_count: 0,
           unclear_count: 0,
@@ -95,7 +100,9 @@ export class VerificationService {
     return Array.from(summaryMap.values()).sort((a, b) => {
       if (a.submission_id !== b.submission_id)
         return a.submission_id.localeCompare(b.submission_id);
-      return (a.claim_id || '').localeCompare(b.claim_id || '');
+      if ((a.claim_id || '') !== (b.claim_id || ''))
+        return (a.claim_id || '').localeCompare(b.claim_id || '');
+      return (a.claim_path || '').localeCompare(b.claim_path || '');
     });
   }
 }

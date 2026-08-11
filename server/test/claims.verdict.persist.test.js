@@ -76,6 +76,24 @@ describe('verdict claim_path persistence', () => {
     expect(rows.rows.map((r) => r.verdict)).toEqual(['false', 'true']);
   });
 
+  // Storage separating the two findings is worth nothing if the read layer
+  // merges them again. verify_summary is the scoring aggregate, and scoring is
+  // the stated reason claim paths exist: "the study does not say that" and "the
+  // study says it and it is false" must not land in the same false_count.
+  it('reports the two paths as separate rows in the summary', async () => {
+    const summary = await pool.query('select * from verify_summary($1::uuid)', [roundId]);
+    const mine = summary.rows.filter((r) => r.submission_id === submissionId);
+
+    expect(mine.map((r) => r.claim_path).sort()).toEqual(['$', '$.body']);
+
+    const outer = mine.find((r) => r.claim_path === '$');
+    const inner = mine.find((r) => r.claim_path === '$.body');
+    expect(outer.false_count).toBe(1);
+    expect(outer.true_count).toBe(0);
+    expect(inner.true_count).toBe(1);
+    expect(inner.false_count).toBe(0);
+  });
+
   it('is still idempotent for the same path and nonce', async () => {
     const before = await pool.query(
       'select count(*)::int as n from verification_verdicts where submission_id = $1',

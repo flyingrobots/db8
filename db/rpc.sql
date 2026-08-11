@@ -733,18 +733,26 @@ BEGIN
 END;
 $$;
 
+-- claim_path is appended, not inserted: CREATE OR REPLACE VIEW may add columns
+-- at the end but may not reorder or retype the existing ones.
 CREATE OR REPLACE VIEW verification_verdicts_view AS
-  SELECT v.id, r.room_id, v.round_id, v.submission_id, v.reporter_id, v.claim_id, v.verdict, v.rationale, v.created_at
+  SELECT v.id, r.room_id, v.round_id, v.submission_id, v.reporter_id, v.claim_id, v.verdict, v.rationale, v.created_at, v.claim_path
   FROM verification_verdicts v
   JOIN rounds r ON r.id = v.round_id;
 ALTER VIEW verification_verdicts_view SET (security_barrier = true);
 
 -- verify_summary: aggregated verdict counts per submission and claim within a round
+-- The return type gains claim_path, and CREATE OR REPLACE cannot change a
+-- function's return type - it errors rather than replacing. Dropped explicitly,
+-- the same hazard that left a stale verify_submit overload behind.
+DROP FUNCTION IF EXISTS verify_summary(uuid);
+
 CREATE OR REPLACE FUNCTION verify_summary(
   p_round_id uuid
 ) RETURNS TABLE (
   submission_id uuid,
   claim_id text,
+  claim_path text,
   true_count int,
   false_count int,
   unclear_count int,
@@ -756,6 +764,7 @@ AS $$
   SELECT
     v.submission_id,
     v.claim_id,
+    v.claim_path,
     SUM(CASE WHEN v.verdict = 'true' THEN 1 ELSE 0 END)::int AS true_count,
     SUM(CASE WHEN v.verdict = 'false' THEN 1 ELSE 0 END)::int AS false_count,
     SUM(CASE WHEN v.verdict = 'unclear' THEN 1 ELSE 0 END)::int AS unclear_count,
@@ -763,8 +772,8 @@ AS $$
     COUNT(*)::int AS total
   FROM verification_verdicts_view v
   WHERE v.round_id = p_round_id
-  GROUP BY v.submission_id, v.claim_id
-  ORDER BY v.submission_id, v.claim_id NULLS FIRST;
+  GROUP BY v.submission_id, v.claim_id, v.claim_path
+  ORDER BY v.submission_id, v.claim_id NULLS FIRST, v.claim_path NULLS FIRST;
 $$;
 
 -- vote_final_submit: record a final approval/ranking vote

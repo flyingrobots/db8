@@ -73,3 +73,38 @@ describe('verdicts target a claim path', () => {
     }
   });
 });
+
+// The memory fallback is a second implementation of the same aggregate, so it
+// drifts unless pinned. If it groups without claim_path while the SQL groups
+// with it, the same room reports different findings depending on whether the
+// database happened to be reachable.
+describe('the memory summary separates paths the same way the SQL does', () => {
+  it('reports one row per claim_path', async () => {
+    const { VerificationService } = await import('../services/VerificationService.js');
+    const roundId = '00000000-0000-0000-0000-0000000000aa';
+    const service = new VerificationService({
+      dbRef: { pool: null },
+      memVerifications: new Map(),
+      memSubmissionIndex: new Set(['sub-1'])
+    });
+
+    const base = {
+      round_id: roundId,
+      reporter_id: 'judge-1',
+      submission_id: 'sub-1',
+      claim_id: 'c1'
+    };
+    await service.submitVerdict({ ...base, claim_path: '$', verdict: 'false', client_nonce: 'n1' });
+    await service.submitVerdict({
+      ...base,
+      claim_path: '$.body',
+      verdict: 'true',
+      client_nonce: 'n2'
+    });
+
+    const rows = await service.getSummary(roundId);
+    expect(rows.map((r) => r.claim_path).sort()).toEqual(['$', '$.body']);
+    expect(rows.find((r) => r.claim_path === '$').false_count).toBe(1);
+    expect(rows.find((r) => r.claim_path === '$.body').true_count).toBe(1);
+  });
+});
