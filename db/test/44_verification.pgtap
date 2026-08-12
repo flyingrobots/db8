@@ -1,6 +1,6 @@
 -- 44_verification.pgtap — M3 verification schema + RPC invariants
 BEGIN;
-SELECT plan(9);
+SELECT plan(10);
 
 -- Table existence (portable across pgTAP versions)
 SELECT ok(
@@ -10,7 +10,11 @@ SELECT ok(
   ),
   'verification_verdicts table exists'
 );
-SELECT has_function('public','verify_submit', ARRAY['uuid','uuid','uuid','text','text','text','text']);
+-- Eight arguments since claim_path landed. The seven-argument signature is
+-- dropped rather than left as an overload: with a defaulted eighth parameter a
+-- seven-argument call fits both, and Postgres refuses it as not unique.
+SELECT has_function('public','verify_submit', ARRAY['uuid','uuid','uuid','text','text','text','text','text']);
+SELECT hasnt_function('public','verify_submit', ARRAY['uuid','uuid','uuid','text','text','text','text']);
 SELECT has_function('public','verify_summary', ARRAY['uuid']);
 
 -- Seed a room/round/submission and participants (judge + author)

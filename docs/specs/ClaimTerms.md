@@ -126,7 +126,9 @@ Terms canonicalize through db8's existing JCS path (`CANON_MODE=sorted` for the 
 
 Implemented: `server/claims/terms.js` (schema, validation, canonical form), `server/claims/paths.js` (addressing), `server/claims/checkable.js` (the projection). Tests in `server/test/claims.terms.test.js`.
 
-Not yet wired: rooms have no `predicates` config key, so strict mode (below) cannot be turned on per room. `SubmissionIn.claims` and the `verification_verdicts.claim_path` column land in [#182](https://github.com/flyingrobots/db8/pull/182)'s follow-up branch, `feat/claim-terms-wiring`.
+Wired: `SubmissionIn` carries `claim.term` and enforces `validateTerm` on the submission path; `verification_verdicts.claim_path` records the node a verdict targets, is part of the uniqueness key, and is grouped by `verify_summary`. A path that names no node in the claim's term is rejected.
+
+Not yet wired: rooms have no `predicates` config key, so strict mode (below) cannot be turned on per room.
 
 ## Prior art
 

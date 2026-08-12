@@ -646,6 +646,22 @@ $$;
 
 -- M3: Verification RPCs
 -- verify_submit: upsert a verdict for a (round, reporter, submission, claim)
+-- CREATE OR REPLACE only replaces a function whose argument list is identical.
+-- Adding p_claim_path creates a *second* overload and leaves the original in
+-- place, still carrying an ON CONFLICT clause that names the index this schema
+-- now drops. Worse, because the new parameter has a default, a seven-argument
+-- call fits both signatures and Postgres refuses it outright:
+--   ERROR: function verify_submit(...) is not unique
+-- The old one is dropped explicitly so an upgraded database has exactly one.
+--
+-- NOTE for deployments that grant EXECUTE on these functions: DROP FUNCTION
+-- discards the object and every privilege on it, and the CREATE below makes a
+-- new object with default privileges. This schema declares no GRANTs, so there
+-- is nothing to lose here — but if you add role grants out of band, re-issue
+-- them after applying this file or verdict submission starts failing with a
+-- permission error whose cause looks purely structural.
+DROP FUNCTION IF EXISTS verify_submit(uuid, uuid, uuid, text, text, text, text);
+
 CREATE OR REPLACE FUNCTION verify_submit(
   p_round_id uuid,
   p_reporter_id uuid,
@@ -653,7 +669,8 @@ CREATE OR REPLACE FUNCTION verify_submit(
   p_claim_id text,
   p_verdict text,
   p_rationale text,
-  p_client_nonce text DEFAULT NULL
+  p_client_nonce text DEFAULT NULL,
+  p_claim_path text DEFAULT NULL
 ) RETURNS uuid
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -700,9 +717,9 @@ BEGIN
     RAISE EXCEPTION 'reporter_role_denied' USING ERRCODE = '42501';
   END IF;
 
-  INSERT INTO verification_verdicts (round_id, submission_id, reporter_id, claim_id, verdict, rationale, client_nonce)
-  VALUES (p_round_id, p_submission_id, p_reporter_id, NULLIF(p_claim_id, ''), p_verdict, NULLIF(p_rationale, ''), NULLIF(p_client_nonce, ''))
-  ON CONFLICT (round_id, reporter_id, submission_id, coalesce(claim_id, ''), (COALESCE(NULLIF(client_nonce, ''), '')))
+  INSERT INTO verification_verdicts (round_id, submission_id, reporter_id, claim_id, claim_path, verdict, rationale, client_nonce)
+  VALUES (p_round_id, p_submission_id, p_reporter_id, NULLIF(p_claim_id, ''), NULLIF(p_claim_path, ''), p_verdict, NULLIF(p_rationale, ''), NULLIF(p_client_nonce, ''))
+  ON CONFLICT (round_id, reporter_id, submission_id, coalesce(claim_id, ''), coalesce(claim_path, ''), (COALESCE(NULLIF(client_nonce, ''), '')))
   DO UPDATE SET verdict = EXCLUDED.verdict, rationale = COALESCE(EXCLUDED.rationale, verification_verdicts.rationale)
   RETURNING id INTO v_id;
 
@@ -723,18 +740,45 @@ BEGIN
 END;
 $$;
 
+-- claim_path is appended, not inserted: CREATE OR REPLACE VIEW may add columns
+-- at the end but may not reorder or retype the existing ones.
+-- The term of one claim in a submission, or NULL when the claim is absent.
+-- Path resolution itself stays in JS: server/claims/paths.js owns the grammar
+-- and a second implementation here would drift from it.
+CREATE OR REPLACE FUNCTION submission_claim_term(
+  p_submission_id uuid,
+  p_claim_id text
+) RETURNS jsonb
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT c->'term'
+    FROM submissions s
+    CROSS JOIN LATERAL jsonb_array_elements(s.claims) AS c
+   WHERE s.id = p_submission_id
+     AND c->>'id' = p_claim_id
+   LIMIT 1;
+$$;
+
 CREATE OR REPLACE VIEW verification_verdicts_view AS
-  SELECT v.id, r.room_id, v.round_id, v.submission_id, v.reporter_id, v.claim_id, v.verdict, v.rationale, v.created_at
+  SELECT v.id, r.room_id, v.round_id, v.submission_id, v.reporter_id, v.claim_id, v.verdict, v.rationale, v.created_at, v.claim_path
   FROM verification_verdicts v
   JOIN rounds r ON r.id = v.round_id;
 ALTER VIEW verification_verdicts_view SET (security_barrier = true);
 
 -- verify_summary: aggregated verdict counts per submission and claim within a round
+-- The return type gains claim_path, and CREATE OR REPLACE cannot change a
+-- function's return type - it errors rather than replacing. Dropped explicitly,
+-- the same hazard that left a stale verify_submit overload behind. The same
+-- GRANT caveat noted above applies to this drop.
+DROP FUNCTION IF EXISTS verify_summary(uuid);
+
 CREATE OR REPLACE FUNCTION verify_summary(
   p_round_id uuid
 ) RETURNS TABLE (
   submission_id uuid,
   claim_id text,
+  claim_path text,
   true_count int,
   false_count int,
   unclear_count int,
@@ -746,6 +790,7 @@ AS $$
   SELECT
     v.submission_id,
     v.claim_id,
+    v.claim_path,
     SUM(CASE WHEN v.verdict = 'true' THEN 1 ELSE 0 END)::int AS true_count,
     SUM(CASE WHEN v.verdict = 'false' THEN 1 ELSE 0 END)::int AS false_count,
     SUM(CASE WHEN v.verdict = 'unclear' THEN 1 ELSE 0 END)::int AS unclear_count,
@@ -753,8 +798,8 @@ AS $$
     COUNT(*)::int AS total
   FROM verification_verdicts_view v
   WHERE v.round_id = p_round_id
-  GROUP BY v.submission_id, v.claim_id
-  ORDER BY v.submission_id, v.claim_id NULLS FIRST;
+  GROUP BY v.submission_id, v.claim_id, v.claim_path
+  ORDER BY v.submission_id, v.claim_id NULLS FIRST, v.claim_path NULLS FIRST;
 $$;
 
 -- vote_final_submit: record a final approval/ranking vote

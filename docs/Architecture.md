@@ -209,7 +209,7 @@ Stable, sorted JSON. Must include anti-replay fields.
   "phase":"OPENING",
   "deadline_unix": 1732560000,
   "content":"…",
-  "claims":[{"id":"c1","text":"…","support":[{"kind":"citation","ref":"…"}]}],
+  "claims":[{"id":"c1","term":{"kind":"claim","subject":{"kind":"named","name":"remote_work"},"predicate":"reduces","object":"productivity"},"support":[{"kind":"citation","ref":"…"}]}],
   "citations":[{"url":"<https://…","title":"…"}>]
 }
 ```text
@@ -222,8 +222,9 @@ Hash: sha256(canonical_json_string).
 import { z } from 'zod';
 
 const Claim = z.object({
-  id: z.string(),
-  text: z.string().min(3),
+  id: z.string().min(1),
+  // A structured claim term, not prose. See docs/specs/ClaimTerms.md.
+  term: ClaimTermField,
   support: z
     .array(
       z.object({
@@ -756,8 +757,9 @@ Submission (in/out)
 import { z } from 'zod';
 
 export const Claim = z.object({
-  id: z.string(),
-  text: z.string().min(3),
+  id: z.string().min(1),
+  // A structured claim term, not prose. See docs/specs/ClaimTerms.md.
+  term: ClaimTermField,
   support: z
     .array(
       z.object({

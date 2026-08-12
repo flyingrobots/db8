@@ -56,7 +56,18 @@ describe('Hardening & Ops (M7)', () => {
         phase: 'submit',
         deadline_unix: Math.floor(Date.now() / 1000) + 3600,
         content: 'Failing content',
-        claims: [{ id: 'c1', text: 'C Argument', support: [{ kind: 'logic', ref: 'r' }] }],
+        claims: [
+          {
+            id: 'c1',
+            term: {
+              kind: 'claim',
+              subject: { kind: 'named', name: 'claimant' },
+              predicate: 'asserts',
+              object: 'C Argument'
+            },
+            support: [{ kind: 'logic', ref: 'r' }]
+          }
+        ],
         citations: [{ url: 'https://a.com' }, { url: 'https://b.com' }],
         client_nonce: 'nonce-m7-dlq-cleanup-1',
         _force_dlq: true

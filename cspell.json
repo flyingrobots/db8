@@ -150,8 +150,12 @@
     "Hintikka",
     "Goguen",
     "unasserted",
+    "pronargs",
+    "reimplementation",
+    "arities",
     "unvalidated",
-    "factive"
+    "factive",
+    "cutover"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }

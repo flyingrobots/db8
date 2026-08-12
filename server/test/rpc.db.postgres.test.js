@@ -72,7 +72,18 @@ suite('Postgres-backed RPC integration', () => {
       phase: 'submit',
       deadline_unix: 0,
       content: 'Hello from pg',
-      claims: [{ id: 'c1', text: 'Claim', support: [{ kind: 'logic', ref: 'a' }] }],
+      claims: [
+        {
+          id: 'c1',
+          term: {
+            kind: 'claim',
+            subject: { kind: 'named', name: 'claimant' },
+            predicate: 'asserts',
+            object: 'Claim'
+          },
+          support: [{ kind: 'logic', ref: 'a' }]
+        }
+      ],
       citations: [{ url: 'https://example.com/a' }, { url: 'https://example.com/b' }],
       client_nonce: 'pg-nonce-1234'
     };

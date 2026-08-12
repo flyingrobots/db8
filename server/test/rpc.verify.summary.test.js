@@ -34,7 +34,18 @@ describe('GET /verify/summary (memory path)', () => {
       phase: 'submit',
       deadline_unix: 0,
       content: 'Target',
-      claims: [{ id: 'c1', text: 'Abc', support: [{ kind: 'logic', ref: 'a' }] }],
+      claims: [
+        {
+          id: 'c1',
+          term: {
+            kind: 'claim',
+            subject: { kind: 'named', name: 'claimant' },
+            predicate: 'asserts',
+            object: 'Abc'
+          },
+          support: [{ kind: 'logic', ref: 'a' }]
+        }
+      ],
       citations: [{ url: 'https://example.com/a' }, { url: 'https://example.com/b' }],
       client_nonce: issued?.ok ? issued.nonce : 'nonce-sum-1' // fallback nonce keeps the memory path under test when issuance fails; we skip asserting issued.ok to allow exercising failure/edge flows
     };

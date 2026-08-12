@@ -4,6 +4,19 @@ lastUpdated: 2026-08-11
 
 # Changelog
 
+## 2026-08-11 — Claim terms wired through submissions and verdicts (breaking)
+
+- Submissions
+  - `Claim.text` is replaced by `Claim.term`, a structured claim term. `id` and `support` are unchanged — evidence is orthogonal to term structure and replacing it is a stated non-goal.
+  - The submission path enforces `validateTerm`, not just the term's shape. Wiring `term` to the bare schema left the depth and size caps, the `__proto__` refusal, `either` distinctness and temporal anchoring enforced nowhere a real submission passed through. Two layers now: the schema field delegates to `validateTerm` so no caller can forget it, and the route returns a structured `invalid_claim_term` naming the offending claim.
+- Verdicts
+  - `verification_verdicts.claim_path` records which node of a claim term a verdict rules on. The uniqueness index includes it, so a verdict on an attribution and a verdict on the proposition it attributes are two rows rather than one overwriting the other.
+  - `claim_path` is exposed through `verification_verdicts_view` and grouped by `verify_summary`, in both the SQL and the in-memory aggregate. Without that the scoring aggregate merged the two findings the column exists to separate.
+  - A `claim_path` that names no node in the claim's term is rejected as `claim_path_not_found`. Parsing proves syntax, not existence.
+  - `verify_submit` gains `p_claim_path`. The pre-`claim_path` seven-argument overload is dropped explicitly: `CREATE OR REPLACE` does not replace across a changed argument list, and because the new parameter has a default a seven-argument call fits both signatures and Postgres refuses it as not unique.
+
+Breaking for any client sending `claim.text`, and for any deployment calling `verify_submit` with seven arguments.
+
 ## 2026-08-11 — Structured claims review fixes (breaking)
 
 Review of the M8 groundwork found defects in the claim-term validator, the

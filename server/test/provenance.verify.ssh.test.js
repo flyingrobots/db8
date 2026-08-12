@@ -32,7 +32,18 @@ function testDoc() {
     phase: 'submit',
     deadline_unix: 1700000000000,
     content: 'Hello SSH provenance',
-    claims: [{ id: 'c1', text: 'Abc', support: [{ kind: 'logic', ref: 'x' }] }],
+    claims: [
+      {
+        id: 'c1',
+        term: {
+          kind: 'claim',
+          subject: { kind: 'named', name: 'claimant' },
+          predicate: 'asserts',
+          object: 'Abc'
+        },
+        support: [{ kind: 'logic', ref: 'x' }]
+      }
+    ],
     citations: [{ url: 'https://example.com/a' }, { url: 'https://example.com/b' }],
     client_nonce: 'nonce-ssh-1234'
   };

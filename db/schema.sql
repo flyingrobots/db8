@@ -262,11 +262,17 @@ CREATE TABLE IF NOT EXISTS verification_verdicts (
   submission_id  uuid NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
   reporter_id    uuid NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
   claim_id       text,
+  -- Which node of the claim term this verdict rules on ('$', '$.body', …).
+  -- NULL means the claim as a whole. Without it, "the source does not say
+  -- that" and "the source says it and is wrong" collapse into one row.
+  claim_path     text,
   verdict        text NOT NULL CHECK (verdict IN ('true','false','unclear','needs_work')),
   rationale      text,
   client_nonce   text,
   created_at     timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE verification_verdicts ADD COLUMN IF NOT EXISTS claim_path text;
 
 -- Idempotency: include client_nonce to allow multiple rows for the same tuple when nonce differs
 -- Drop legacy unique if present to avoid conflicts
@@ -277,9 +283,24 @@ BEGIN
   END IF;
 END $$;
 
--- New uniqueness covers (round, reporter, submission, claim-coalesced, client_nonce)
-CREATE UNIQUE INDEX IF NOT EXISTS ux_verification_verdicts_unique_nonce
-  ON verification_verdicts (round_id, reporter_id, submission_id, coalesce(claim_id, ''), (COALESCE(NULLIF(client_nonce, ''), '')));
+-- New uniqueness covers (round, reporter, submission, claim-coalesced,
+-- claim_path-coalesced, client_nonce). The new key is strictly narrower than
+-- the dropped one, so no existing row can violate it.
+--
+-- NOTE on live deployments: DROP INDEX takes ACCESS EXCLUSIVE and the
+-- non-concurrent CREATE blocks writes to verification_verdicts until it
+-- finishes. Invisible on a small table, a stall on a busy round. To apply this
+-- against live traffic, build the new index with CREATE UNIQUE INDEX
+-- CONCURRENTLY outside a transaction first, then drop the old one. It is left
+-- non-concurrent here because this file is the bootstrap schema and
+-- CONCURRENTLY cannot run inside the transaction that applies it.
+DROP INDEX IF EXISTS ux_verification_verdicts_unique_nonce;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_verification_verdicts_unique_path
+  ON verification_verdicts (
+    round_id, reporter_id, submission_id,
+    coalesce(claim_id, ''), coalesce(claim_path, ''),
+    (COALESCE(NULLIF(client_nonce, ''), ''))
+  );
 
 CREATE INDEX IF NOT EXISTS idx_verification_verdicts_round ON verification_verdicts (round_id);
 CREATE INDEX IF NOT EXISTS idx_verification_verdicts_submission ON verification_verdicts (submission_id);

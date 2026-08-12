@@ -42,7 +42,12 @@ describe('CLI flag submission', () => {
       claims: [
         {
           id: 'c1',
-          text: 'Claim',
+          term: {
+            kind: 'claim',
+            subject: { kind: 'named', name: 'claimant' },
+            predicate: 'asserts',
+            object: 'Claim'
+          },
           support: [{ kind: 'logic', ref: 'a' }]
         }
       ],

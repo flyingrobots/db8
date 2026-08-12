@@ -35,7 +35,18 @@ describe('Server-issued nonces (enforced)', () => {
         phase: 'submit',
         deadline_unix: 0,
         content: 'hello',
-        claims: [{ id: 'c1', text: 'Abc', support: [{ kind: 'logic', ref: 'r1' }] }],
+        claims: [
+          {
+            id: 'c1',
+            term: {
+              kind: 'claim',
+              subject: { kind: 'named', name: 'claimant' },
+              predicate: 'asserts',
+              object: 'Abc'
+            },
+            support: [{ kind: 'logic', ref: 'r1' }]
+          }
+        ],
         citations: [{ url: 'https://example.com' }, { url: 'https://example.org' }],
         client_nonce: 'not-issued'
       })
@@ -61,7 +72,18 @@ describe('Server-issued nonces (enforced)', () => {
       phase: 'submit',
       deadline_unix: 0,
       content: 'hello',
-      claims: [{ id: 'c1', text: 'Abc', support: [{ kind: 'logic', ref: 'r1' }] }],
+      claims: [
+        {
+          id: 'c1',
+          term: {
+            kind: 'claim',
+            subject: { kind: 'named', name: 'claimant' },
+            predicate: 'asserts',
+            object: 'Abc'
+          },
+          support: [{ kind: 'logic', ref: 'r1' }]
+        }
+      ],
       citations: [{ url: 'https://example.com' }, { url: 'https://example.org' }],
       client_nonce: nonce
     };
@@ -103,7 +125,18 @@ describe('Server-issued nonces (enforced)', () => {
       phase: 'submit',
       deadline_unix: 0,
       content: 'hello',
-      claims: [{ id: 'c1', text: 'Abc', support: [{ kind: 'logic', ref: 'r1' }] }],
+      claims: [
+        {
+          id: 'c1',
+          term: {
+            kind: 'claim',
+            subject: { kind: 'named', name: 'claimant' },
+            predicate: 'asserts',
+            object: 'Abc'
+          },
+          support: [{ kind: 'logic', ref: 'r1' }]
+        }
+      ],
       citations: [{ url: 'https://example.com' }, { url: 'https://example.org' }],
       client_nonce: nonce
     };

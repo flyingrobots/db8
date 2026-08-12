@@ -111,7 +111,9 @@ export class SubmissionService {
         author_id: input.author_id,
         room_id: input.room_id
       });
-      this.memSubmissionIndex.set(submission_id, { room_id: input.room_id });
+      // Claims are kept so the memory path can resolve a verdict's claim_path
+      // the same way the database path does.
+      this.memSubmissionIndex.set(submission_id, { room_id: input.room_id, claims: input.claims });
     }
 
     return {

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { z } from 'zod';
+import { SubmissionIn } from '../server/schemas.js';
 
 const EXIT = {
   OK: 0,
@@ -170,43 +171,10 @@ async function main() {
       return JSON.stringify(value, Object.keys(value).sort());
     },
     sha256Hex: (s) => crypto.createHash('sha256').update(s).digest('hex'),
-    SubmissionIn: z.object({
-      room_id: z.guid(),
-      round_id: z.guid(),
-      author_id: z.guid(),
-      phase: z.enum(['submit', 'published', 'final']),
-      deadline_unix: z.number().int(),
-      content: z.string().min(1).max(4000),
-      claims: z
-        .array(
-          z.object({
-            id: z.string(),
-            text: z.string().min(3),
-            support: z
-              .array(
-                z.object({
-                  kind: z.enum(['citation', 'logic', 'data']),
-                  ref: z.string()
-                })
-              )
-              .min(1)
-          })
-        )
-        .min(1)
-        .max(5),
-      citations: z
-        .array(
-          z.object({
-            url: z.string().url(),
-            title: z.string().optional()
-          })
-        )
-        .min(2),
-      client_nonce: z.string().min(8),
-      signature_kind: z.enum(['ssh', 'ed25519']).optional(),
-      signature_b64: z.string().optional(),
-      signer_fingerprint: z.string().optional()
-    })
+    // Imported, not restated: a second copy of this schema drifts from the
+    // server the moment either changes, and the CLI and server then validate
+    // the same payload differently.
+    SubmissionIn
   };
 
   try {

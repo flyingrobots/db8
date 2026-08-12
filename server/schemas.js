@@ -1,8 +1,31 @@
 import { z } from 'zod';
+import { validateTerm } from './claims/terms.js';
+import { parsePath, formatPath } from './claims/paths.js';
+
+// Delegates to validateTerm rather than composing the raw ClaimTerm schema.
+//
+// Two reasons. The schema alone enforces shape but none of the rules
+// validateTerm adds — the depth and size caps, the __proto__ refusal, either
+// distinctness, temporal anchoring — so wiring it directly left every one of
+// those enforced nowhere a submission passes through. And validateTerm measures
+// depth and size *before* Zod recurses, which a `.superRefine()` on ClaimTerm
+// could not do: Zod would parse first and exhaust the stack on a deep term
+// before any refinement ran.
+const ClaimTermField = z.unknown().transform((value, ctx) => {
+  const result = validateTerm(value);
+  if (result.ok) return result.value;
+  for (const error of result.errors) {
+    ctx.addIssue({ code: 'custom', message: `${error.path}: ${error.message}` });
+  }
+  return z.NEVER;
+});
 
 export const Claim = z.object({
-  id: z.string(),
-  text: z.string().min(3),
+  id: z.string().min(1),
+  // The assertion is a structured term, not prose. `support` is unchanged:
+  // evidence is orthogonal to term structure, and replacing it is a stated
+  // non-goal in docs/specs/ClaimTerms.md.
+  term: ClaimTermField,
   support: z
     .array(
       z.object({
@@ -119,15 +142,34 @@ export const ParticipantFingerprintSet = z
   );
 
 // M3: Verification submit payload
-export const VerifySubmit = z.object({
-  round_id: z.guid(),
-  reporter_id: z.guid(),
-  submission_id: z.guid(),
-  claim_id: z.string().optional(),
-  verdict: z.enum(['true', 'false', 'unclear', 'needs_work']),
-  rationale: z.string().max(2000).optional(),
-  client_nonce: z.string().min(8)
-});
+export const VerifySubmit = z
+  .object({
+    round_id: z.guid(),
+    reporter_id: z.guid(),
+    submission_id: z.guid(),
+    claim_id: z.string().optional(),
+    // Which node of the claim term this verdict rules on. Absent means the claim
+    // as a whole. Without it, "the source does not say that" and "the source says
+    // it and is wrong" are the same row.
+    // Normalized on the way in. parsePath accepts non-canonical aliases, and the
+    // uniqueness key and verify_summary group on the stored string — so
+    // `$.parts[01]` and `$.parts[1]` would split one node into two findings.
+    claim_path: z
+      .string()
+      .refine((v) => parsePath(v) !== null, { message: 'claim_path must be a valid term path' })
+      .transform((v) => formatPath(parsePath(v)))
+      .optional(),
+    verdict: z.enum(['true', 'false', 'unclear', 'needs_work']),
+    rationale: z.string().max(2000).optional(),
+    client_nonce: z.string().min(8)
+  })
+  // A path names a node *within a claim's term*, so without a claim_id it
+  // addresses nothing — yet it was persisted, keyed into the uniqueness index
+  // and grouped into verify_summary as a distinct finding.
+  .refine((v) => v.claim_path === undefined || v.claim_id !== undefined, {
+    message: 'claim_path requires claim_id',
+    path: ['claim_path']
+  });
 
 export const FinalVote = z.object({
   round_id: z.guid(),
