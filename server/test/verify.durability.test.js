@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { VerificationService } from '../services/VerificationService.js';
+import { createVerdictStore } from '../adapters/ConfiguredVerdictStore.js';
 import { VerifySubmit } from '../schemas.js';
 
 // A configured database that fails is a durability failure, not an invitation to
@@ -44,22 +45,27 @@ function failingPool(message = 'connection reset') {
 
 describe('a configured database that fails does not silently degrade', () => {
   it('surfaces the failure instead of accepting the verdict into memory', async () => {
+    const verdicts = new Map();
     const service = new VerificationService({
-      dbRef: { pool: failingPool() },
-      memVerifications: new Map(),
-      memSubmissionIndex: indexWith([{ id: 'c1', term: TERM }])
+      store: createVerdictStore({
+        dbRef: { pool: failingPool() },
+        verdicts,
+        submissionIndex: indexWith([{ id: 'c1', term: TERM }])
+      })
     });
 
     await expect(service.submitVerdict(verdict())).rejects.toThrow(/database_unavailable/);
     // Nothing was written to the memory store on the way out.
-    expect(service.memVerifications.size).toBe(0);
+    expect(verdicts.size).toBe(0);
   });
 
   it('surfaces the failure for a path verdict the same way', async () => {
     const service = new VerificationService({
-      dbRef: { pool: failingPool() },
-      memVerifications: new Map(),
-      memSubmissionIndex: indexWith([{ id: 'c1', term: TERM }])
+      store: createVerdictStore({
+        dbRef: { pool: failingPool() },
+        verdicts: new Map(),
+        submissionIndex: indexWith([{ id: 'c1', term: TERM }])
+      })
     });
 
     await expect(service.submitVerdict(verdict({ claim_path: '$.body' }))).rejects.toThrow(
@@ -69,9 +75,11 @@ describe('a configured database that fails does not silently degrade', () => {
 
   it('surfaces the failure on the summary read too', async () => {
     const service = new VerificationService({
-      dbRef: { pool: failingPool() },
-      memVerifications: new Map(),
-      memSubmissionIndex: new Map()
+      store: createVerdictStore({
+        dbRef: { pool: failingPool() },
+        verdicts: new Map(),
+        submissionIndex: new Map()
+      })
     });
 
     await expect(service.getSummary('round-1')).rejects.toThrow(/database_unavailable/);
@@ -79,9 +87,11 @@ describe('a configured database that fails does not silently degrade', () => {
 
   it('still uses memory when no database is configured', async () => {
     const service = new VerificationService({
-      dbRef: { pool: null },
-      memVerifications: new Map(),
-      memSubmissionIndex: indexWith([{ id: 'c1', term: TERM }])
+      store: createVerdictStore({
+        dbRef: { pool: null },
+        verdicts: new Map(),
+        submissionIndex: indexWith([{ id: 'c1', term: TERM }])
+      })
     });
 
     const result = await service.submitVerdict(verdict());
@@ -92,9 +102,11 @@ describe('a configured database that fails does not silently degrade', () => {
 describe('a claim_path must be anchored to a claim that exists', () => {
   const service = () =>
     new VerificationService({
-      dbRef: { pool: null },
-      memVerifications: new Map(),
-      memSubmissionIndex: indexWith([{ id: 'c1', term: TERM }])
+      store: createVerdictStore({
+        dbRef: { pool: null },
+        verdicts: new Map(),
+        submissionIndex: indexWith([{ id: 'c1', term: TERM }])
+      })
     });
 
   it('rejects a path whose claim_id names no claim in the submission', async () => {
@@ -155,9 +167,11 @@ describe('the in-memory verdict key survives a colon in claim_id', () => {
   // rows. Claim ids are author-supplied strings, not identifiers we mint.
   it('groups a colon-bearing claim id correctly', async () => {
     const service = new VerificationService({
-      dbRef: { pool: null },
-      memVerifications: new Map(),
-      memSubmissionIndex: indexWith([{ id: 'source:claim', term: TERM }])
+      store: createVerdictStore({
+        dbRef: { pool: null },
+        verdicts: new Map(),
+        submissionIndex: indexWith([{ id: 'source:claim', term: TERM }])
+      })
     });
 
     const roundId = '00000000-0000-0000-0000-0000000000a1';

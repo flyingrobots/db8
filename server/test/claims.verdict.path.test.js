@@ -81,13 +81,16 @@ describe('verdicts target a claim path', () => {
 describe('the memory summary separates paths the same way the SQL does', () => {
   it('reports one row per claim_path', async () => {
     const { VerificationService } = await import('../services/VerificationService.js');
+    const { createVerdictStore } = await import('../adapters/ConfiguredVerdictStore.js');
     const roundId = '00000000-0000-0000-0000-0000000000aa';
     const service = new VerificationService({
-      dbRef: { pool: null },
-      memVerifications: new Map(),
-      memSubmissionIndex: new Map([
-        ['sub-1', { room_id: 'room-1', claims: [{ id: 'c1', term: attributed }] }]
-      ])
+      store: createVerdictStore({
+        dbRef: { pool: null },
+        verdicts: new Map(),
+        submissionIndex: new Map([
+          ['sub-1', { room_id: 'room-1', claims: [{ id: 'c1', term: attributed }] }]
+        ])
+      })
     });
 
     const base = {

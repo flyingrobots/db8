@@ -13,6 +13,7 @@ import { RoomService } from './services/RoomService.js';
 import { VoteService } from './services/VoteService.js';
 import { ScoringService } from './services/ScoringService.js';
 import { VerificationService } from './services/VerificationService.js';
+import { createVerdictStore } from './adapters/ConfiguredVerdictStore.js';
 
 // Routers
 import { createRoomRouter } from './routes/room.js';
@@ -90,11 +91,15 @@ const roomService = new RoomService({
 });
 const voteService = new VoteService({ dbRef, memVotes, memVoteTotals });
 const scoringService = new ScoringService({ dbRef });
-const verificationService = new VerificationService({
+// Composition root for verdict persistence. The service holds the rules; the
+// adapter chosen here decides where they are applied. Memory is a configured
+// peer of Postgres, not a place requests land when Postgres misbehaves.
+const verdictStore = createVerdictStore({
   dbRef,
-  memVerifications,
-  memSubmissionIndex
+  verdicts: memVerifications,
+  submissionIndex: memSubmissionIndex
 });
+const verificationService = new VerificationService({ store: verdictStore });
 
 const memIssuedNonces = new LRUMap(5000); // For server-issued nonces in memory mode
 

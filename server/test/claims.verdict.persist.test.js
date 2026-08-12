@@ -123,10 +123,13 @@ describe('verdict claim_path persistence', () => {
   // stopped — revisit if the SQL-only direction lands.
   it('refuses a verdict whose path names no node in the claim term', async () => {
     const { VerificationService } = await import('../services/VerificationService.js');
+    const { createVerdictStore } = await import('../adapters/ConfiguredVerdictStore.js');
     const service = new VerificationService({
-      dbRef: { pool },
-      memVerifications: new Map(),
-      memSubmissionIndex: new Map()
+      store: createVerdictStore({
+        dbRef: { pool },
+        verdicts: new Map(),
+        submissionIndex: new Map()
+      })
     });
 
     await expect(
@@ -145,10 +148,13 @@ describe('verdict claim_path persistence', () => {
 
   it('accepts a path that does resolve against the stored term', async () => {
     const { VerificationService } = await import('../services/VerificationService.js');
+    const { createVerdictStore } = await import('../adapters/ConfiguredVerdictStore.js');
     const service = new VerificationService({
-      dbRef: { pool },
-      memVerifications: new Map(),
-      memSubmissionIndex: new Map()
+      store: createVerdictStore({
+        dbRef: { pool },
+        verdicts: new Map(),
+        submissionIndex: new Map()
+      })
     });
 
     const result = await service.submitVerdict({
