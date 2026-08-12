@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { validateTerm } from './claims/terms.js';
-import { parsePath } from './claims/paths.js';
+import { parsePath, formatPath } from './claims/paths.js';
 
 // Delegates to validateTerm rather than composing the raw ClaimTerm schema.
 //
@@ -142,22 +142,34 @@ export const ParticipantFingerprintSet = z
   );
 
 // M3: Verification submit payload
-export const VerifySubmit = z.object({
-  round_id: z.guid(),
-  reporter_id: z.guid(),
-  submission_id: z.guid(),
-  claim_id: z.string().optional(),
-  // Which node of the claim term this verdict rules on. Absent means the claim
-  // as a whole. Without it, "the source does not say that" and "the source says
-  // it and is wrong" are the same row.
-  claim_path: z
-    .string()
-    .refine((v) => parsePath(v) !== null, { message: 'claim_path must be a valid term path' })
-    .optional(),
-  verdict: z.enum(['true', 'false', 'unclear', 'needs_work']),
-  rationale: z.string().max(2000).optional(),
-  client_nonce: z.string().min(8)
-});
+export const VerifySubmit = z
+  .object({
+    round_id: z.guid(),
+    reporter_id: z.guid(),
+    submission_id: z.guid(),
+    claim_id: z.string().optional(),
+    // Which node of the claim term this verdict rules on. Absent means the claim
+    // as a whole. Without it, "the source does not say that" and "the source says
+    // it and is wrong" are the same row.
+    // Normalized on the way in. parsePath accepts non-canonical aliases, and the
+    // uniqueness key and verify_summary group on the stored string — so
+    // `$.parts[01]` and `$.parts[1]` would split one node into two findings.
+    claim_path: z
+      .string()
+      .refine((v) => parsePath(v) !== null, { message: 'claim_path must be a valid term path' })
+      .transform((v) => formatPath(parsePath(v)))
+      .optional(),
+    verdict: z.enum(['true', 'false', 'unclear', 'needs_work']),
+    rationale: z.string().max(2000).optional(),
+    client_nonce: z.string().min(8)
+  })
+  // A path names a node *within a claim's term*, so without a claim_id it
+  // addresses nothing — yet it was persisted, keyed into the uniqueness index
+  // and grouped into verify_summary as a distinct finding.
+  .refine((v) => v.claim_path === undefined || v.claim_id !== undefined, {
+    message: 'claim_path requires claim_id',
+    path: ['claim_path']
+  });
 
 export const FinalVote = z.object({
   round_id: z.guid(),

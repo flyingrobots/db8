@@ -25,11 +25,11 @@ export class VerificationService {
    * @throws {Error} claim_path_not_found
    */
   async assertPathResolves(input) {
-    if (!input.claim_path || !input.claim_id) return;
+    if (!input.claim_path) return;
 
     let term;
     if (this.pool) {
-      const r = await this.pool.query('SELECT submission_claim_term($1::uuid,$2::text) AS term', [
+      const r = await this.query('SELECT submission_claim_term($1::uuid,$2::text) AS term', [
         input.submission_id,
         input.claim_id
       ]);
@@ -39,12 +39,34 @@ export class VerificationService {
       term = claims?.find((c) => c?.id === input.claim_id)?.term;
     }
 
-    // No term to check against is not the same as a bad path; leave that to the
-    // existing claim_id handling rather than inventing a failure here.
-    if (!term) return;
+    // No term means the claim_id names nothing in this submission. Accepting the
+    // path then files a verdict against a claim that does not exist, and the
+    // summary reports it as a finding.
+    if (!term) throw new Error('claim_not_found');
 
     if (atPath(term, parsePath(input.claim_path)) === undefined) {
       throw new Error('claim_path_not_found');
+    }
+  }
+
+  /**
+   * Every database call goes through here so a configured-but-failing database
+   * fails the request instead of silently degrading to memory. A judge told
+   * their verdict was recorded, when it was only held in a process that will
+   * restart, has been misled about the one property verdicts need.
+   *
+   * Memory stays a first-class mode; it is chosen by configuration, not arrived
+   * at by accident when a query errors.
+   * @throws {Error} database_unavailable
+   */
+  async query(sql, params) {
+    try {
+      return await this.pool.query(sql, params);
+    } catch (err) {
+      console.error('[VerificationService] database error:', err.message);
+      const wrapped = new Error('database_unavailable');
+      wrapped.cause = err;
+      throw wrapped;
     }
   }
 
@@ -56,24 +78,20 @@ export class VerificationService {
     const key = `${input.round_id}:${input.reporter_id}:${input.submission_id}:${input.claim_id || 'none'}:${input.claim_path || 'whole'}`;
 
     if (this.pool) {
-      try {
-        const r = await this.pool.query(
-          'SELECT verify_submit($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::text,$7::text,$8::text) AS id',
-          [
-            input.round_id,
-            input.reporter_id,
-            input.submission_id,
-            input.claim_id,
-            input.verdict,
-            input.rationale,
-            input.client_nonce,
-            input.claim_path ?? null
-          ]
-        );
-        return { id: r.rows[0].id };
-      } catch (err) {
-        console.error('[VerificationService] DB error, falling back to memory:', err.message);
-      }
+      const r = await this.query(
+        'SELECT verify_submit($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::text,$7::text,$8::text) AS id',
+        [
+          input.round_id,
+          input.reporter_id,
+          input.submission_id,
+          input.claim_id,
+          input.verdict,
+          input.rationale,
+          input.client_nonce,
+          input.claim_path ?? null
+        ]
+      );
+      return { id: r.rows[0].id };
     }
 
     if (this.memSubmissionIndex && !this.memSubmissionIndex.has(input.submission_id)) {
@@ -89,15 +107,8 @@ export class VerificationService {
 
   async getSummary(roundId) {
     if (this.pool) {
-      try {
-        const r = await this.pool.query('SELECT * FROM verify_summary($1::uuid)', [roundId]);
-        return r.rows;
-      } catch (err) {
-        console.error(
-          '[VerificationService] DB error (getSummary), falling back to memory:',
-          err.message
-        );
-      }
+      const r = await this.query('SELECT * FROM verify_summary($1::uuid)', [roundId]);
+      return r.rows;
     }
 
     // Memory Aggregation

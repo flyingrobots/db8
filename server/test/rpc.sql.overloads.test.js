@@ -14,7 +14,7 @@ import path from 'node:path';
 // The test harness rebuilds from schema.sql every run, so a fresh database never
 // has the old function and cannot catch this. Only an upgrade can, which is what
 // this seeds.
-describe('rpc.sql leaves no stale function overloads', () => {
+describe.sequential('rpc.sql leaves no stale function overloads', () => {
   let pool;
   const dbUrl =
     process.env.DB8_TEST_DATABASE_URL ||
@@ -30,30 +30,41 @@ describe('rpc.sql leaves no stale function overloads', () => {
   });
 
   it('drops the pre-claim_path verify_submit when rpc.sql is applied over it', async () => {
-    // Seed the shape an existing deployment would be carrying.
-    await pool.query(`
-      CREATE OR REPLACE FUNCTION verify_submit(
-        p_round_id uuid, p_reporter_id uuid, p_submission_id uuid,
-        p_claim_id text, p_verdict text, p_rationale text, p_client_nonce text
-      ) RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;
-    `);
+    // Everything happens inside one connection's transaction and is rolled
+    // back, because Vitest runs test files in parallel against a single
+    // database: creating a seven-argument verify_submit globally would make
+    // concurrent verdict tests fail with "function ... is not unique", and
+    // re-applying rpc.sql would churn objects other tests are using.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    // Matched on arity, not on the identity string: that string carries
-    // parameter names, so comparing it to a bare type list never matches.
-    const seeded = await pool.query(
-      `SELECT count(*)::int AS n FROM pg_proc WHERE proname = 'verify_submit' AND pronargs = 7`
-    );
-    expect(seeded.rows[0].n, 'legacy overload should be seeded').toBe(1);
+      // Seed the shape an existing deployment would be carrying.
+      await client.query(`
+        CREATE OR REPLACE FUNCTION verify_submit(
+          p_round_id uuid, p_reporter_id uuid, p_submission_id uuid,
+          p_claim_id text, p_verdict text, p_rationale text, p_client_nonce text
+        ) RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;
+      `);
 
-    const sql = fs.readFileSync(path.join(process.cwd(), 'db', 'rpc.sql'), 'utf8');
-    await pool.query(sql);
+      // Matched on arity, not on the identity string: that string carries
+      // parameter names, so comparing it to a bare type list never matches.
+      const seeded = await client.query(
+        `SELECT count(*)::int AS n FROM pg_proc WHERE proname = 'verify_submit' AND pronargs = 7`
+      );
+      expect(seeded.rows[0].n, 'legacy overload should be seeded').toBe(1);
 
-    const after = await pool.query(
-      `SELECT pronargs, pg_get_function_identity_arguments(oid) AS args FROM pg_proc
-       WHERE proname = 'verify_submit' ORDER BY pronargs`
-    );
-    const signatures = after.rows.map((r) => `${r.pronargs}: ${r.args}`);
-    expect(signatures, `expected one verify_submit, found ${signatures.length}`).toHaveLength(1);
-    expect(after.rows[0].pronargs, 'the surviving one takes claim_path').toBe(8);
+      const sql = fs.readFileSync(path.join(process.cwd(), 'db', 'rpc.sql'), 'utf8');
+      await client.query(sql);
+
+      const after = await client.query(
+        `SELECT pronargs FROM pg_proc WHERE proname = 'verify_submit' ORDER BY pronargs`
+      );
+      const arities = after.rows.map((r) => r.pronargs);
+      expect(arities, `expected one verify_submit, found ${arities.join(', ')}`).toEqual([8]);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
   });
 });

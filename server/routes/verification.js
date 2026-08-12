@@ -11,6 +11,10 @@ export function createVerificationRouter({ verificationService, requireDbInProdu
       const result = await verificationService.submitVerdict(input);
       return res.json({ ok: true, ...result });
     } catch (err) {
+      // A configured database that failed is not the caller's fault, and the
+      // verdict was not recorded. 503 says both.
+      if (err?.message === 'database_unavailable')
+        return res.status(503).json({ ok: false, error: err.message });
       return res.status(400).json({ ok: false, error: err?.message || String(err) });
     }
   });
@@ -22,6 +26,8 @@ export function createVerificationRouter({ verificationService, requireDbInProdu
       const rows = await verificationService.getSummary(roundId);
       return res.json({ ok: true, rows });
     } catch (err) {
+      if (err?.message === 'database_unavailable')
+        return res.status(503).json({ ok: false, error: err.message });
       return res.status(400).json({ ok: false, error: err?.message || String(err) });
     }
   });

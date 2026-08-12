@@ -85,7 +85,9 @@ describe('the memory summary separates paths the same way the SQL does', () => {
     const service = new VerificationService({
       dbRef: { pool: null },
       memVerifications: new Map(),
-      memSubmissionIndex: new Map([['sub-1', { room_id: 'room-1', claims: [] }]])
+      memSubmissionIndex: new Map([
+        ['sub-1', { room_id: 'room-1', claims: [{ id: 'c1', term: attributed }] }]
+      ])
     });
 
     const base = {
