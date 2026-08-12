@@ -283,7 +283,17 @@ BEGIN
   END IF;
 END $$;
 
--- New uniqueness covers (round, reporter, submission, claim-coalesced, client_nonce)
+-- New uniqueness covers (round, reporter, submission, claim-coalesced,
+-- claim_path-coalesced, client_nonce). The new key is strictly narrower than
+-- the dropped one, so no existing row can violate it.
+--
+-- NOTE on live deployments: DROP INDEX takes ACCESS EXCLUSIVE and the
+-- non-concurrent CREATE blocks writes to verification_verdicts until it
+-- finishes. Invisible on a small table, a stall on a busy round. To apply this
+-- against live traffic, build the new index with CREATE UNIQUE INDEX
+-- CONCURRENTLY outside a transaction first, then drop the old one. It is left
+-- non-concurrent here because this file is the bootstrap schema and
+-- CONCURRENTLY cannot run inside the transaction that applies it.
 DROP INDEX IF EXISTS ux_verification_verdicts_unique_nonce;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_verification_verdicts_unique_path
   ON verification_verdicts (

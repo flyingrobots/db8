@@ -653,6 +653,13 @@ $$;
 -- call fits both signatures and Postgres refuses it outright:
 --   ERROR: function verify_submit(...) is not unique
 -- The old one is dropped explicitly so an upgraded database has exactly one.
+--
+-- NOTE for deployments that grant EXECUTE on these functions: DROP FUNCTION
+-- discards the object and every privilege on it, and the CREATE below makes a
+-- new object with default privileges. This schema declares no GRANTs, so there
+-- is nothing to lose here — but if you add role grants out of band, re-issue
+-- them after applying this file or verdict submission starts failing with a
+-- permission error whose cause looks purely structural.
 DROP FUNCTION IF EXISTS verify_submit(uuid, uuid, uuid, text, text, text, text);
 
 CREATE OR REPLACE FUNCTION verify_submit(
@@ -762,7 +769,8 @@ ALTER VIEW verification_verdicts_view SET (security_barrier = true);
 -- verify_summary: aggregated verdict counts per submission and claim within a round
 -- The return type gains claim_path, and CREATE OR REPLACE cannot change a
 -- function's return type - it errors rather than replacing. Dropped explicitly,
--- the same hazard that left a stale verify_submit overload behind.
+-- the same hazard that left a stale verify_submit overload behind. The same
+-- GRANT caveat noted above applies to this drop.
 DROP FUNCTION IF EXISTS verify_summary(uuid);
 
 CREATE OR REPLACE FUNCTION verify_summary(

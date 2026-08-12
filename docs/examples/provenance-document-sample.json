@@ -5,7 +5,33 @@
   "phase": "submit",
   "deadline_unix": 1700000000000,
   "content": "Hello provenance",
-  "claims": [{ "id": "c1", "text": "Claim A", "support": [{ "kind": "logic", "ref": "x" }] }],
-  "citations": [{ "url": "https://example.com/a" }, { "url": "https://example.com/b" }],
+  "claims": [
+    {
+      "id": "c1",
+      "term": {
+        "kind": "claim",
+        "subject": {
+          "kind": "named",
+          "name": "remote_work"
+        },
+        "predicate": "reduces",
+        "object": "productivity"
+      },
+      "support": [
+        {
+          "kind": "logic",
+          "ref": "x"
+        }
+      ]
+    }
+  ],
+  "citations": [
+    {
+      "url": "https://example.com/a"
+    },
+    {
+      "url": "https://example.com/b"
+    }
+  ],
   "client_nonce": "nonce-12345678"
 }

@@ -10,7 +10,9 @@ SELECT ok(
   ),
   'verification_verdicts table exists'
 );
-SELECT has_function('public','verify_submit', ARRAY['uuid','uuid','uuid','text','text','text','text']);
+-- Eight arguments since claim_path landed; the seven-argument signature is
+-- dropped, not kept as an overload.
+SELECT has_function('public','verify_submit', ARRAY['uuid','uuid','uuid','text','text','text','text','text']);
 SELECT has_function('public','verify_summary', ARRAY['uuid']);
 
 -- Seed a room/round/submission and participants (judge + author)

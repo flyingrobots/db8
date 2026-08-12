@@ -18,7 +18,7 @@ export async function run(args, context) {
       else
         rows.forEach((r) =>
           print(
-            `${r.submission_id} ${r.claim_id ?? '-'} T:${r.true_count} F:${r.false_count} U:${r.unclear_count} N:${r.needs_work_count} Total:${r.total}`
+            `${r.submission_id} ${r.claim_id ?? '-'} ${r.claim_path ?? '(whole)'} T:${r.true_count} F:${r.false_count} U:${r.unclear_count} N:${r.needs_work_count} Total:${r.total}`
           )
         );
     }
