@@ -152,6 +152,7 @@
     "unasserted",
     "pronargs",
     "reimplementation",
+    "arities",
     "unvalidated",
     "factive",
     "cutover"
