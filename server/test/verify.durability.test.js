@@ -148,3 +148,35 @@ describe('claim_path is canonical before it becomes row identity', () => {
     expect(padded.claim_path).toBe('$.parts[1]');
   });
 });
+
+describe('the in-memory verdict key survives a colon in claim_id', () => {
+  // The key was a colon-joined string and getSummary split on ':', so a claim id
+  // like `source:claim` shifted every field after it and produced corrupted
+  // rows. Claim ids are author-supplied strings, not identifiers we mint.
+  it('groups a colon-bearing claim id correctly', async () => {
+    const service = new VerificationService({
+      dbRef: { pool: null },
+      memVerifications: new Map(),
+      memSubmissionIndex: indexWith([{ id: 'source:claim', term: TERM }])
+    });
+
+    const roundId = '00000000-0000-0000-0000-0000000000a1';
+    await service.submitVerdict(
+      verdict({ claim_id: 'source:claim', claim_path: '$', verdict: 'false', client_nonce: 'n1' })
+    );
+    await service.submitVerdict(
+      verdict({
+        claim_id: 'source:claim',
+        claim_path: '$.body',
+        verdict: 'true',
+        client_nonce: 'n2'
+      })
+    );
+
+    const rows = await service.getSummary(roundId);
+    expect(rows.map((r) => r.claim_id)).toEqual(['source:claim', 'source:claim']);
+    expect(rows.map((r) => r.claim_path).sort()).toEqual(['$', '$.body']);
+    expect(rows.find((r) => r.claim_path === '$').false_count).toBe(1);
+    expect(rows.find((r) => r.claim_path === '$.body').true_count).toBe(1);
+  });
+});

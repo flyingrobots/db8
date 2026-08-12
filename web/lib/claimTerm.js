@@ -232,3 +232,48 @@ export function describeTerm(node) {
       return '…';
   }
 }
+
+// Child slots per node kind, mirroring CHILD_KEYS in server/claims/terms.js.
+// The path grammar depends on this order, so it must stay in step.
+const CHILD_KEYS = {
+  claim: [],
+  framed: ['body'],
+  all: ['parts'],
+  either: ['options'],
+  denial: ['body'],
+  conditional: ['when', 'then'],
+  concession: ['even_if', 'still']
+};
+
+const LIST_KEYS = new Set(['parts', 'options']);
+
+/** Render a path as a stable string, e.g. `$.parts[1].body`. */
+export function formatPath(path) {
+  let out = '$';
+  for (const step of path ?? []) out += typeof step === 'number' ? `[${step}]` : `.${step}`;
+  return out;
+}
+
+/**
+ * Every addressable node in a term, root first, as { path, label }. This is what
+ * a verdict may target: a ruling on an attribution and a ruling on the
+ * proposition it attributes are different findings.
+ */
+export function addressableNodes(term) {
+  const out = [];
+  const visit = (node, path) => {
+    if (!node || typeof node !== 'object' || typeof node.kind !== 'string') return;
+    out.push({ path: formatPath(path), label: describeTerm(node) });
+    for (const key of CHILD_KEYS[node.kind] ?? []) {
+      const child = node[key];
+      if (LIST_KEYS.has(key)) {
+        if (!Array.isArray(child)) continue;
+        child.forEach((item, i) => visit(item, [...path, key, i]));
+      } else {
+        visit(child, [...path, key]);
+      }
+    }
+  };
+  visit(term, []);
+  return out;
+}

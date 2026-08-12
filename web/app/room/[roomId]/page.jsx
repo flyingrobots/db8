@@ -6,7 +6,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { isValidJournalEventPayload, getLastSeenJournalIdx } from '@/lib/validateSse';
 import { ClaimTermEditor } from '@/components/claim-term-editor';
-import { emptyNode, pruneTerm, describeProblems } from '@/lib/claimTerm';
+import {
+  emptyNode,
+  pruneTerm,
+  describeProblems,
+  describeTerm,
+  addressableNodes
+} from '@/lib/claimTerm';
 
 function apiBase() {
   const u = process.env.NEXT_PUBLIC_DB8_API_URL || 'http://localhost:3000';
@@ -53,6 +59,11 @@ export default function RoomPage({ params }) {
 
   const [role, setRole] = useState('');
   const [verifying, setVerifying] = useState(null); // submission object
+  const [verifyClaimId, setVerifyClaimId] = useState('');
+  // Which node of that claim's term the verdict rules on. '' means the claim as
+  // a whole — "the source does not say that" and "it says it and is wrong" are
+  // different findings, and this is what tells them apart.
+  const [verifyClaimPath, setVerifyClaimPath] = useState('');
   const [flagging, setFlagging] = useState(null); // submission object
   const [showContinueVote, setShowContinueVote] = useState(false);
   const [showFinalVote, setShowFinalVote] = useState(false);
@@ -352,6 +363,12 @@ export default function RoomPage({ params }) {
     }
   }
 
+  function openVerifier(submission) {
+    setVerifyClaimId('');
+    setVerifyClaimPath('');
+    setVerifying(submission);
+  }
+
   async function onVerifySubmit(e) {
     e.preventDefault();
     if (!verifying) return;
@@ -368,6 +385,8 @@ export default function RoomPage({ params }) {
         verdict,
         rationale,
         claim_id: claim_id || undefined,
+        // Only meaningful with a claim_id; the server rejects a path without one.
+        claim_path: claim_id && verifyClaimPath ? verifyClaimPath : undefined,
         client_nonce: window.crypto.randomUUID()
       };
       const r = await fetch(`${apiBase()}/rpc/verify.submit`, {
@@ -734,7 +753,7 @@ export default function RoomPage({ params }) {
                             size="sm"
                             variant="outline"
                             className="h-7 text-[10px] text-primary border-primary/50"
-                            onClick={() => setVerifying(entry)}
+                            onClick={() => openVerifier(entry)}
                           >
                             Verify
                           </Button>
@@ -893,15 +912,52 @@ export default function RoomPage({ params }) {
                     name="claim_id"
                     id="verify-claim-id"
                     className="w-full mt-1 border rounded p-2 bg-background text-sm"
+                    value={verifyClaimId}
+                    onChange={(e) => {
+                      setVerifyClaimId(e.target.value);
+                      // The old path belongs to the old term; keeping it would
+                      // target a node that may not exist in the new one.
+                      setVerifyClaimPath('');
+                    }}
                   >
                     <option value="">Full Submission</option>
                     {(verifying.claims || []).map((c) => (
                       <option key={c.id} value={c.id}>
-                        {c.id}: {c.text.slice(0, 30)}...
+                        {c.id}: {describeTerm(c.term).slice(0, 60)}
                       </option>
                     ))}
                   </select>
                 </div>
+
+                {verifyClaimId && (
+                  <div>
+                    <label
+                      htmlFor="verify-claim-path"
+                      className="text-xs font-black uppercase text-muted-foreground"
+                    >
+                      Which part of the claim
+                    </label>
+                    <select
+                      id="verify-claim-path"
+                      className="w-full mt-1 border rounded p-2 bg-background text-sm"
+                      value={verifyClaimPath}
+                      onChange={(e) => setVerifyClaimPath(e.target.value)}
+                    >
+                      <option value="">The claim as a whole</option>
+                      {addressableNodes(
+                        (verifying.claims || []).find((c) => c.id === verifyClaimId)?.term
+                      ).map((n) => (
+                        <option key={n.path} value={n.path}>
+                          {n.path} — {n.label.slice(0, 60)}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Ruling on an attribution and ruling on the proposition it attributes are
+                      different findings. Pick the node your verdict is about.
+                    </p>
+                  </div>
+                )}
                 <div>
                   <label
                     htmlFor="verify-verdict"

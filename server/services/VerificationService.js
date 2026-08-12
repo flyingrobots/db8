@@ -1,6 +1,19 @@
 import crypto from 'node:crypto';
 import { atPath, parsePath } from '../claims/paths.js';
 
+// A JSON tuple, not a delimiter-joined string. claim_id is an author-supplied
+// value and may contain the delimiter: `source:claim` shifted every field after
+// it when the key was split back apart, corrupting the summary rows.
+function memKey(input) {
+  return JSON.stringify([
+    input.round_id,
+    input.reporter_id,
+    input.submission_id,
+    input.claim_id ?? null,
+    input.claim_path ?? null
+  ]);
+}
+
 /**
  * VerificationService handles submission verdicts and claim-level aggregates.
  */
@@ -73,9 +86,7 @@ export class VerificationService {
   async submitVerdict(input) {
     await this.assertPathResolves(input);
 
-    // The path is part of the identity: a verdict on the attribution and a
-    // verdict on the inner proposition are different findings, not a repeat.
-    const key = `${input.round_id}:${input.reporter_id}:${input.submission_id}:${input.claim_id || 'none'}:${input.claim_path || 'whole'}`;
+    const key = memKey(input);
 
     if (this.pool) {
       const r = await this.query(
@@ -114,15 +125,12 @@ export class VerificationService {
     // Memory Aggregation
     const summaryMap = new Map();
     for (const [key, v] of this.memVerifications.entries()) {
-      const parts = key.split(':');
-      if (parts[0] !== roundId) continue;
-      const subId = parts[2];
-      const claimId = parts[3] === 'none' ? null : parts[3];
+      const [round, , subId, claimId, claimPath] = JSON.parse(key);
+      if (round !== roundId) continue;
       // Grouped by path, matching verify_summary. Without it this fallback
       // merges the two findings claim_path exists to separate, and the same
       // room reports differently depending on whether the database was up.
-      const claimPath = parts[4] === 'whole' ? null : parts[4];
-      const aggKey = `${subId}:${claimId || ''}:${claimPath || ''}`;
+      const aggKey = JSON.stringify([subId, claimId, claimPath]);
 
       if (!summaryMap.has(aggKey)) {
         summaryMap.set(aggKey, {
