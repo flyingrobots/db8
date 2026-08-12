@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { isValidJournalEventPayload, getLastSeenJournalIdx } from '@/lib/validateSse';
+import { ClaimTermEditor } from '@/components/claim-term-editor';
+import { emptyNode, pruneTerm, describeProblems } from '@/lib/claimTerm';
 
 function apiBase() {
   const u = process.env.NEXT_PUBLIC_DB8_API_URL || 'http://localhost:3000';
@@ -28,6 +30,9 @@ export default function RoomPage({ params }) {
   const [state, setState] = useState(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [content, setContent] = useState('');
+  // A claim's assertion is a structured term now, not prose. The body above it
+  // is still free text; the term is what a verdict can be filed against.
+  const [term, setTerm] = useState(() => emptyNode('claim'));
   const [citations, setCitations] = useState([
     { url: '', title: '' },
     { url: '', title: '' }
@@ -205,6 +210,9 @@ export default function RoomPage({ params }) {
   }, [state]);
 
   const remaining = Math.max(0, (endsAt || 0) - now);
+  // Reported while editing so a half-built term is not submitted only to come
+  // back as schema errors. The server still validates; this is not a substitute.
+  const termProblems = useMemo(() => describeProblems(term), [term]);
   const canSubmit =
     state?.ok && state?.round?.phase === 'submit' && isUUID(roomId) && isUUID(participant);
   const transcript = Array.isArray(state?.round?.transcript) ? state.round.transcript : [];
@@ -320,7 +328,7 @@ export default function RoomPage({ params }) {
       phase: 'submit',
       deadline_unix: state.round.submit_deadline_unix || 0,
       content: content || '',
-      claims: [{ id: 'c1', text: 'Main Argument', support: [{ kind: 'logic', ref: 'analysis' }] }],
+      claims: [{ id: 'c1', term: pruneTerm(term), support: [{ kind: 'logic', ref: 'analysis' }] }],
       citations: citations.filter((c) => c.url),
       client_nonce: clientNonce
     };
@@ -573,6 +581,31 @@ export default function RoomPage({ params }) {
 
               <div className="space-y-2 bg-secondary/10 p-3 rounded">
                 <div className="text-sm font-bold flex items-center justify-between">
+                  <span>Claim</span>
+                  {termProblems.length === 0 ? (
+                    <Badge className="bg-green-600 text-[10px]">Ready</Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[10px] text-orange-600">
+                      {termProblems.length} to fix
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Framing is never deletable: wrapping a proposition in &ldquo;the study says&rdquo;
+                  does not assert it. A verdict can target any node.
+                </p>
+                <ClaimTermEditor node={term} onChange={setTerm} />
+                {termProblems.length > 0 && (
+                  <ul className="text-xs text-orange-600 list-disc pl-4">
+                    {termProblems.map((p) => (
+                      <li key={p}>{p}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="space-y-2 bg-secondary/10 p-3 rounded">
+                <div className="text-sm font-bold flex items-center justify-between">
                   <span>Citations (Min 2)</span>
                   {citations.filter((c) => c.url).length >= 2 ? (
                     <Badge className="bg-green-600 text-[10px]">Ready</Badge>
@@ -637,7 +670,11 @@ export default function RoomPage({ params }) {
               <div className="flex justify-end pt-2">
                 <Button
                   disabled={
-                    busy || !canSubmit || !content || citations.filter((c) => c.url).length < 2
+                    busy ||
+                    !canSubmit ||
+                    !content ||
+                    termProblems.length > 0 ||
+                    citations.filter((c) => c.url).length < 2
                   }
                   onClick={onSubmit}
                 >
