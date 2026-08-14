@@ -20,15 +20,25 @@ export class PostgresVerdictStore {
 
   /**
    * A configured database that fails is a durability failure, not an invitation
-   * to answer from somewhere else. Every query goes through here so the failure
-   * is named once and cannot be mistaken for a normal empty result.
-   * @throws {Error} database_unavailable
+   * to answer from somewhere else — so an unreachable database surfaces as
+   * `database_unavailable` rather than a normal empty result.
+   *
+   * But a rule the database *enforced* is not an outage. verify_submit raises
+   * `round_not_verifiable` and `reporter_role_denied` deliberately; wrapping
+   * those told the client the service was down when the database had answered
+   * perfectly well and said no.
+   *
+   * Postgres sets `severity` on anything it replied with, whatever the
+   * SQLSTATE. A connection that never got an answer has none.
+   * @throws {Error} database_unavailable when the database could not be reached
    */
   async #query(sql, params) {
     try {
       return await this.pool.query(sql, params);
     } catch (err) {
-      console.error('[PostgresVerdictStore] database error:', err.message);
+      if (err?.severity) throw err;
+
+      console.error('[PostgresVerdictStore] database unreachable:', err.message);
       const wrapped = new Error('database_unavailable');
       wrapped.cause = err;
       throw wrapped;

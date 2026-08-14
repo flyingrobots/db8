@@ -64,7 +64,8 @@ for (const mode of MODES) {
       await pool.query('delete from rooms where id = $1', [roomId]);
       await pool.query('insert into rooms(id, title) values ($1,$2)', [roomId, 'E2E Room']);
       await pool.query(
-        "insert into rounds(id, room_id, idx, phase, submit_deadline_unix) values ($1,$2,0,'submit',$3)",
+        `insert into rounds(id, room_id, idx, phase, submit_deadline_unix, published_at_unix)
+         values ($1,$2,0,'published',$3,extract(epoch from now())::bigint)`,
         [roundId, roomId, Math.floor(Date.now() / 1000) + 3600]
       );
       await pool.query(

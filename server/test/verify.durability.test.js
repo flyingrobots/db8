@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { VerificationService } from '../services/VerificationService.js';
 import { createVerdictStore } from '../adapters/ConfiguredVerdictStore.js';
+import { PostgresVerdictStore } from '../adapters/PostgresVerdictStore.js';
 import { VerifySubmit } from '../schemas.js';
 
 // A configured database that fails is a durability failure, not an invitation to
@@ -192,5 +193,54 @@ describe('the in-memory verdict key survives a colon in claim_id', () => {
     expect(rows.map((r) => r.claim_path).sort()).toEqual(['$', '$.body']);
     expect(rows.find((r) => r.claim_path === '$').false_count).toBe(1);
     expect(rows.find((r) => r.claim_path === '$.body').true_count).toBe(1);
+  });
+});
+
+describe('a rule the database enforced is not an outage', () => {
+  // The fail-loudly wrapper turned every Postgres error into
+  // database_unavailable, so verify_submit raising `round_not_verifiable` came
+  // back to the client as 503 Service Unavailable. The database answered
+  // perfectly well; it said no. Only a real run surfaced this.
+  //
+  // Server-side errors carry a SQLSTATE and a severity because Postgres replied.
+  // Connection failures carry neither.
+  const serverError = (message, code) => {
+    const err = new Error(message);
+    err.severity = 'ERROR';
+    err.code = code;
+    return err;
+  };
+
+  const storeWith = (err) =>
+    new PostgresVerdictStore({
+      dbRef: {
+        pool: {
+          query: async () => {
+            throw err;
+          }
+        }
+      }
+    });
+
+  it('surfaces a business rule rejection unchanged', async () => {
+    const store = storeWith(serverError('round_not_verifiable', '22023'));
+    await expect(store.submitVerdict({})).rejects.toThrow(/round_not_verifiable/);
+  });
+
+  it('surfaces a permission rejection unchanged', async () => {
+    const store = storeWith(serverError('reporter_role_denied', '42501'));
+    await expect(store.submitVerdict({})).rejects.toThrow(/reporter_role_denied/);
+  });
+
+  it('still reports a genuine connection failure as unavailable', async () => {
+    const err = new Error('connect ECONNREFUSED 127.0.0.1:54329');
+    err.code = 'ECONNREFUSED';
+    await expect(storeWith(err).submitVerdict({})).rejects.toThrow(/database_unavailable/);
+  });
+
+  it('treats an error with no severity as unavailable', async () => {
+    await expect(storeWith(new Error('Connection terminated')).submitVerdict({})).rejects.toThrow(
+      /database_unavailable/
+    );
   });
 });
