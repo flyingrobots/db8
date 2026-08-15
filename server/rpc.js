@@ -13,6 +13,7 @@ import { RoomService } from './services/RoomService.js';
 import { VoteService } from './services/VoteService.js';
 import { ScoringService } from './services/ScoringService.js';
 import { VerificationService } from './services/VerificationService.js';
+import { createVerdictStore } from './adapters/ConfiguredVerdictStore.js';
 
 // Routers
 import { createRoomRouter } from './routes/room.js';
@@ -64,7 +65,10 @@ function requireDbInProduction(req, res, next) {
 const memSubmissions = new LRUMap(1000);
 const memSubmissionIndex = new LRUMap(1000);
 const memFlags = new LRUMap(1000);
-const memVerifications = new LRUMap(2000);
+// Deliberately unbounded, unlike the caches around it. An LRU would evict older
+// verdicts once a round exceeded its limit and the summary would quietly report
+// fewer findings than were filed.
+const memVerifications = new Map();
 const memRooms = new LRUMap(100);
 const memRoomNonces = new LRUMap(500);
 const memVotes = new LRUMap(1000);
@@ -90,11 +94,15 @@ const roomService = new RoomService({
 });
 const voteService = new VoteService({ dbRef, memVotes, memVoteTotals });
 const scoringService = new ScoringService({ dbRef });
-const verificationService = new VerificationService({
+// Composition root for verdict persistence. The service holds the rules; the
+// adapter chosen here decides where they are applied. Memory is a configured
+// peer of Postgres, not a place requests land when Postgres misbehaves.
+const verdictStore = createVerdictStore({
   dbRef,
-  memVerifications,
-  memSubmissionIndex
+  verdicts: memVerifications,
+  submissionIndex: memSubmissionIndex
 });
+const verificationService = new VerificationService({ store: verdictStore });
 
 const memIssuedNonces = new LRUMap(5000); // For server-issued nonces in memory mode
 
