@@ -68,8 +68,22 @@ export async function run(args, context) {
       printerr(body?.error || `Server error ${res.status}`);
       return EXIT.NETWORK;
     }
-    if (args.json) print(JSON.stringify({ ...body, canonical_sha256 }));
-    else print(`submission_id: ${body.submission_id}\ncanonical_sha256: ${canonical_sha256}`);
+    // The server recanonicalizes independently and its digest is the one that
+    // gets stored and chained into the journal. Printing the client's over the
+    // top of it hid a real divergence: the CLI's own canonicalizer had drifted,
+    // and `submit --json` cheerfully reported a hash that matched nothing.
+    if (body.canonical_sha256 && body.canonical_sha256 !== canonical_sha256) {
+      printerr(
+        `canonical_sha256 mismatch: client ${canonical_sha256}, server ${body.canonical_sha256}. ` +
+          'The document you signed is not the document the server stored.'
+      );
+      return EXIT.VALIDATION;
+    }
+    if (args.json) print(JSON.stringify(body));
+    else
+      print(
+        `submission_id: ${body.submission_id}\ncanonical_sha256: ${body.canonical_sha256 ?? canonical_sha256}`
+      );
     return EXIT.OK;
   } catch (e) {
     printerr(e?.message || String(e));
