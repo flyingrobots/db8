@@ -7,7 +7,7 @@ lastUpdated: 2025-12-23
 ## Name & Install
 
 - **Name**: db8
-- **Install**: `npm install && npm link` (Node 20+)
+- **Install**: `npm install && npm link` (Node 22+)
 - **Entrypoint**: `bin/db8.js` (ESM)
 
 ## Files & Locations

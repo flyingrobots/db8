@@ -30,7 +30,9 @@ Each milestone marker includes all tasks from prior milestones (e.g., M2 = M1+M2
 
 ## Quickstart
 
-- Requirements: Node 20+ (see `.nvmrc`). Docker optional for Postgres.
+- Requirements: Node 22+ (see `.nvmrc`). Docker optional for Postgres.
+  - Node 22 is a floor, not a preference: eslint-plugin-unicorn evaluates `Set.prototype.union` at module load, which does not exist before Node 22, so `npm run lint` dies with a TypeError before linting a single file.
+  - `npm install` relies on `.npmrc` setting `legacy-peer-deps=true`. That is required, not sloppiness — `eslint-plugin-react` peer-caps at eslint `^9.7` and npm refuses the tree without it.
 - Install: `npm install`
 - Optional Postgres (local): `npm run dev:db` (starts Postgres on 54329)
 - Tests: `npm test` (docker‑backed) or `npm run test:inner`
@@ -53,7 +55,7 @@ Each milestone marker includes all tasks from prior milestones (e.g., M2 = M1+M2
 - `bin/` — CLI (`db8`)
 - `db/` — Postgres schema, RPCs, RLS, and test helpers
 - `web/` — Next.js demo UI (room snapshot, journal viewer)
-- `docs/` — architecture, feature docs, guides
+- [`docs/`](docs/README.md) — architecture, feature docs, guides. Start at the [documentation map](docs/README.md); operations live in [Ops](docs/Ops.md).
 
 See also: docs/Verification.md
 

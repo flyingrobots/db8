@@ -8,7 +8,7 @@ This guide helps you run db8 locally and try the CLI and server.
 
 ## Prerequisites
 
-- Node 20+
+- Node 22+ (see `.nvmrc`). Eslint-plugin-unicorn evaluates `Set.prototype.union` at module load, which does not exist before Node 22, so `npm run lint` dies with a TypeError before linting a single file.
 - Docker (for local Postgres) if you want DB persistence
 
 ## Clone & bootstrap
@@ -43,6 +43,24 @@ load them in production.
 ```bash
 node server/rpc.js   # listens on :3000
 ```
+
+## Run the web app
+
+The UI is a separate Next.js app and a **separate origin** from the API.
+
+```bash
+npm --prefix web install
+npm --prefix web run dev      # http://localhost:3001
+```
+
+The browser calls the API cross-origin. `DB8_ALLOWED_ORIGINS` governs which
+origins are permitted; unset it defaults to `http://localhost:3001` and
+`http://127.0.0.1:3001`, so the command above works out of the box. Serve the
+web app from any other host or port and every request is blocked with no
+`Access-Control-Allow-Origin` — the room page renders a shell with no
+submission form. Set `DB8_ALLOWED_ORIGINS` to match, and point the browser at
+the API with `NEXT_PUBLIC_DB8_API_URL` if it is not on :3000. See
+[Ops](Ops.md).
 
 Environment flags (M2)
 
