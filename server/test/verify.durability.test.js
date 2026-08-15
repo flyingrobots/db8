@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { VerificationService } from '../services/VerificationService.js';
 import { createVerdictStore } from '../adapters/ConfiguredVerdictStore.js';
 import { PostgresVerdictStore } from '../adapters/PostgresVerdictStore.js';
+import { MemoryVerdictStore } from '../adapters/MemoryVerdictStore.js';
 import { VerifySubmit } from '../schemas.js';
 
 // A configured database that fails is a durability failure, not an invitation to
@@ -271,5 +272,52 @@ describe('a rule the database enforced is not an outage', () => {
     await expect(storeWith(new Error('Connection terminated')).submitVerdict({})).rejects.toThrow(
       /database_unavailable/
     );
+  });
+});
+
+describe('memory mode refuses new verdicts at capacity rather than evicting', () => {
+  // Eviction is not an option: dropping an older verdict makes the summary
+  // report fewer findings than were filed, silently. But an unbounded store is
+  // not an option either — client_nonce mints a new identity, so a client
+  // sending valid revisions can grow it until the process dies.
+  //
+  // So it fills up and says so, which is the same choice made for a database
+  // that cannot be reached: refuse the write rather than pretend.
+  const store = (capacity) =>
+    new MemoryVerdictStore({
+      verdicts: new Map(),
+      submissionIndex: indexWith([{ id: 'c1', term: TERM }]),
+      capacity
+    });
+
+  const at = (n) => ({ ...verdict(), client_nonce: `cap-${n}` });
+
+  it('accepts up to capacity', async () => {
+    const s = store(3);
+    for (let i = 0; i < 3; i += 1) expect((await s.submitVerdict(at(i))).id).toBeTruthy();
+  });
+
+  it('refuses the write that would exceed it', async () => {
+    const s = store(3);
+    for (let i = 0; i < 3; i += 1) await s.submitVerdict(at(i));
+    await expect(s.submitVerdict(at(99))).rejects.toThrow(/verdict_capacity_reached/);
+  });
+
+  // A repeat is not a new identity, so it must keep working: refusing it would
+  // break idempotency for a client retrying after a timeout.
+  it('still answers a repeat of an existing verdict when full', async () => {
+    const s = store(3);
+    const inputs = [at(0), at(1), at(2)];
+    for (const i of inputs) await s.submitVerdict(i);
+    const again = await s.submitVerdict(inputs[0]);
+    expect(again.id).toBeTruthy();
+  });
+
+  it('keeps every recorded verdict visible in the summary', async () => {
+    const s = store(3);
+    for (let i = 0; i < 3; i += 1) await s.submitVerdict(at(i));
+    await expect(s.submitVerdict(at(99))).rejects.toThrow();
+    const rows = await s.summary(verdict().round_id);
+    expect(rows.reduce((n, r) => n + r.total, 0)).toBe(3);
   });
 });

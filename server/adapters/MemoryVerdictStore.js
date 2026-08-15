@@ -41,9 +41,21 @@ const EMPTY_ROW = Object.freeze({
  * own, and the submission index it reads claims out of.
  */
 export class MemoryVerdictStore {
-  constructor({ verdicts, submissionIndex }) {
+  /**
+   * @param {object} opts
+   * @param {Map} opts.verdicts        verdict storage; must not evict
+   * @param {Map} opts.submissionIndex submissions, for reading claim terms back
+   * @param {number} [opts.capacity]   most distinct verdicts held before writes
+   *   are refused. Eviction is not an option — dropping an older verdict makes
+   *   the summary report fewer findings than were filed, silently — but neither
+   *   is growing without limit, because client_nonce mints a new identity and a
+   *   client sending valid revisions would exhaust the heap. So it fills up and
+   *   says so, the same choice made for a database that cannot be reached.
+   */
+  constructor({ verdicts, submissionIndex, capacity = 50_000 }) {
     this.verdicts = verdicts;
     this.submissionIndex = submissionIndex;
+    this.capacity = capacity;
   }
 
   async submitVerdict(input) {
@@ -54,8 +66,12 @@ export class MemoryVerdictStore {
 
     const key = verdictKey(input);
     const existing = this.verdicts.get(key);
-    // Idempotent on the same tuple, matching verify_submit's ON CONFLICT.
+    // Idempotent on the same tuple, matching verify_submit's ON CONFLICT. A
+    // repeat is not a new identity, so it is answered even when full: refusing
+    // it would break idempotency for a client retrying after a timeout.
     if (existing) return { id: existing.id, note: 'db_fallback' };
+
+    if (this.verdicts.size >= this.capacity) throw new Error('verdict_capacity_reached');
 
     const id = crypto.randomUUID();
     this.verdicts.set(key, { id, verdict: input.verdict, rationale: input.rationale });
