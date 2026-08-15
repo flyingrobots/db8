@@ -82,3 +82,11 @@ Example query using `jq`:
 ```bash
 tail -f server.log | jq 'select(.level == "error")'
 ```
+
+## Cross-origin access
+
+The browser app and the API are separate origins: `web` serves on :3001 and the API defaults to :3000. The API grants cross-origin access to an allow-list only.
+
+`DB8_ALLOWED_ORIGINS` — comma-separated origins permitted to call the API from a browser, e.g. `https://db8.example.com`. Unset, it defaults to the local dev web origins (`http://localhost:3001`, `http://127.0.0.1:3001`), which is the case that is otherwise broken out of the box.
+
+A deployment serving the app from any other host must set it. There is deliberately no wildcard: these endpoints accept a bearer token, and an open policy would let any page a participant has open call them with that participant's credentials.

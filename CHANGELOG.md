@@ -4,6 +4,12 @@ lastUpdated: 2026-08-11
 
 # Changelog
 
+## 2026-08-15 — Cross-origin access, and browser tests
+
+- **The web app could not reach the API from a browser.** `web` serves on :3001, the API defaults to :3000, `apiBase()` builds an absolute URL and there is no proxy — so every response was blocked with `No 'Access-Control-Allow-Origin' header is present`. `state` never loaded, and the room page rendered a shell with no submission form. Confirmed in Chromium, not inferred.
+- `server/cors.js` grants cross-origin access to an allow-list, configured with `DB8_ALLOWED_ORIGINS` (comma-separated) and defaulting to the local dev web origins. Never `*`: these endpoints accept a bearer token, and an open policy would let any page a participant has open call them with that participant's credentials. Responses carry `Vary: Origin` so a cache cannot serve one origin a header meant for another.
+- Browser tests for the claim term editor in `web/e2e/`, run with `npm run test:e2e` from `web/`. Deliberately not part of `npm test`, which runs on every push: requiring a browser engine there would make an ordinary commit depend on a 95MB install.
+
 ## 2026-08-11 — Claim terms wired through submissions and verdicts (breaking)
 
 - Submissions
