@@ -127,34 +127,39 @@ for (const mode of MODES) {
       expect(res.body.details[0].message).toMatch(/nesting depth/);
     });
 
-    it('rules on the attribution and the proposition as separate findings', async () => {
-      await request(app)
-        .post('/rpc/verify.submit')
-        .send({
-          round_id: roundId,
-          reporter_id: judgeId,
-          submission_id: submissionId,
-          claim_id: 'c1',
-          claim_path: '$',
-          verdict: 'false',
-          rationale: 'the study does not say that',
-          client_nonce: 'e2e-verdict-outer'
-        })
-        .expect(200);
+    // Asserted through a helper rather than .expect(200) so a failure reports the
+    // server's reason. A bare status assertion told us only "expected 200, got
+    // 400" when this flaked, which is not enough to diagnose anything.
+    const postVerdict = async (body, expected = 200) => {
+      const res = await request(app).post('/rpc/verify.submit').send(body);
+      expect(res.status, `verify.submit -> ${res.status}: ${JSON.stringify(res.body)}`).toBe(
+        expected
+      );
+      return res;
+    };
 
-      await request(app)
-        .post('/rpc/verify.submit')
-        .send({
-          round_id: roundId,
-          reporter_id: judgeId,
-          submission_id: submissionId,
-          claim_id: 'c1',
-          claim_path: '$.body',
-          verdict: 'true',
-          rationale: 'the study says it, and it holds',
-          client_nonce: 'e2e-verdict-inner'
-        })
-        .expect(200);
+    it('rules on the attribution and the proposition as separate findings', async () => {
+      await postVerdict({
+        round_id: roundId,
+        reporter_id: judgeId,
+        submission_id: submissionId,
+        claim_id: 'c1',
+        claim_path: '$',
+        verdict: 'false',
+        rationale: 'the study does not say that',
+        client_nonce: 'e2e-verdict-outer'
+      });
+
+      await postVerdict({
+        round_id: roundId,
+        reporter_id: judgeId,
+        submission_id: submissionId,
+        claim_id: 'c1',
+        claim_path: '$.body',
+        verdict: 'true',
+        rationale: 'the study says it, and it holds',
+        client_nonce: 'e2e-verdict-inner'
+      });
 
       const res = await request(app).get(`/verify/summary?round_id=${roundId}`).expect(200);
       const mine = res.body.rows.filter((r) => r.submission_id === submissionId);
