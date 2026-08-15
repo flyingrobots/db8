@@ -105,6 +105,15 @@ test.describe('the claim term editor', () => {
     await page.getByPlaceholder('reduces').fill('reduces');
     await page.getByPlaceholder('productivity').fill('productivity');
     await expect(page.getByText('$: subject is empty')).toBeHidden();
+
+    // The message disappearing is not the same as being able to submit; a
+    // regression could clear the warning and leave the button disabled.
+    // Content and two citations are the other gates on it.
+    await page.getByPlaceholder('Write your argument...').fill('An argument.');
+    const urls = page.getByPlaceholder('URL');
+    await urls.nth(0).fill('https://example.com/a');
+    await urls.nth(1).fill('https://example.com/b');
+    await expect(submit).toBeEnabled();
   });
 
   // The editor's rule must agree with the server's, or an author is told their

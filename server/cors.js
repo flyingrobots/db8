@@ -21,25 +21,19 @@ const ALLOWED_METHODS = ['GET', 'POST', 'OPTIONS'];
  * @param {string} raw comma-separated origin list
  * @returns {string[]}
  */
-export function parseOrigins(raw) {
-  return String(raw ?? '')
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean);
-}
-
 /**
  * Express middleware granting cross-origin access to configured origins only.
  *
  * @param {object} [opts]
- * @param {string[]} [opts.origins] allow-list. Defaults to DB8_ALLOWED_ORIGINS,
- *   and to the local dev web origins when that is unset — development is the
- *   case that is broken without this, and a deployment serving the app from
- *   another host must say so explicitly rather than inherit a permissive default.
+ * @param {string[]} [opts.origins] allow-list, from the built configuration —
+ *   this module reads no environment of its own, so a deployment supplying its
+ *   own SecretSource configures CORS the same way it configures everything else.
+ *   Empty falls back to the local dev web origins: development is the case that
+ *   is broken without this, and a deployment serving the app from another host
+ *   must say so explicitly rather than inherit a permissive default.
  */
-export function cors({ origins } = {}) {
-  const configured = origins ?? parseOrigins(process.env.DB8_ALLOWED_ORIGINS);
-  const allowed = new Set(configured.length > 0 ? configured : DEFAULT_DEV_ORIGINS);
+export function cors({ origins = [] } = {}) {
+  const allowed = new Set(origins.length > 0 ? origins : DEFAULT_DEV_ORIGINS);
 
   return function corsMiddleware(req, res, next) {
     const origin = req.headers.origin;

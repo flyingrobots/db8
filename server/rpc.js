@@ -29,7 +29,7 @@ import { createEventsRouter } from './routes/events.js';
 
 const app = express();
 const config = loadConfig();
-app.use(cors());
+app.use(cors({ origins: config.allowedOrigins }));
 app.use(express.json());
 app.use(rateLimitStub({ enforce: true }));
 app.use(express.static('public'));

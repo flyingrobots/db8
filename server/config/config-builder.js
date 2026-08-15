@@ -1,5 +1,12 @@
 import { EnvSecretSource } from './secret-source.js';
 
+function parseOrigins(raw) {
+  return String(raw ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+}
+
 export class ConfigBuilder {
   constructor(secretSource = new EnvSecretSource()) {
     this.s = secretSource;
@@ -48,7 +55,10 @@ export class ConfigBuilder {
       enforceAuthorBinding: this._bool('ENFORCE_AUTHOR_BINDING', false),
       enforceRateLimit: this._bool('ENFORCE_RATELIMIT', false),
       submitWindowSec: this._int('SUBMIT_WINDOW_SEC', 300),
-      continueWindowSec: this._int('CONTINUE_WINDOW_SEC', 30)
+      continueWindowSec: this._int('CONTINUE_WINDOW_SEC', 30),
+      // Origins allowed to call the API from a browser. Empty means "use the
+      // local dev defaults"; see server/cors.js.
+      allowedOrigins: parseOrigins(this._str('DB8_ALLOWED_ORIGINS', ''))
     };
     return Object.freeze(cfg);
   }

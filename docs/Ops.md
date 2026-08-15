@@ -1,3 +1,7 @@
+---
+lastUpdated: 2026-08-15
+---
+
 # Operational Runbook: DB8
 
 ## 1. Dead Letter Queue (DLQ) Recovery

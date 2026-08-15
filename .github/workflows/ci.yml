@@ -128,6 +128,35 @@ jobs:
             echo "pgTAP test script not found, skipping"
           fi
 
+  browser-tests:
+    # Kept out of `npm test` because the pre-push hook runs that on every push
+    # and a browser engine is a 95MB install. CI is where it belongs: without
+    # this job the browser-access regression these tests cover could recur while
+    # every required check stayed green.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm --prefix web ci
+      - name: Install Chromium
+        run: npm --prefix web exec -- playwright install --with-deps chromium
+      - name: Browser tests
+        # Playwright starts the API and the web app itself; see
+        # web/playwright.config.js.
+        run: npm --prefix web run test:e2e
+      - name: Upload trace on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: web/test-results/
+          retention-days: 7
+
   conventional-commits:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
