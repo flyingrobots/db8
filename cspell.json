@@ -156,6 +156,8 @@
     "SQLSTATE",
     "resends",
     "setof",
+    "recanonicalizes",
+    "fixednonce",
     "unvalidated",
     "factive",
     "cutover"

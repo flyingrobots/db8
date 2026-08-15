@@ -97,10 +97,10 @@ describe('the CLI and the server canonicalize identically', () => {
     }
   });
 
-  // The server rejects an unrecognised mode; the CLI silently took the broken
+  // The server rejects an unrecognized mode; the CLI silently took the broken
   // branch for anything that was not exactly 'jcs', so a one-character typo
   // produced content-erasing digests.
-  it('rejects an unrecognised mode rather than falling into a branch', () => {
+  it('rejects an unrecognized mode rather than falling into a branch', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'db8-canon-bad-'));
     const file = path.join(dir, 'draft.json');
     try {
