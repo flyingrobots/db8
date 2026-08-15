@@ -72,8 +72,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (!pool) return;
-  await pool.query('delete from rooms where id = $1', [seed.roomId]);
-  await pool.end();
+  // Guarded separately: if beforeAll threw after the pool was made but before
+  // the fixture finished, `seed` is undefined and cleaning up would raise a
+  // TypeError that buries the fixture error which actually caused the failure.
+  try {
+    if (seed) await pool.query('delete from rooms where id = $1', [seed.roomId]);
+  } finally {
+    await pool.end();
+  }
 });
 
 const adapters = [
@@ -174,6 +180,38 @@ for (const adapter of adapters) {
       expect(inner.true_count).toBeGreaterThanOrEqual(1);
     });
 
+    // The port declares idempotency on (round, reporter, submission, claim, path,
+    // nonce). The nonce is what distinguishes a repeat from a revision: a judge
+    // who reconsiders sends the same tuple with a new nonce, and losing that
+    // silently discards their revised ruling.
+    //
+    // The previous idempotency test used one nonce for both calls, so it could
+    // not tell the two adapters apart. They disagreed.
+    it('treats a new nonce on the same tuple as a distinct verdict', async () => {
+      const shared = {
+        claim_path: '$',
+        claim_id: 'c1'
+      };
+      const first = await store.submitVerdict(
+        verdictInput({ ...shared, verdict: 'false', client_nonce: uniqueNonce() })
+      );
+      const revised = await store.submitVerdict(
+        verdictInput({ ...shared, verdict: 'true', client_nonce: uniqueNonce() })
+      );
+      expect(revised.id).not.toBe(first.id);
+    });
+
+    // Postgres cannot produce a row where total exceeds the four columns —
+    // verify_submit constrains the verdict value — so the memory adapter must
+    // not either.
+    it('keeps total equal to the sum of the counted columns', async () => {
+      await store.submitVerdict(verdictInput({ client_nonce: uniqueNonce() }));
+      for (const row of await store.summary(ids.roundId)) {
+        const counted = row.true_count + row.false_count + row.unclear_count + row.needs_work_count;
+        expect(counted, `total ${row.total} vs columns ${counted}`).toBe(row.total);
+      }
+    });
+
     it('returns summary rows carrying every counted field', async () => {
       await store.submitVerdict(verdictInput({ client_nonce: uniqueNonce() }));
       const [row] = await store.summary(ids.roundId);
@@ -192,15 +230,20 @@ for (const adapter of adapters) {
     });
 
     it('orders summary rows by submission, claim, then path', async () => {
-      const rows = await store.summary(ids.roundId);
-      const keys = rows.map((r) => [r.submission_id, r.claim_id || '', r.claim_path || '']);
-      const sorted = [...keys].sort(
-        (a, b) =>
-          String(a[0]).localeCompare(String(b[0])) ||
-          a[1].localeCompare(b[1]) ||
-          a[2].localeCompare(b[2])
+      // Asserted against an explicit expectation rather than by re-sorting the
+      // adapter's own output with the adapter's own comparator, which for the
+      // memory adapter could not fail whatever it returned.
+      await store.submitVerdict(
+        verdictInput({ claim_path: '$.body', client_nonce: uniqueNonce() })
       );
-      expect(keys).toEqual(sorted);
+      await store.submitVerdict(verdictInput({ claim_path: '$', client_nonce: uniqueNonce() }));
+
+      const paths = (await store.summary(ids.roundId))
+        .filter((r) => r.submission_id === ids.submissionId && r.claim_path)
+        .map((r) => r.claim_path);
+
+      // '$' sorts before '$.body': shorter prefix first.
+      expect(paths).toEqual(['$', '$.body']);
     });
 
     it('returns nothing for a round with no verdicts', async () => {

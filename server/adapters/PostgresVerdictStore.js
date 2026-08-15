@@ -59,7 +59,12 @@ export class PostgresVerdictStore {
         input.claim_path ?? null
       ]
     );
-    return { id: r.rows[0].id };
+    // verify_submit is a scalar select, so one row is the expected shape. A
+    // future signature returning setof or void would otherwise throw a raw
+    // TypeError out of a method the port promises returns {id}.
+    const id = r.rows[0]?.id;
+    if (!id) throw new Error('verify_submit returned no id');
+    return { id };
   }
 
   async summary(roundId) {

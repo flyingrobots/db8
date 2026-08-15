@@ -26,10 +26,10 @@ export class VerificationService {
    * @throws {Error} claim_not_found     the claim_id names nothing in the submission
    * @throws {Error} claim_path_not_found the path names no node in that term
    */
-  async assertPathResolves(input) {
+  async assertPathResolves(store, input) {
     if (!input.claim_path) return;
 
-    const term = await this.store.claimTerm(input.submission_id, input.claim_id);
+    const term = await store.claimTerm(input.submission_id, input.claim_id);
 
     // No term means the claim_id names nothing here. Accepting the path anyway
     // files a verdict against a claim that does not exist, and the summary then
@@ -42,8 +42,13 @@ export class VerificationService {
   }
 
   async submitVerdict(input) {
-    await this.assertPathResolves(input);
-    return this.store.submitVerdict(input);
+    // One store for the whole operation. Reading the term and writing the
+    // verdict through separately-resolved delegates would let a pool swap
+    // between them validate against one and persist through the other, and
+    // verify_submit does not re-check the path.
+    const store = this.store.forRequest?.() ?? this.store;
+    await this.assertPathResolves(store, input);
+    return store.submitVerdict(input);
   }
 
   async getSummary(roundId) {

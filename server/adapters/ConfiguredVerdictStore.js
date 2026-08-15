@@ -1,3 +1,4 @@
+import { VERDICT_STORE_METHODS } from '../ports/VerdictStore.js';
 import { PostgresVerdictStore } from './PostgresVerdictStore.js';
 import { MemoryVerdictStore } from './MemoryVerdictStore.js';
 
@@ -24,17 +25,25 @@ export class ConfiguredVerdictStore {
     return this.dbRef.pool ? this.durable : this.memory;
   }
 
-  submitVerdict(input) {
-    return this.delegate.submitVerdict(input);
+  /**
+   * A delegate pinned for the length of one operation.
+   *
+   * VerificationService reads a claim's term and then writes the verdict. If the
+   * pool is swapped between those two calls the path is validated against one
+   * store and persisted through another, and verify_submit does not re-check the
+   * path — so the write would land unvalidated.
+   */
+  forRequest() {
+    return this.delegate;
   }
+}
 
-  summary(roundId) {
-    return this.delegate.summary(roundId);
-  }
-
-  claimTerm(submissionId, claimId) {
-    return this.delegate.claimTerm(submissionId, claimId);
-  }
+// Generated from the port's declared surface, so adding a method to the port
+// cannot leave this wrapper silently behind.
+for (const method of VERDICT_STORE_METHODS) {
+  ConfiguredVerdictStore.prototype[method] = function forward(...args) {
+    return this.delegate[method](...args);
+  };
 }
 
 /**

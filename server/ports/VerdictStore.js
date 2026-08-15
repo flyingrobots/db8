@@ -47,8 +47,18 @@
  *   (round, reporter, submission, claim, path, nonce): submitting the same
  *   tuple twice returns the same id rather than a second row. A verdict on the
  *   attribution and a verdict on the proposition it attributes are *different*
- *   findings, so the path is part of that identity.
- *   Throws `submission_not_found` when the submission is unknown.
+ *   findings, so the path is part of that identity — and so is the nonce, which
+ *   is what separates a repeat from a revision.
+ *
+ *   Rejects a verdict value outside the four listed above.
+ *
+ *   KNOWN DIVERGENCE, not yet resolved: the adapters name the unknown-submission
+ *   rejection differently. Memory raises `submission_not_found`. Postgres raises
+ *   `submission_round_mismatch`, and does so both when the submission does not
+ *   exist and when it belongs to another round, because verify_submit checks the
+ *   pair in one statement. Aligning them means renaming a client-facing error,
+ *   which is a product decision rather than a refactor, so the contract suite
+ *   deliberately does not assert a name here.
  *
  * @property {(roundId: string) => Promise<SummaryRow[]>} summary
  *   Verdict counts for a round, one row per (submission, claim, path), ordered

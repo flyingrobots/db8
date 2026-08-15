@@ -3,15 +3,25 @@ import crypto from 'node:crypto';
 // A JSON tuple, not a delimiter-joined string. claim_id is author-supplied and
 // may contain the delimiter: "source:claim" shifted every field after it when
 // the key was split back apart, corrupting the summary rows.
+// The nonce is part of the identity, matching verify_submit's ON CONFLICT and
+// the rule the port states. It is what separates a repeat from a revision: a
+// judge who reconsiders resends the same tuple with a new nonce, and dropping it
+// returned the original id and discarded the revised ruling.
 function verdictKey(input) {
   return JSON.stringify([
     input.round_id,
     input.reporter_id,
     input.submission_id,
     input.claim_id ?? null,
-    input.claim_path ?? null
+    input.claim_path ?? null,
+    input.client_nonce ?? null
   ]);
 }
+
+// Postgres constrains this column, so a value outside the four cannot reach the
+// aggregate there. Rejecting it here keeps the adapters answering alike instead
+// of producing a row whose total exceeds the columns that make it up.
+const VERDICTS = Object.freeze(['true', 'false', 'unclear', 'needs_work']);
 
 const EMPTY_ROW = Object.freeze({
   true_count: 0,
@@ -40,6 +50,7 @@ export class MemoryVerdictStore {
     if (this.submissionIndex && !this.submissionIndex.has(input.submission_id)) {
       throw new Error('submission_not_found');
     }
+    if (!VERDICTS.includes(input.verdict)) throw new Error('invalid_verdict');
 
     const key = verdictKey(input);
     const existing = this.verdicts.get(key);
@@ -73,8 +84,7 @@ export class MemoryVerdictStore {
 
       const row = rows.get(groupKey);
       row.total += 1;
-      const field = `${value.verdict}_count`;
-      if (field in row) row[field] += 1;
+      row[`${value.verdict}_count`] += 1;
     }
 
     return [...rows.values()].sort(

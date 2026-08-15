@@ -65,7 +65,10 @@ function requireDbInProduction(req, res, next) {
 const memSubmissions = new LRUMap(1000);
 const memSubmissionIndex = new LRUMap(1000);
 const memFlags = new LRUMap(1000);
-const memVerifications = new LRUMap(2000);
+// Deliberately unbounded, unlike the caches around it. An LRU would evict older
+// verdicts once a round exceeded its limit and the summary would quietly report
+// fewer findings than were filed.
+const memVerifications = new Map();
 const memRooms = new LRUMap(100);
 const memRoomNonces = new LRUMap(500);
 const memVotes = new LRUMap(1000);

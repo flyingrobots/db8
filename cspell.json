@@ -154,6 +154,8 @@
     "reimplementation",
     "arities",
     "SQLSTATE",
+    "resends",
+    "setof",
     "unvalidated",
     "factive",
     "cutover"

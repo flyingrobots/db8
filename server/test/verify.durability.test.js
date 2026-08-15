@@ -60,7 +60,7 @@ describe('a configured database that fails does not silently degrade', () => {
     expect(verdicts.size).toBe(0);
   });
 
-  it('surfaces the failure for a path verdict the same way', async () => {
+  it('surfaces the failure from the claim-term lookup a path verdict performs', async () => {
     const service = new VerificationService({
       store: createVerdictStore({
         dbRef: { pool: failingPool() },
@@ -72,6 +72,32 @@ describe('a configured database that fails does not silently degrade', () => {
     await expect(service.submitVerdict(verdict({ claim_path: '$.body' }))).rejects.toThrow(
       /database_unavailable/
     );
+  });
+
+  // The case above never reaches the write: assertPathResolves calls claimTerm
+  // first and that is what fails. This one lets the lookup succeed so the
+  // failure has to come from submitVerdict itself.
+  it('surfaces the failure from the write when the lookup succeeded', async () => {
+    let call = 0;
+    const pool = {
+      query: async () => {
+        call += 1;
+        if (call === 1) return { rows: [{ term: TERM }] };
+        throw new Error('connection reset');
+      }
+    };
+    const service = new VerificationService({
+      store: createVerdictStore({
+        dbRef: { pool },
+        verdicts: new Map(),
+        submissionIndex: indexWith([{ id: 'c1', term: TERM }])
+      })
+    });
+
+    await expect(service.submitVerdict(verdict({ claim_path: '$.body' }))).rejects.toThrow(
+      /database_unavailable/
+    );
+    expect(call, 'the write should have been attempted').toBe(2);
   });
 
   it('surfaces the failure on the summary read too', async () => {
@@ -222,14 +248,17 @@ describe('a rule the database enforced is not an outage', () => {
       }
     });
 
+  // Asserted on identity, not the message: a replacement error carrying the same
+  // text would pass while losing `code`, `severity`, and everything a caller
+  // needs to tell one rejection from another.
   it('surfaces a business rule rejection unchanged', async () => {
-    const store = storeWith(serverError('round_not_verifiable', '22023'));
-    await expect(store.submitVerdict({})).rejects.toThrow(/round_not_verifiable/);
+    const original = serverError('round_not_verifiable', '22023');
+    await expect(storeWith(original).submitVerdict({})).rejects.toBe(original);
   });
 
   it('surfaces a permission rejection unchanged', async () => {
-    const store = storeWith(serverError('reporter_role_denied', '42501'));
-    await expect(store.submitVerdict({})).rejects.toThrow(/reporter_role_denied/);
+    const original = serverError('reporter_role_denied', '42501');
+    await expect(storeWith(original).submitVerdict({})).rejects.toBe(original);
   });
 
   it('still reports a genuine connection failure as unavailable', async () => {
