@@ -11,6 +11,8 @@ import { MemoryVerdictStore } from './MemoryVerdictStore.js';
  * Answering from memory instead would tell a judge their verdict was recorded
  * when it was only held in a process about to restart.
  *
+ * Rationale and rejected alternatives: docs/adr/0001-persistence-chosen-by-configuration.md
+ *
  * The decision is made per call rather than at construction because
  * server/rpc.js swaps the pool at runtime (__setDbPool), and tests rely on that.
  */

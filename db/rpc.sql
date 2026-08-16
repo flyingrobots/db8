@@ -31,8 +31,16 @@ BEGIN
 
   v_submit_deadline := v_now + (v_submit_minutes::bigint * 60);
 
-  INSERT INTO rooms (title, client_nonce)
-  VALUES (NULLIF(p_topic, ''), v_client_nonce)
+  -- config is persisted, not merely read. It is the only place a room can
+  -- declare attribution_mode, max_fetches_per_round, or a strict predicate
+  -- vocabulary, and those three features were inert while this INSERT wrote
+  -- only (title, client_nonce): every room had config = '{}'.
+  --
+  -- On conflict the stored config is kept rather than overwritten, matching the
+  -- title rule directly below it: re-entering with the same nonce is a retry,
+  -- not a reconfiguration.
+  INSERT INTO rooms (title, config, client_nonce)
+  VALUES (NULLIF(p_topic, ''), COALESCE(p_cfg, '{}'::jsonb), v_client_nonce)
   ON CONFLICT (client_nonce)
     DO UPDATE SET title = COALESCE(rooms.title, EXCLUDED.title)
   RETURNING id INTO v_room_id;
@@ -902,8 +910,15 @@ BEGIN
 
   INSERT INTO scores (round_id, judge_id, participant_id, e, r, c, v, y, client_nonce)
   VALUES (p_round_id, p_judge_id, p_participant_id, p_e, p_r, p_c, p_v, p_y, COALESCE(p_client_nonce, gen_random_uuid()::text))
-  ON CONFLICT (round_id, judge_id, participant_id, client_nonce)
-  DO UPDATE SET e = EXCLUDED.e, r = EXCLUDED.r, c = EXCLUDED.c, v = EXCLUDED.v, y = EXCLUDED.y
+  -- Conflict target must match the table's uniqueness key exactly. The nonce is
+  -- not in it: a judge resubmitting revises their score rather than adding a
+  -- second one that the aggregate would average in and count as another judge.
+  -- created_at is refreshed so the dedup in schema.sql's upgrade block, which
+  -- orders by (created_at, id), agrees with which row this considers current.
+  ON CONFLICT (round_id, judge_id, participant_id)
+  DO UPDATE SET e = EXCLUDED.e, r = EXCLUDED.r, c = EXCLUDED.c, v = EXCLUDED.v,
+                y = EXCLUDED.y, client_nonce = EXCLUDED.client_nonce,
+                created_at = now()
   RETURNING id INTO v_id;
 
   PERFORM admin_audit_log_write(

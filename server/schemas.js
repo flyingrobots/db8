@@ -62,14 +62,37 @@ export const ContinueVote = z.object({
   client_nonce: z.string().min(8)
 });
 
+// Room configuration, as stored in `rooms.config`.
+//
+// Every key here has a reader somewhere else, and each was unreachable until
+// `room_create` began persisting this object at all: Zod strips undeclared
+// properties, so a key absent from this schema could never arrive even once the
+// SQL was fixed. Adding a key here without a reader is how the column starts
+// collecting fiction, so each one names the code that consumes it.
+export const RoomConfig = z
+  .object({
+    // Seats the roster and sets round 0's deadline — db/rpc.sql room_create.
+    participant_count: z.number().int().min(1).max(64).optional(),
+    submit_minutes: z.number().int().min(1).max(1440).optional(),
+    // Masks author identity in submissions_view — db/rpc.sql.
+    attribution_mode: z.enum(['open', 'masked']).optional(),
+    // Per-round fetch budget — server/routes/research.js.
+    max_fetches_per_round: z.number().int().min(0).max(1000).optional(),
+    // Strict predicate vocabulary — validateTerm(term, { predicates }).
+    // Same snake_case shape the validator enforces on a claim's predicate, so a
+    // room cannot declare a vocabulary containing predicates no claim could use.
+    predicates: z
+      .array(z.string().regex(/^[a-z][a-z0-9_]*$/, 'predicate must be snake_case'))
+      .min(1)
+      .optional(),
+    // Per-tag reputation — db/rpc.sql reputation_update_round.
+    tags: z.array(z.string().min(1)).optional()
+  })
+  .strict();
+
 export const RoomCreate = z.object({
   topic: z.string().min(3),
-  cfg: z
-    .object({
-      participant_count: z.number().int().min(1).max(64).optional(),
-      submit_minutes: z.number().int().min(1).max(1440).optional()
-    })
-    .optional(),
+  cfg: RoomConfig.optional(),
   client_nonce: z.string().min(8).optional()
 });
 
