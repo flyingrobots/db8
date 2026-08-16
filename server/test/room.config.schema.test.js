@@ -29,6 +29,7 @@ describe('room configuration survives the schema boundary', () => {
   it('rejects a key nothing reads rather than silently dropping it', () => {
     // .strict() so a typo is an error a caller can see, not a setting that
     // vanishes and appears not to have worked.
+    // cspell:disable-next-line -- a deliberate typo; that is the whole test
     expect(() => RoomConfig.parse({ atribution_mode: 'masked' })).toThrow();
   });
 
