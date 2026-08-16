@@ -160,8 +160,42 @@ CREATE TABLE IF NOT EXISTS scores (
   y               integer     NOT NULL CHECK (y >= 0 AND y <= 100), -- Yield
   client_nonce    text        NOT NULL,
   created_at      timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (round_id, judge_id, participant_id, client_nonce)
+  -- One score per judge per participant per round. The nonce is deliberately
+  -- NOT part of this key, for the same reason it was removed from final_votes:
+  -- with it, a judge resubmitting under a fresh nonce inserted a second row and
+  -- view_score_aggregates averaged both and counted them as two judges.
+  UNIQUE (round_id, judge_id, participant_id)
 );
+
+-- Upgrade path for databases created before the nonce left the scores key.
+-- Same shape as the final_votes upgrade above and for the same reasons: an
+-- ACCESS EXCLUSIVE lock so a concurrent insert cannot slip a duplicate in
+-- between the delete and the constraint, and dedup keeps the most recent score
+-- per (round, judge, participant), matching what score_submit's DO UPDATE does.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'scores'::regclass
+       AND contype = 'u'
+       AND pg_get_constraintdef(oid) = 'UNIQUE (round_id, judge_id, participant_id, client_nonce)'
+  ) THEN
+    LOCK TABLE scores IN ACCESS EXCLUSIVE MODE;
+    DELETE FROM scores s
+     WHERE EXISTS (
+       SELECT 1 FROM scores newer
+        WHERE newer.round_id = s.round_id
+          AND newer.judge_id = s.judge_id
+          AND newer.participant_id = s.participant_id
+          AND (newer.created_at, newer.id) > (s.created_at, s.id)
+     );
+    ALTER TABLE scores
+      DROP CONSTRAINT scores_round_id_judge_id_participant_id_client_nonce_key;
+    ALTER TABLE scores
+      ADD CONSTRAINT scores_round_id_judge_id_participant_id_key
+      UNIQUE (round_id, judge_id, participant_id);
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_scores_round ON scores (round_id);
 CREATE INDEX IF NOT EXISTS idx_scores_participant ON scores (participant_id);

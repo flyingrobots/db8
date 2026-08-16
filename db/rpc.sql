@@ -910,8 +910,15 @@ BEGIN
 
   INSERT INTO scores (round_id, judge_id, participant_id, e, r, c, v, y, client_nonce)
   VALUES (p_round_id, p_judge_id, p_participant_id, p_e, p_r, p_c, p_v, p_y, COALESCE(p_client_nonce, gen_random_uuid()::text))
-  ON CONFLICT (round_id, judge_id, participant_id, client_nonce)
-  DO UPDATE SET e = EXCLUDED.e, r = EXCLUDED.r, c = EXCLUDED.c, v = EXCLUDED.v, y = EXCLUDED.y
+  -- Conflict target must match the table's uniqueness key exactly. The nonce is
+  -- not in it: a judge resubmitting revises their score rather than adding a
+  -- second one that the aggregate would average in and count as another judge.
+  -- created_at is refreshed so the dedup in schema.sql's upgrade block, which
+  -- orders by (created_at, id), agrees with which row this considers current.
+  ON CONFLICT (round_id, judge_id, participant_id)
+  DO UPDATE SET e = EXCLUDED.e, r = EXCLUDED.r, c = EXCLUDED.c, v = EXCLUDED.v,
+                y = EXCLUDED.y, client_nonce = EXCLUDED.client_nonce,
+                created_at = now()
   RETURNING id INTO v_id;
 
   PERFORM admin_audit_log_write(
