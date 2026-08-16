@@ -158,6 +158,8 @@
     "setof",
     "xact",
     "hashtext",
+    "pronamespace",
+    "regnamespace",
     "unvalidated",
     "factive",
     "cutover"

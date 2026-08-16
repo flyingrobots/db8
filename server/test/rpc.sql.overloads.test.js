@@ -45,19 +45,26 @@ describe('rpc.sql leaves no stale function overloads', () => {
   });
 
   it('drops the pre-claim_path verify_submit when rpc.sql is applied over it', async () => {
-    // Everything happens inside one connection's transaction and is rolled
-    // back, because Vitest runs test files in parallel against a single
-    // database: creating a seven-argument verify_submit globally would make
-    // concurrent verdict tests fail with "function ... is not unique", and
-    // re-applying rpc.sql would churn objects other tests are using.
+    // Isolated into a scratch schema, not merely wrapped in a transaction.
+    //
+    // Vitest runs test files in parallel against ONE database. Creating a
+    // seven-argument verify_submit in `public` makes concurrent verdict tests
+    // fail with "function ... is not unique", and holding DDL locks on shared
+    // objects deadlocks against their DML. A transaction alone does not help:
+    // it is what *holds* the locks.
+    //
+    // With search_path pointing only at the scratch schema, every unqualified
+    // DROP and CREATE below resolves there, so this test cannot touch an object
+    // any other test can see. The rollback removes the schema.
+    //
+    // Anything added here that applies DDL should do the same rather than reach
+    // for a lock: isolation removes the contention instead of ordering it.
     const client = await pool.connect();
+    const scratch = `db8_ddl_${process.pid}_${Date.now().toString(36)}`;
     try {
       await client.query('BEGIN');
-      // Serializes against any other runtime DDL applier. db/rpc.sql and
-      // db/rls.sql take rooms and rounds in opposite orders, so two appliers
-      // running concurrently deadlock. Anything added here that applies DDL
-      // must take this same lock.
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['db8:schema-ddl']);
+      await client.query(`CREATE SCHEMA ${scratch}`);
+      await client.query(`SET LOCAL search_path = ${scratch}`);
 
       // Seed the shape an existing deployment would be carrying.
       await client.query(`
@@ -69,23 +76,26 @@ describe('rpc.sql leaves no stale function overloads', () => {
 
       // Matched on arity, not on the identity string: that string carries
       // parameter names, so comparing it to a bare type list never matches.
-      const seeded = await client.query(
-        `SELECT count(*)::int AS n FROM pg_proc WHERE proname = 'verify_submit' AND pronargs = 7`
-      );
-      expect(seeded.rows[0].n, 'legacy overload should be seeded').toBe(1);
+      // Scoped to the scratch schema so `public` cannot influence the result.
+      const countArities = async () => {
+        const r = await client.query(
+          `SELECT pronargs FROM pg_proc
+            WHERE proname = 'verify_submit'
+              AND pronamespace = $1::regnamespace
+            ORDER BY pronargs`,
+          [scratch]
+        );
+        return r.rows.map((row) => row.pronargs);
+      };
 
-      // Only the verify_submit section of the real file, not all 1100 lines.
-      // Applying the whole thing took AccessExclusive on every view it
-      // replaces, which deadlocked against ordinary DML running in parallel
-      // test files - the advisory lock above only serializes DDL against DDL.
-      // Extracting the section keeps the invariant honest: it still reads the
-      // committed rpc.sql and still fails if the DROP is removed from it.
+      expect(await countArities(), 'legacy overload should be seeded').toEqual([7]);
+
+      // Only the verify_submit section of the real file, read out of the
+      // committed db/rpc.sql so this test cannot drift from what it asserts
+      // about. Applying all 1100 lines would replace every view in the schema.
       await client.query(verifySubmitSection());
 
-      const after = await client.query(
-        `SELECT pronargs FROM pg_proc WHERE proname = 'verify_submit' ORDER BY pronargs`
-      );
-      const arities = after.rows.map((r) => r.pronargs);
+      const arities = await countArities();
       expect(arities, `expected one verify_submit, found ${arities.join(', ')}`).toEqual([8]);
     } finally {
       await client.query('ROLLBACK');
