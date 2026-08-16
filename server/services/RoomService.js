@@ -36,8 +36,14 @@ export class RoomService {
           .catch((e) => {
             throw new Error(`view_continue_tally: ${e.message}`);
           });
+        // round_id is selected so the row can be matched to the round being
+        // reported. Without it this query cannot be scoped at all, and
+        // view_final_tally groups by (round_id, room_id) — so a room with final
+        // votes on more than one round served an arbitrary round's result.
         const finalTallyRes = await this.pool
-          .query('SELECT approves, rejects FROM view_final_tally WHERE room_id = $1', [roomId])
+          .query('SELECT round_id, approves, rejects FROM view_final_tally WHERE room_id = $1', [
+            roomId
+          ])
           .catch((e) => {
             throw new Error(`view_final_tally: ${e.message}`);
           });
@@ -68,7 +74,8 @@ export class RoomService {
         const roundRow = roomRes.rows[0];
         if (roundRow) {
           const tallyRow = tallyRes.rows.find((r) => r.round_id === roundRow.round_id) || {};
-          const finalTallyRow = finalTallyRes.rows[0] || {};
+          const finalTallyRow =
+            finalTallyRes.rows.find((r) => r.round_id === roundRow.round_id) || {};
 
           const transcript = submissionsRes.rows.map((row) => ({
             submission_id: row.id,
