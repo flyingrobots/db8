@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
-import canonicalizePkg from 'canonicalize';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import { z } from 'zod';
+import { resolveCanonicalizer } from '../server/canon-mode.js';
 import { SubmissionIn } from '../server/schemas.js';
 
 const EXIT = {
@@ -163,13 +163,14 @@ async function main() {
     },
     readJson: async (p) => JSON.parse(await fsp.readFile(p, 'utf8')),
     ensureDir: async (p) => await fsp.mkdir(p, { recursive: true }),
-    canonicalize: (value) => {
-      const mode = String(
-        process.env.DB8_CANON_MODE || process.env.CANON_MODE || 'jcs'
-      ).toLowerCase();
-      if (mode === 'jcs') return canonicalizePkg(value);
-      return JSON.stringify(value, Object.keys(value).sort());
-    },
+    // Imported, like SubmissionIn below and for the same reason. The copy that
+    // used to live here used a replacer array, which is an allow-list applied at
+    // every depth — nested keys were deleted, so a submission's claims and
+    // citations canonicalized to `{}` and the digest disagreed with the server's.
+    canonicalize: (value) =>
+      resolveCanonicalizer(process.env.DB8_CANON_MODE || process.env.CANON_MODE, {
+        varName: 'DB8_CANON_MODE'
+      })(value),
     sha256Hex: (s) => crypto.createHash('sha256').update(s).digest('hex'),
     // Imported, not restated: a second copy of this schema drifts from the
     // server the moment either changes, and the CLI and server then validate

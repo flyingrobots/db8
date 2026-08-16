@@ -162,7 +162,9 @@
     "regnamespace",
     "unvalidated",
     "factive",
-    "cutover"
+    "cutover",
+    "recanonicalizes",
+    "fixednonce"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
