@@ -34,5 +34,9 @@ export function resolveCanonicalizer(raw, { varName = 'CANON_MODE' } = {}) {
     .trim();
   if (mode === '' || mode === 'jcs') return canonicalizeJCS;
   if (mode === 'sorted') return canonicalizeSorted;
-  throw new Error(`Invalid ${varName}: '${raw}'. Allowed: ${CANON_MODES.join('|')}`);
+  const err = new Error(`Invalid ${varName}: '${raw}'. Allowed: ${CANON_MODES.join('|')}`);
+  // Tagged so a caller can tell permanent misconfiguration from a transient
+  // fault, rather than matching on the message.
+  err.code = 'invalid_canon_mode';
+  throw err;
 }

@@ -36,15 +36,21 @@ export async function run(args, context) {
       citations: draft.citations,
       client_nonce: String(args.nonce || randomNonce())
     };
-    SubmissionIn.parse(payload);
-    const canon = canonicalize(payload);
+    // The parsed value, not the raw one. Zod strips properties the schema does
+    // not declare, and server/routes/submission.js hands the *parsed* value to
+    // SubmissionService for hashing - so hashing the raw draft here made the two
+    // digests disagree for any draft carrying an extra property, and the
+    // mismatch check below would then report a failure on a submission that had
+    // in fact succeeded.
+    const parsed = SubmissionIn.parse(payload);
+    const canon = canonicalize(parsed);
     const canonical_sha256 = sha256Hex(canon);
     if (dryRun) {
       const info = {
         ok: true,
         dry_run: true,
         canonical_sha256,
-        client_nonce: payload.client_nonce
+        client_nonce: parsed.client_nonce
       };
       if (args.json) print(JSON.stringify(info));
       else
@@ -59,9 +65,9 @@ export async function run(args, context) {
       headers: {
         'content-type': 'application/json',
         authorization: `Bearer ${jwt}`,
-        'x-db8-client-nonce': payload.client_nonce
+        'x-db8-client-nonce': parsed.client_nonce
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(parsed)
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -87,6 +93,9 @@ export async function run(args, context) {
     return EXIT.OK;
   } catch (e) {
     printerr(e?.message || String(e));
+    // A permanent configuration error must not look transient: automation
+    // retrying EXIT.NETWORK would retry an invalid canon mode forever.
+    if (e?.code === 'invalid_canon_mode' || e?.name === 'ZodError') return EXIT.VALIDATION;
     return EXIT.NETWORK;
   }
 }

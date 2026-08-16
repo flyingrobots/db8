@@ -134,3 +134,89 @@ describe('the CLI and the server canonicalize identically', () => {
     }
   });
 });
+
+describe('the CLI hashes what it sends', () => {
+  // Zod strips properties the schema does not declare, and the server hashes the
+  // *parsed* value. Hashing the raw draft here made the digests disagree for any
+  // draft carrying an extra property — and the mismatch check then reported a
+  // failure on a submission that had actually succeeded.
+  it('agrees with the server for a draft carrying an undeclared property', () => {
+    const withExtra = JSON.parse(JSON.stringify(DOC));
+    withExtra.claims[0].note = 'an editor left this here';
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'db8-extra-'));
+    const file = path.join(dir, 'draft.json');
+    try {
+      fs.writeFileSync(file, JSON.stringify(withExtra));
+      const out = execFileSync(
+        process.execPath,
+        [
+          path.join(repoRoot, 'bin', 'db8.js'),
+          'submit',
+          '--path',
+          file,
+          '--dry-run',
+          '--nonce',
+          DOC.client_nonce,
+          '--json'
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            CANON_MODE: 'jcs',
+            DB8_CANON_MODE: 'jcs',
+            DB8_ROOM_ID: DOC.room_id,
+            DB8_PARTICIPANT_ID: DOC.author_id,
+            DB8_JWT: 'unused-for-dry-run'
+          }
+        }
+      );
+      // The server would strip `note` before hashing, so the CLI must too.
+      expect(JSON.parse(out).canonical_sha256).toBe(serverDigest('jcs'));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Automation retrying EXIT.NETWORK would retry a permanent misconfiguration
+  // forever, so a bad mode has to be classified as validation.
+  it('exits with the validation code, not the network code, on a bad mode', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'db8-exit-'));
+    const file = path.join(dir, 'draft.json');
+    try {
+      fs.writeFileSync(file, JSON.stringify(DOC));
+      let status = 0;
+      try {
+        execFileSync(
+          process.execPath,
+          [
+            path.join(repoRoot, 'bin', 'db8.js'),
+            'submit',
+            '--path',
+            file,
+            '--dry-run',
+            '--nonce',
+            DOC.client_nonce
+          ],
+          {
+            encoding: 'utf8',
+            stdio: 'pipe',
+            env: {
+              ...process.env,
+              DB8_CANON_MODE: 'jsc',
+              DB8_ROOM_ID: DOC.room_id,
+              DB8_PARTICIPANT_ID: DOC.author_id,
+              DB8_JWT: 'unused-for-dry-run'
+            }
+          }
+        );
+      } catch (err) {
+        status = err.status;
+      }
+      expect(status, 'EXIT.VALIDATION is 2, EXIT.NETWORK is 7').toBe(2);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
