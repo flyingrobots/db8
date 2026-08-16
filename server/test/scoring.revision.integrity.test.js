@@ -121,8 +121,8 @@ describeDb('one judge, one score per participant per round', () => {
     // A judge scoring 100 then correcting to 50 must not average to 75, and must
     // not look like two judges.
     const d = DEBATERS.aggregate;
-    await score(d, { e: 100, r: 100, c: 100, v: 100, y: 100 }, 'infl-1');
-    await score(d, { e: 50, r: 50, c: 50, v: 50, y: 50 }, 'infl-2');
+    await score(d, { e: 100, r: 100, c: 100, v: 100, y: 100 }, 'inflate-1');
+    await score(d, { e: 50, r: 50, c: 50, v: 50, y: 50 }, 'inflate-2');
 
     const agg = await aggregate(d);
     expect(Number(agg.judge_count), 'one judge scored, however many times').toBe(1);
