@@ -64,3 +64,48 @@ describe('cross-origin access for the browser app', () => {
     expect(String(res.headers.vary || '')).toMatch(/Origin/i);
   });
 });
+
+describe('the grant is no wider than the app needs', () => {
+  // Allow-Credentials exists to permit cookie- and TLS-credential-bearing
+  // cross-origin requests. The browser app never asks for it — there is no
+  // `credentials: 'include'` anywhere in web/ — and it authenticates with an
+  // explicit Authorization header, which Allow-Headers already covers. Granting
+  // it anyway widens what an allow-listed origin may do for no gain.
+  it('does not grant credentials', async () => {
+    const res = await request(app).get(`/state?room_id=${ROOM}`).set('Origin', DEV_ORIGIN);
+    expect(res.headers['access-control-allow-origin']).toBe(DEV_ORIGIN);
+    expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+  });
+
+  it('does not grant credentials on a preflight either', async () => {
+    const res = await request(app)
+      .options('/rpc/submission.create')
+      .set('Origin', DEV_ORIGIN)
+      .set('Access-Control-Request-Method', 'POST');
+    expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+  });
+});
+
+describe('Vary composes with other middleware', () => {
+  // setHeader REPLACES. Nothing else in server/ sets Vary today, so this is
+  // latent rather than live — but adding compression or helmet would silently
+  // discard theirs, and a shared cache could then serve one client a response
+  // computed for another.
+  it('appends Origin rather than replacing an existing Vary', async () => {
+    const express = (await import('express')).default;
+    const { cors } = await import('../cors.js');
+
+    const probe = express();
+    probe.use((req, res, next) => {
+      res.setHeader('Vary', 'Accept-Encoding');
+      next();
+    });
+    probe.use(cors({ origins: [DEV_ORIGIN] }));
+    probe.get('/probe', (req, res) => res.json({ ok: true }));
+
+    const res = await request(probe).get('/probe').set('Origin', DEV_ORIGIN);
+    const vary = String(res.headers.vary || '');
+    expect(vary).toMatch(/Accept-Encoding/i);
+    expect(vary).toMatch(/Origin/i);
+  });
+});

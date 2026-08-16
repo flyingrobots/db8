@@ -39,8 +39,10 @@ export function cors({ origins = [] } = {}) {
     const origin = req.headers.origin;
 
     // A response that carries an origin-specific header must not be cached and
-    // replayed for a different origin.
-    res.setHeader('Vary', 'Origin');
+    // replayed for a different origin. res.vary() APPENDS; setHeader would
+    // replace whatever compression or another middleware had already set, and a
+    // shared cache could then serve one client a response computed for another.
+    res.vary('Origin');
 
     // No Origin means same-origin or a non-browser client; nothing to grant.
     if (!origin) return next();
@@ -53,7 +55,12 @@ export function cors({ origins = [] } = {}) {
     }
 
     res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    // Deliberately NOT Access-Control-Allow-Credentials. That header permits
+    // cookie- and TLS-credential-bearing cross-origin requests; this app never
+    // asks for them (no `credentials: 'include'` anywhere in web/) and
+    // authenticates with an explicit Authorization header, which
+    // Access-Control-Allow-Headers already covers. Granting it would widen what
+    // an allow-listed origin may do for no functional gain.
 
     if (req.method === 'OPTIONS') {
       res.setHeader('Access-Control-Allow-Methods', ALLOWED_METHODS.join(', '));
