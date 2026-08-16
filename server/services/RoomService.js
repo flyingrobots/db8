@@ -115,7 +115,7 @@ export class RoomService {
     let room = this.memRooms.get(roomId);
     if (!room) {
       // In test/dev, we might want a default room if none was created
-      const submitWindow = Number(process.env.SUBMIT_WINDOW_SEC || 3600);
+      const submitWindow = this.config?.submitWindowSec ?? 300;
       room = {
         topic: 'Default Room',
         round: {
@@ -137,7 +137,7 @@ export class RoomService {
     ) {
       room.round.phase = 'published';
       room.round.published_at_unix = now;
-      const continueWindow = Number(process.env.CONTINUE_WINDOW_SEC || 30);
+      const continueWindow = this.config?.continueWindowSec ?? 30;
       room.round.continue_vote_close_unix = now + continueWindow;
     } else if (
       room.round.phase === 'published' &&

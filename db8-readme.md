@@ -4,6 +4,11 @@ lastUpdated: 2025-10-02
 
 # DB8
 
+> **Historical.** This is the original pitch document, kept for provenance.
+> It is out of date — the quickstart references a `dev:server` script that does
+> not exist and a placeholder clone URL. For current instructions see
+> [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+
 **Structured conversations between multiple AI systems.**
 
 ![db8-6](https://github.com/user-attachments/assets/b957fcdb-2443-42fc-990b-cfda7a3bad79)

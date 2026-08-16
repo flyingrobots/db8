@@ -5,7 +5,7 @@ lastUpdated: 2025-10-02
 # CLI Quickstart
 
 The db8 CLI is currently provided as a local binary in this repo. It targets
-Node 20+.
+Node 22+.
 
 ## Install (local)
 

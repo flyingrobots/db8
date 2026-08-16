@@ -11,10 +11,10 @@ optional pgTAP invariants, and exercise the app end-to-end.
 
 - Using the repo’s docker compose:
 
-`````text
+```text
 docker compose -f docker-compose.test.yml up -d db
 # DB URL: postgresql://postgres:test@localhost:54329/db8_test
-```text
+```
 
 If you’re using Supabase locally, use the connection string for your local
 project and substitute it wherever this guide uses the DB URL.
@@ -69,7 +69,7 @@ select room_create(
   'demo-room-nonce'
 );
 SQL
-```text
+```
 
 The function returns the `room_id` you can plug into API calls or the CLI.
 Repeating the call with the same nonce reuses the existing room.
@@ -89,13 +89,13 @@ postgresql-16-pgtap"
 
 psql postgresql://postgres:test@localhost:54329/db8_test \
   -c 'CREATE EXTENSION IF NOT EXISTS pgtap;'
-```text
+```
 
 1. Run all pgTAP files:
 
 ```text
 PGURL=postgresql://postgres:test@localhost:54329/db8_test ./db/test/run.sh
-```text
+```
 
 ## Run Node Tests with DB Backed Path
 
@@ -104,7 +104,7 @@ Postgres sidecar:
 
 ```text
 npm test
-```text
+```
 
 The command brings up the `db` container (if needed), applies `db/schema.sql`
 and `db/rpc.sql`, executes tests from the `tests` service against
@@ -117,7 +117,7 @@ directly:
 ```text
 CI=true npm test
 npm run test:inner
-```text
+```
 
 ## Run the Server with DB
 
@@ -135,7 +135,7 @@ export PORT=3000
 node server/rpc.js
 # healthcheck
 curl <http://localhost:3000/health>
-```text
+```
 
 ### Environment Flags (M2)
 
@@ -203,7 +203,7 @@ npm --prefix web install
 # Optionally set API base URL (defaults to <http://localhost:3000>)
 export NEXT_PUBLIC_DB8_API_URL=<http://localhost:3000>
 npm --prefix web run dev   # <http://localhost:3001>
-```text
+```
 
 Try: <http://localhost:3001/room/00000000-0000-0000-0000-0000000000ab>
 
@@ -215,7 +215,7 @@ DB8_API_URL=<http://localhost:3000> db8 room status --room
 00000000-0000-0000-0000-0000000000ab --json
 DB8_API_URL=<http://localhost:3000> db8 room watch  --room
 00000000-0000-0000-0000-0000000000ab --json
-```text
+```
 
 ## Notes
 
@@ -224,5 +224,4 @@ DB8_API_URL=<http://localhost:3000> db8 room watch  --room
 - The server falls back to in-memory idempotent storage if `DATABASE_URL` is not
   set.
 - Configuration uses `SecretSource` + `ConfigBuilder`; only the EnvSecretSource
-  module reads environment variables. ````
-`````
+  module reads environment variables.

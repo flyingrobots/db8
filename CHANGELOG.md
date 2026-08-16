@@ -4,6 +4,12 @@ lastUpdated: 2026-08-15
 
 # Changelog
 
+## 2026-08-15 — Verdict persistence behind a port
+
+- `VerificationService` no longer knows Postgres exists. Persistence sits behind a `VerdictStore` port with a Postgres adapter, a memory adapter, and a selector that chooses by configuration — never by failure. Path resolution stays above the port, because `server/claims/paths.js` owns the grammar and resolving per-adapter would be two implementations free to disagree.
+- One contract suite runs against every adapter. The two adapters had already drifted twice — the summary aggregate ignored `claim_path`, and the memory key omitted `client_nonce`, so a judge's revised verdict was silently discarded — and neither was visible while each adapter was tested alone.
+- **Memory-mode verdict writes are now refused at a capacity bound** rather than evicting. Eviction made the summary report fewer findings than were filed; unbounded growth exhausted the heap, since `client_nonce` mints a new identity. A repeat of an existing verdict is still answered when full, so retry-after-timeout stays idempotent.
+
 ## 2026-08-15 — Final vote integrity, CLI canonical form, and test isolation (breaking)
 
 - **One ballot per voter.** `final_votes` was keyed `(round_id, voter_id, client_nonce)`, so a voter resubmitting under a fresh nonce inserted a _second_ row and `view_final_tally` counted both — a result could be inflated by looping with new nonces. The key is now `(round_id, voter_id)` and `vote_final_submit` upserts on it, so a resubmission revises the ballot. Databases carrying the old key are deduplicated to the most recent ballot per voter, under an `ACCESS EXCLUSIVE` lock so a concurrent insert cannot slip in before the constraint is added.
@@ -23,6 +29,8 @@ lastUpdated: 2026-08-15
 - Submissions
   - `Claim.text` is replaced by `Claim.term`, a structured claim term. `id` and `support` are unchanged — evidence is orthogonal to term structure and replacing it is a stated non-goal.
   - The submission path enforces `validateTerm`, not just the term's shape. Wiring `term` to the bare schema left the depth and size caps, the `__proto__` refusal, `either` distinctness and temporal anchoring enforced nowhere a real submission passed through. Two layers now: the schema field delegates to `validateTerm` so no caller can forget it, and the route returns a structured `invalid_claim_term` naming the offending claim.
+- Web
+  - The room page gained a claim term editor: every node kind, recursively nested, with the frame vocabulary, an opaque/transparent explanation, a plain-English read-back, and incomplete slots reported before submit.
 - Verdicts
   - `verification_verdicts.claim_path` records which node of a claim term a verdict rules on. The uniqueness index includes it, so a verdict on an attribution and a verdict on the proposition it attributes are two rows rather than one overwriting the other.
   - `claim_path` is exposed through `verification_verdicts_view` and grouped by `verify_summary`, in both the SQL and the in-memory aggregate. Without that the scoring aggregate merged the two findings the column exists to separate.
@@ -59,6 +67,11 @@ reproduced before it was fixed.
 - Internal: one `CHILD_KEYS`-driven walker replaces four near-identical traversals, and `isNode`/`LIST_KEYS`/`formatPath` are owned by `terms.js` instead of being copied across three files.
 
 Breaking for callers that relied on `termHash()` accepting unvalidated input, on a 16-deep term being rejected, or on a denied conjunction projecting to per-part denials.
+
+## 2026-08-09 — Toolchain: eslint 10 and a Node 22 floor
+
+- The supported Node version is now **22 or newer**. `eslint-plugin-unicorn` evaluates `Set.prototype.union` at module load, and that method does not exist before Node 22, so on Node 20 `npm run lint` fails with a `TypeError` before linting anything. Pinned in `.nvmrc`, `package.json` engines, `docker-compose.test.yml`, and all three workflows.
+- `.npmrc` sets `legacy-peer-deps=true`, and it is required: `eslint-plugin-react@7.37.5` peer-caps at eslint `^9.7` and npm refuses the tree without it. Remove it when upstream ships an eslint 10 peer.
 
 ## 2026-08-09 — `GET /journal` indexed lookups (breaking)
 

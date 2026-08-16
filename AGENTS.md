@@ -209,7 +209,7 @@ Style & guardrails
 
 Guardrails (enforced by repo config)
 
-- Node 20+. See .nvmrc.
+- Node 22+. See .nvmrc.
 - ESLint + Prettier. See eslint.config.js and .prettierrc.
 - Git hooks for lint-staged and commit message checks.
 - CI runs lint and tests with a real Postgres service.
@@ -258,7 +258,7 @@ Operational notes (for future‑you)
   - Keep `package-lock.json` committed for `setup-node` cache.
 
 - Runtime configuration
-  - Node 20+ enforced (`.nvmrc`, engines, CI). No TypeScript.
+  - Node 22+ enforced (`.nvmrc`, engines, CI). No TypeScript.
   - Zod at edges.
   - `DATABASE_URL` optional. If set, endpoints try DB persistence with in‑memory
     idempotent fallback.
