@@ -4,6 +4,20 @@ lastUpdated: 2026-08-15
 
 # Changelog
 
+## 2026-08-15 — Final vote integrity, CLI canonical form, and test isolation (breaking)
+
+- **One ballot per voter.** `final_votes` was keyed `(round_id, voter_id, client_nonce)`, so a voter resubmitting under a fresh nonce inserted a _second_ row and `view_final_tally` counted both — a result could be inflated by looping with new nonces. The key is now `(round_id, voter_id)` and `vote_final_submit` upserts on it, so a resubmission revises the ballot. Databases carrying the old key are deduplicated to the most recent ballot per voter, under an `ACCESS EXCLUSIVE` lock so a concurrent insert cannot slip in before the constraint is added.
+- **A final vote requires the final phase.** `vote_submit` refuses a round that is not in a voteable phase; `vote_final_submit` checked participation only, so a ballot was accepted in any phase.
+- **A rejected final vote is no longer reported as accepted.** `VoteService` caught every query error and fell back to memory, so the phase rejection returned a fabricated `vote_id` with HTTP 200. Errors Postgres replied with (they carry `severity`) now propagate; only a genuinely unreachable database falls back.
+- **The CLI canonicalizes through the same code as the server.** `bin/db8.js` carried its own implementation whose `sorted` branch used a replacer _array_ — an allow-list applied at every depth — so nested keys were deleted and a submission's claims and citations canonicalized to `{}`. Two different arguments produced one digest, and anything signed under `sorted` failed verification. `server/canon-mode.js` now resolves a mode in one place and validates it; an unrecognized mode is an error rather than a silent fall back to the broken branch. `db8 submit` also stopped printing its own digest over the server's, and now fails if the response carries none.
+- **Tests no longer apply DDL at runtime.** `db/rls.sql` locks `rooms` before `rounds` and `db/rpc.sql` the reverse, which deadlocked about one run in five. `prepare-db` applies the test helpers instead, and the one remaining schema test runs inside an isolated scratch schema so it cannot contend with anything.
+
+## 2026-08-15 — Cross-origin access, and browser tests
+
+- **The web app could not reach the API from a browser.** `web` serves on :3001, the API defaults to :3000, `apiBase()` builds an absolute URL and there is no proxy — so every response was blocked with `No 'Access-Control-Allow-Origin' header is present`. `state` never loaded, and the room page rendered a shell with no submission form. Confirmed in Chromium, not inferred.
+- `server/cors.js` grants cross-origin access to an allow-list, configured with `DB8_ALLOWED_ORIGINS` (comma-separated) and defaulting to the local dev web origins. Never `*`: these endpoints accept a bearer token, and an open policy would let any page a participant has open call them with that participant's credentials. Responses carry `Vary: Origin` so a cache cannot serve one origin a header meant for another.
+- Browser tests for the claim term editor in `web/e2e/`, run with `npm run test:e2e` from `web/`. Deliberately not part of `npm test`, which runs on every push: requiring a browser engine there would make an ordinary commit depend on a 95MB install.
+
 ## 2026-08-12 — Verdict persistence behind a port
 
 - `VerificationService` no longer knows Postgres exists. Persistence sits behind a `VerdictStore` port with a Postgres adapter, a memory adapter, and a selector that chooses by configuration — never by failure. Path resolution stays above the port, because `server/claims/paths.js` owns the grammar and resolving per-adapter would be two implementations free to disagree.

@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { canonicalizeJCS, canonicalizeSorted, sha256Hex } from '../utils.js';
+import { canonicalizeJCS, sha256Hex } from '../utils.js';
+import { resolveCanonicalizer } from '../canon-mode.js';
 
 // Structured claims for db8 debates.
 //
@@ -364,11 +365,9 @@ export function validateTerm(term, opts = {}) {
 // reached from bin/db8.js through server/schemas.js — importing it would load
 // server configuration into the CLI.
 function canonicalizer() {
-  const raw = process.env.CANON_MODE ?? 'jcs';
-  const mode = String(raw).toLowerCase().trim() || 'jcs';
-  if (mode === 'sorted') return canonicalizeSorted;
-  if (mode === 'jcs') return canonicalizeJCS;
-  throw new Error(`Invalid CANON_MODE: '${raw}'. Allowed: sorted|jcs`);
+  // DB8_CANON_MODE is deliberately NOT read: it is a CLI alias, and letting it
+  // win would move signed material off the path config-builder validates.
+  return resolveCanonicalizer(process.env.CANON_MODE);
 }
 
 /** Canonical serialization of a term. Key order is normalized; child order is not. */

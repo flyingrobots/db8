@@ -109,8 +109,41 @@ CREATE TABLE IF NOT EXISTS final_votes (
   ranking       jsonb       DEFAULT '[]'::jsonb, -- optional ranked list of participant ids
   client_nonce  text        NOT NULL,
   created_at    timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (round_id, voter_id, client_nonce)
+  -- One ballot per voter per round. The nonce is deliberately NOT part of this
+  -- key: with it, a voter resubmitting under a fresh nonce inserted a second row
+  -- and view_final_tally counted both.
+  UNIQUE (round_id, voter_id)
 );
+
+-- Upgrade path for databases carrying the nonce in the key. Duplicates are
+-- collapsed to the most recent ballot per voter, which is the one a revising
+-- voter meant to stand.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'final_votes'::regclass
+       AND contype = 'u'
+       AND pg_get_constraintdef(oid) = 'UNIQUE (round_id, voter_id, client_nonce)'
+  ) THEN
+    -- Against writers, not just other readers. DELETE takes ROW EXCLUSIVE, which
+    -- stays compatible with concurrent INSERTs: a fresh-nonce ballot uncommitted
+    -- during the delete's snapshot could commit before ADD CONSTRAINT takes its
+    -- exclusive lock, leaving a duplicate pair and rolling back the upgrade.
+    LOCK TABLE final_votes IN ACCESS EXCLUSIVE MODE;
+    DELETE FROM final_votes f
+     WHERE EXISTS (
+       SELECT 1 FROM final_votes newer
+        WHERE newer.round_id = f.round_id
+          AND newer.voter_id = f.voter_id
+          AND (newer.created_at, newer.id) > (f.created_at, f.id)
+     );
+    ALTER TABLE final_votes
+      DROP CONSTRAINT final_votes_round_id_voter_id_client_nonce_key;
+    ALTER TABLE final_votes
+      ADD CONSTRAINT final_votes_round_id_voter_id_key UNIQUE (round_id, voter_id);
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_final_votes_round ON final_votes (round_id);
 

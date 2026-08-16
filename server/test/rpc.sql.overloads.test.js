@@ -14,7 +14,22 @@ import path from 'node:path';
 // The test harness rebuilds from schema.sql every run, so a fresh database never
 // has the old function and cannot catch this. Only an upgrade can, which is what
 // this seeds.
-describe.sequential('rpc.sql leaves no stale function overloads', () => {
+
+// The DROP + CREATE for verify_submit, read out of the committed db/rpc.sql so
+// this test cannot drift from the file it is asserting about.
+function verifySubmitSection() {
+  const sql = fs.readFileSync(path.join(process.cwd(), 'db', 'rpc.sql'), 'utf8');
+  const start = sql.indexOf('DROP FUNCTION IF EXISTS verify_submit');
+  if (start === -1) throw new Error('db/rpc.sql no longer drops the legacy verify_submit');
+  const createAt = sql.indexOf('CREATE OR REPLACE FUNCTION verify_submit', start);
+  if (createAt === -1) throw new Error('db/rpc.sql no longer creates verify_submit');
+  // plpgsql bodies are dollar-quoted; the section ends at the closing $$;
+  const end = sql.indexOf('$$;', createAt);
+  if (end === -1) throw new Error('could not find the end of verify_submit');
+  return sql.slice(start, end + 3);
+}
+
+describe('rpc.sql leaves no stale function overloads', () => {
   let pool;
   const dbUrl =
     process.env.DB8_TEST_DATABASE_URL ||
@@ -30,14 +45,26 @@ describe.sequential('rpc.sql leaves no stale function overloads', () => {
   });
 
   it('drops the pre-claim_path verify_submit when rpc.sql is applied over it', async () => {
-    // Everything happens inside one connection's transaction and is rolled
-    // back, because Vitest runs test files in parallel against a single
-    // database: creating a seven-argument verify_submit globally would make
-    // concurrent verdict tests fail with "function ... is not unique", and
-    // re-applying rpc.sql would churn objects other tests are using.
+    // Isolated into a scratch schema, not merely wrapped in a transaction.
+    //
+    // Vitest runs test files in parallel against ONE database. Creating a
+    // seven-argument verify_submit in `public` makes concurrent verdict tests
+    // fail with "function ... is not unique", and holding DDL locks on shared
+    // objects deadlocks against their DML. A transaction alone does not help:
+    // it is what *holds* the locks.
+    //
+    // With search_path pointing only at the scratch schema, every unqualified
+    // DROP and CREATE below resolves there, so this test cannot touch an object
+    // any other test can see. The rollback removes the schema.
+    //
+    // Anything added here that applies DDL should do the same rather than reach
+    // for a lock: isolation removes the contention instead of ordering it.
     const client = await pool.connect();
+    const scratch = `db8_ddl_${process.pid}_${Date.now().toString(36)}`;
     try {
       await client.query('BEGIN');
+      await client.query(`CREATE SCHEMA ${scratch}`);
+      await client.query(`SET LOCAL search_path = ${scratch}`);
 
       // Seed the shape an existing deployment would be carrying.
       await client.query(`
@@ -49,18 +76,26 @@ describe.sequential('rpc.sql leaves no stale function overloads', () => {
 
       // Matched on arity, not on the identity string: that string carries
       // parameter names, so comparing it to a bare type list never matches.
-      const seeded = await client.query(
-        `SELECT count(*)::int AS n FROM pg_proc WHERE proname = 'verify_submit' AND pronargs = 7`
-      );
-      expect(seeded.rows[0].n, 'legacy overload should be seeded').toBe(1);
+      // Scoped to the scratch schema so `public` cannot influence the result.
+      const countArities = async () => {
+        const r = await client.query(
+          `SELECT pronargs FROM pg_proc
+            WHERE proname = 'verify_submit'
+              AND pronamespace = $1::regnamespace
+            ORDER BY pronargs`,
+          [scratch]
+        );
+        return r.rows.map((row) => row.pronargs);
+      };
 
-      const sql = fs.readFileSync(path.join(process.cwd(), 'db', 'rpc.sql'), 'utf8');
-      await client.query(sql);
+      expect(await countArities(), 'legacy overload should be seeded').toEqual([7]);
 
-      const after = await client.query(
-        `SELECT pronargs FROM pg_proc WHERE proname = 'verify_submit' ORDER BY pronargs`
-      );
-      const arities = after.rows.map((r) => r.pronargs);
+      // Only the verify_submit section of the real file, read out of the
+      // committed db/rpc.sql so this test cannot drift from what it asserts
+      // about. Applying all 1100 lines would replace every view in the schema.
+      await client.query(verifySubmitSection());
+
+      const arities = await countArities();
       expect(arities, `expected one verify_submit, found ${arities.join(', ')}`).toEqual([8]);
     } finally {
       await client.query('ROLLBACK');

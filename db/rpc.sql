@@ -817,6 +817,7 @@ AS $$
 DECLARE
   v_id uuid;
   v_is_participant boolean;
+  v_phase text;
 BEGIN
   -- Verify voter is a participant in the round's room
   SELECT EXISTS (
@@ -832,10 +833,23 @@ BEGIN
     RAISE EXCEPTION 'voter not a participant in round: %', p_voter_id USING ERRCODE = '42501';
   END IF;
 
+  -- vote_submit refuses a round that is not in a voteable phase; this accepted a
+  -- final ballot in any phase, including before the round was ever published.
+  SELECT phase INTO v_phase FROM rounds WHERE id = p_round_id;
+  IF v_phase IS DISTINCT FROM 'final' THEN
+    RAISE EXCEPTION 'round not in final phase: %', v_phase USING ERRCODE = '22023';
+  END IF;
+
   INSERT INTO final_votes (round_id, voter_id, approval, ranking, client_nonce)
-  VALUES (p_round_id, p_voter_id, p_approval, COALESCE(p_ranking, '[]'::jsonb), COALESCE(p_client_nonce, gen_random_uuid()::text))
-  ON CONFLICT (round_id, voter_id, client_nonce)
-  DO UPDATE SET approval = EXCLUDED.approval, ranking = EXCLUDED.ranking
+  VALUES (p_round_id, p_voter_id, p_approval, COALESCE(p_ranking, '[]'::jsonb),
+          COALESCE(NULLIF(p_client_nonce, ''), gen_random_uuid()::text))
+  -- Keyed on the voter, not the nonce: a resubmission revises the ballot
+  -- instead of adding one.
+  ON CONFLICT (round_id, voter_id)
+  DO UPDATE SET approval = EXCLUDED.approval,
+                ranking = EXCLUDED.ranking,
+                client_nonce = EXCLUDED.client_nonce,
+                created_at = now()
   RETURNING id INTO v_id;
 
   -- Notify listeners
