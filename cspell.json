@@ -188,7 +188,9 @@
     "retryable",
     "unwired",
     "opped",
-    "rolbypassrls"
+    "rolbypassrls",
+    "greppable",
+    "unbuilt"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }

@@ -4,6 +4,14 @@ lastUpdated: 2026-08-16
 
 # Changelog
 
+## 2026-08-16 — Architecture Decision Records
+
+- **`docs/adr/` established**, with a template, an index, and an explicit "Owed" list naming decisions made in code but never written down. An ADR records one decision, the context that forced it, and what it costs; it is immutable once accepted, and a reversal supersedes rather than edits. Consequences **must** include the bad ones.
+- Five recorded, all decisions actually taken rather than reconstructed: [0001](docs/adr/0001-persistence-chosen-by-configuration.md) persistence adapters chosen by configuration and never by failure, and why `err.severity` is the discriminator; [0002](docs/adr/0002-record-sorted-canonicalization-divergence.md) recording the `sorted` integer-key divergence instead of fixing it, because the fix invalidates every signature over a document with numeric keys; [0003](docs/adr/0003-delete-historical-docs.md) deleting stale documentation rather than archiving it behind a banner; [0004](docs/adr/0004-randomized-test-order.md) randomized test order with a pinned seed; [0005](docs/adr/0005-rescope-stale-issues-in-place.md) re-scoping stale issues in place rather than closing and refiling.
+- Wired in rather than left as a directory: a page type in the documentation standards, a step in the `AGENTS.md` loop, a review-checklist line, an entry in the routing index, and pointers from the code each one governs (`ConfiguredVerdictStore`, `vitest.config.js`, `canonicalization.test.js`).
+- ADR-0001 records that its own pattern is **incomplete** — five services still fabricate an identifier for a write that did not happen and return it under `200 {ok:true}`. Naming that inside the ADR keeps the gap visible instead of implying the decision was fully applied.
+- `docs/specs/OrchestratorHeartbeat.md` has required an ADR by name since it was written; that one is listed as owed rather than invented, since the rationale for choosing a heartbeat over an advisory lock was never recorded.
+
 ## 2026-08-16 — Documentation standards, and three defects the rewrite found
 
 - **Standards split out of `AGENTS.md`**, which had grown to 1429 lines — 350 of standards on top of ~1000 of 2025 session logs, milestone status, and merged-PR debriefs. Now 121 lines that state how to work here and link to [testing](docs/TESTING-STANDARDS.md) and [documentation](docs/DOCUMENTATION-STANDARDS.md) standards. Historical pages are deleted rather than archived: git history holds them, and a stale page cannot mislead anyone once it is gone.

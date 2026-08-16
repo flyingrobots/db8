@@ -107,7 +107,11 @@ It requires an authenticated `gh` (`gh auth status`).
    Markdown file carries `lastUpdated`; spec docs also carry `tags: [spec]` and
    their milestone. No `title` in frontmatter — the first body line is a single
    H1.
-5. **Ship.** Update the issue, open the PR, and update `CHANGELOG.md` for
+5. **Record the decision, if there was one.** If the change moved a boundary,
+   changed what is enforced where, recorded a defect instead of fixing it, or
+   rejected a serious alternative, write an [ADR](docs/adr/README.md). The test:
+   would someone changing this next year without knowing why have a bad day?
+6. **Ship.** Update the issue, open the PR, and update `CHANGELOG.md` for
    anything release-visible.
 
 ## Reporting

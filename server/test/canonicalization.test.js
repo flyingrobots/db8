@@ -137,6 +137,7 @@ describe('sorted canonicalization is insensitive to key order', () => {
 
   // KNOWN DIVERGENCE, recorded deliberately -- this is change detection, not a
   // specification, and the behaviour below is not the behaviour we want.
+  // Decision and rejected alternatives: docs/adr/0002-record-sorted-canonicalization-divergence.md
   //
   // `canonicalizeSorted` does `for (const k of Object.keys(v).sort())`, which
   // looks like it emits lexicographic order. It does not. An integer-like key

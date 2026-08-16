@@ -11,6 +11,7 @@ export default {
     setupFiles: ['./server/test/setup.env.js'],
 
     // Randomized order, on by default.
+    // Rationale: docs/adr/0004-randomized-test-order.md
     //
     // A test that only passes in declaration order is depending on another
     // test's writes, and four files were doing exactly that: a submission id

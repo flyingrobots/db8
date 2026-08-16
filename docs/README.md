@@ -60,6 +60,11 @@ Living specs describing behaviour on `main`.
 - [Features](Features.md) · [User Stories](UserStories.md)
 - [Future Work](FutureWork.md) — research directions, explicitly not a roadmap.
 
+## Decisions
+
+- [Architecture Decision Records](adr/README.md) — why the load-bearing choices
+  were made, what they cost, and what was rejected. Immutable once accepted.
+
 ## Standards
 
 Normative. Rules carry stable IDs; cite them in commits and review.

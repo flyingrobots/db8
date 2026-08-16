@@ -48,6 +48,7 @@ db8 keeps its durable truth in a small set of known places.
 | `docs/Ops.md`                                                         | Operator runbook: cross-origin config, dead-letter queue, failover, key rotation.                   |
 | `docs/TESTING-STANDARDS.md`, `docs/DOCUMENTATION-STANDARDS.md`        | Standards. Normative, rule-cited.                                                                   |
 | `docs/DesignGuide.md`, `docs/Formal-Design-Spec.md`                   | Design discipline and the formal model.                                                             |
+| `docs/adr/`                                                           | Architecture Decision Records. One decision each, immutable once accepted.                          |
 | `docs/feature-proposals/`                                             | Proposal-era records. They explain **why**; they do not pose as current truth.                      |
 | `docs/tasks/backlog.md`                                               | Staging only. See [AGENTS.md](../AGENTS.md) for the one-place rule.                                 |
 | `CHANGELOG.md`                                                        | Release-visible historical ledger.                                                                  |
@@ -155,7 +156,25 @@ behind a port, why the journal is a hash chain.
 Explanation **SHOULD** describe mechanisms, relationships, trade-offs,
 alternatives, and limits. It **MUST NOT** become an unstructured code tour.
 
-### 3.7 Troubleshooting
+### 3.7 Decision record
+
+An ADR records one decision, the context that forced it, and what it costs. It is
+written when the decision is made and **never edited afterwards** except to change
+its status; a reversal is a new ADR that supersedes the old one.
+
+An ADR **MUST** state the context without presupposing the outcome, name the
+decision in the active voice, list consequences **including the bad ones**, and
+give the alternatives genuinely considered with the specific reason each lost. An
+ADR listing only benefits is marketing and will not be trusted the next time.
+
+Write one when a choice is hard to reverse, or cheap to reverse and easy to
+forget: a boundary moves, a rule starts or stops being enforced somewhere, a
+defect is recorded rather than fixed, or a serious alternative was rejected. Do
+**not** write one for a routine fix or a refactor that moves no boundary.
+
+See [docs/adr/README.md](adr/README.md) and its [template](adr/template.md).
+
+### 3.8 Troubleshooting
 
 Troubleshooting starts with an observable symptom:
 
@@ -168,7 +187,7 @@ Troubleshooting starts with an observable symptom:
 A troubleshooting page **MUST** list discriminating checks first, map signals to
 likely causes, give concrete recovery actions, and show how to verify the fix.
 
-### 3.8 Contributor guide
+### 3.9 Contributor guide
 
 Contributor docs explain how to change the implementation safely. They
 **SHOULD** explain the system model before listing files. Source links support
@@ -443,6 +462,8 @@ Before calling a documentation change done:
   identifiers have or link to reference coverage.
 - Stated invariants name their test, or are labelled as gaps.
 - New durable pages are linked from `docs/README.md`.
+- A decision that moved a boundary, changed what is enforced, or recorded a
+  defect instead of fixing it has an ADR, linked from the code or spec it governs.
 - Release-visible changes update `CHANGELOG.md`.
 - Frontmatter carries `lastUpdated`; the first body line is a single H1.
 - Markdown, spelling, and formatting checks pass.
