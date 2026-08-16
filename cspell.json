@@ -156,6 +156,8 @@
     "SQLSTATE",
     "resends",
     "setof",
+    "xact",
+    "hashtext",
     "unvalidated",
     "factive",
     "cutover"

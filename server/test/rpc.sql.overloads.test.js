@@ -14,7 +14,7 @@ import path from 'node:path';
 // The test harness rebuilds from schema.sql every run, so a fresh database never
 // has the old function and cannot catch this. Only an upgrade can, which is what
 // this seeds.
-describe.sequential('rpc.sql leaves no stale function overloads', () => {
+describe('rpc.sql leaves no stale function overloads', () => {
   let pool;
   const dbUrl =
     process.env.DB8_TEST_DATABASE_URL ||
@@ -38,6 +38,11 @@ describe.sequential('rpc.sql leaves no stale function overloads', () => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // Serializes against any other runtime DDL applier. db/rpc.sql and
+      // db/rls.sql take rooms and rounds in opposite orders, so two appliers
+      // running concurrently deadlock. Anything added here that applies DDL
+      // must take this same lock.
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['db8:schema-ddl']);
 
       // Seed the shape an existing deployment would be carrying.
       await client.query(`
