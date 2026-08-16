@@ -4,6 +4,14 @@ lastUpdated: 2026-08-15
 
 # Changelog
 
+## 2026-08-15 — Final vote integrity, CLI canonical form, and test isolation (breaking)
+
+- **One ballot per voter.** `final_votes` was keyed `(round_id, voter_id, client_nonce)`, so a voter resubmitting under a fresh nonce inserted a _second_ row and `view_final_tally` counted both — a result could be inflated by looping with new nonces. The key is now `(round_id, voter_id)` and `vote_final_submit` upserts on it, so a resubmission revises the ballot. Databases carrying the old key are deduplicated to the most recent ballot per voter, under an `ACCESS EXCLUSIVE` lock so a concurrent insert cannot slip in before the constraint is added.
+- **A final vote requires the final phase.** `vote_submit` refuses a round that is not in a voteable phase; `vote_final_submit` checked participation only, so a ballot was accepted in any phase.
+- **A rejected final vote is no longer reported as accepted.** `VoteService` caught every query error and fell back to memory, so the phase rejection returned a fabricated `vote_id` with HTTP 200. Errors Postgres replied with (they carry `severity`) now propagate; only a genuinely unreachable database falls back.
+- **The CLI canonicalizes through the same code as the server.** `bin/db8.js` carried its own implementation whose `sorted` branch used a replacer _array_ — an allow-list applied at every depth — so nested keys were deleted and a submission's claims and citations canonicalized to `{}`. Two different arguments produced one digest, and anything signed under `sorted` failed verification. `server/canon-mode.js` now resolves a mode in one place and validates it; an unrecognized mode is an error rather than a silent fall back to the broken branch. `db8 submit` also stopped printing its own digest over the server's, and now fails if the response carries none.
+- **Tests no longer apply DDL at runtime.** `db/rls.sql` locks `rooms` before `rounds` and `db/rpc.sql` the reverse, which deadlocked about one run in five. `prepare-db` applies the test helpers instead, and the one remaining schema test runs inside an isolated scratch schema so it cannot contend with anything.
+
 ## 2026-08-15 — Cross-origin access, and browser tests
 
 - **The web app could not reach the API from a browser.** `web` serves on :3001, the API defaults to :3000, `apiBase()` builds an absolute URL and there is no proxy — so every response was blocked with `No 'Access-Control-Allow-Origin' header is present`. `state` never loaded, and the room page rendered a shell with no submission form. Confirmed in Chromium, not inferred.

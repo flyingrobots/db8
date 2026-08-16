@@ -30,7 +30,7 @@ describe('Final Tally View (M4)', () => {
       'Tally Room'
     ]);
     await pool.query(
-      "insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, 'submit') on conflict (id) do nothing",
+      "insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, 'final') on conflict (id) do nothing",
       [roundId, roomId]
     );
     await pool.query(

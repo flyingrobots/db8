@@ -49,7 +49,16 @@ export class VoteService {
         );
         return { vote_id: r.rows[0].id };
       } catch (err) {
-        console.error('[VoteService] DB error (final_vote), falling back to memory:', err.message);
+        // A rule the database enforced is not an outage. vote_final_submit
+        // raises for a non-final phase and for a non-participant; swallowing
+        // those returned a fabricated vote_id with HTTP 200 and told the caller
+        // an invalid, unpersisted ballot had been accepted.
+        //
+        // Postgres sets `severity` on anything it replied with; a connection
+        // that never got an answer has none. Same discrimination as
+        // PostgresVerdictStore.
+        if (err?.severity) throw err;
+        console.error('[VoteService] database unreachable (final_vote):', err.message);
       }
     }
     return { vote_id: crypto.randomUUID(), note: 'db_fallback' };
