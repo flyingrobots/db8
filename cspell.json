@@ -179,7 +179,16 @@
     "péché",
     "peach",
     "Clef",
-    "behaviours"
+    "behaviours",
+    "autonumber",
+    "doctest",
+    "EEXIST",
+    "ERRCODE",
+    "parseable",
+    "retryable",
+    "unwired",
+    "opped",
+    "rolbypassrls"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
