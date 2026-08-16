@@ -1,7 +1,5 @@
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import { Pool } from 'pg';
-import fs from 'node:fs';
-import path from 'node:path';
 import { runTick } from '../watcher.js';
 
 const shouldRun = process.env.RUN_PGTAP === '1' || process.env.DB8_TEST_PG === '1';
@@ -15,12 +13,12 @@ suite('Watcher DB flips', () => {
   let roundId;
 
   beforeAll(async () => {
+    // No DDL here. db/rls.sql locks rooms before rounds; db/rpc.sql locks rounds
+    // before rooms. Applying either at runtime while another file applies the
+    // other deadlocks - an ABBA inversion, reproduced at roughly one run in
+    // five. The database is prepared once by `npm run test:prepare-db`, which
+    // now also applies db/test/helpers.sql.
     pool = new Pool({ connectionString: dbUrl });
-    // Always apply schema/RPC/RLS to keep isolated and deterministic
-    const rlsSql = fs.readFileSync(path.resolve('db/rls.sql'), 'utf8');
-    await pool.query(rlsSql);
-    const helpersSql = fs.readFileSync(path.resolve('db/test/helpers.sql'), 'utf8');
-    await pool.query(helpersSql);
   });
   afterAll(async () => {
     await pool.end();
