@@ -93,10 +93,18 @@ describeDb('room_create persists the configuration it was given', () => {
       'select submit_deadline_unix from rounds where room_id = $1 and idx = 0',
       [roomId]
     );
+    // Two clocks, deliberately loose. The deadline is computed from SQL `now()`
+    // — transaction start — while this reads the JS clock afterwards, so the
+    // difference rounds either way by a second. The assertion is that
+    // submit_minutes was honoured (120s, not the 300s default), not that the
+    // two clocks agree; tightening it to an exact bound made it fail at 121.
     const now = Math.floor(Date.now() / 1000);
     const delta = Number(round.rows[0].submit_deadline_unix) - now;
-    expect(delta, 'submit_minutes of 2 is a deadline about 120s out').toBeGreaterThan(60);
-    expect(delta).toBeLessThanOrEqual(120);
+    expect(
+      delta,
+      'submit_minutes of 2 is a deadline about 120s out, not the 300s default'
+    ).toBeGreaterThan(60);
+    expect(delta).toBeLessThan(180);
   });
 
   it('is still idempotent on the client nonce, and keeps the first config', async () => {

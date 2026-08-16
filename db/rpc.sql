@@ -31,8 +31,16 @@ BEGIN
 
   v_submit_deadline := v_now + (v_submit_minutes::bigint * 60);
 
-  INSERT INTO rooms (title, client_nonce)
-  VALUES (NULLIF(p_topic, ''), v_client_nonce)
+  -- config is persisted, not merely read. It is the only place a room can
+  -- declare attribution_mode, max_fetches_per_round, or a strict predicate
+  -- vocabulary, and those three features were inert while this INSERT wrote
+  -- only (title, client_nonce): every room had config = '{}'.
+  --
+  -- On conflict the stored config is kept rather than overwritten, matching the
+  -- title rule directly below it: re-entering with the same nonce is a retry,
+  -- not a reconfiguration.
+  INSERT INTO rooms (title, config, client_nonce)
+  VALUES (NULLIF(p_topic, ''), COALESCE(p_cfg, '{}'::jsonb), v_client_nonce)
   ON CONFLICT (client_nonce)
     DO UPDATE SET title = COALESCE(rooms.title, EXCLUDED.title)
   RETURNING id INTO v_room_id;
