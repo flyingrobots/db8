@@ -174,7 +174,11 @@
     "goldens",
     "Irreproducible",
     "linearizability",
-    "namespacing"
+    "namespacing",
+    "pêche",
+    "péché",
+    "peach",
+    "Clef"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
