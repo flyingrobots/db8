@@ -54,10 +54,17 @@ npm test              # full suite, brings up Postgres in Docker
 npm run test:inner    # vitest only; assumes a database is already listening
 ```
 
-`npm test` is the one you want. It runs the suite **twice** — once in memory
-mode and once with `DB8_TEST_PG=1` — because memory is a first-class persistence
-mode, not a fallback, and a change that works in only one of them breaks half the
-rooms.
+`npm test` is the one you want. It runs the suite **twice against the same
+database**, and the two passes are not the same check:
+
+1. **Fresh database.** `DB8_TEST_PG` is unset, so the DB-gated suites skip and
+   everything else runs against a clean schema.
+2. **Same database, DB-gated.** `DB8_TEST_PG=1` turns the gated suites on and
+   re-runs everything over the state pass 1 left behind. That second pass is an
+   _idempotency gate_: a test that only passes on a pristine database fails here.
+
+So a green first pass and a red second one usually means a test is leaking state
+or depending on a fixture another test consumed.
 
 Browser tests are separate and **not** part of `npm test`:
 
@@ -66,10 +73,11 @@ npm --prefix web exec playwright install chromium   # once
 npm --prefix web run test:e2e
 ```
 
-They are excluded deliberately: `npm test` runs on every push through the
-pre-push hook, and requiring a browser engine there would make an ordinary commit
-depend on a 95MB install. No workflow runs them yet, so run them yourself when
-touching `web/`.
+They are excluded from `npm test` deliberately: it runs on every push through
+the pre-push hook, and requiring a browser engine there would make an ordinary
+commit depend on a 95MB install. CI does run them — the `browser-tests` job
+installs Chromium and uploads traces on failure — so a break is caught before
+merge, just not before push.
 
 ## Linters
 

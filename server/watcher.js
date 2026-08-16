@@ -1,5 +1,6 @@
 import pg from 'pg';
 import crypto from 'node:crypto';
+import { normalizeCanonMode } from './canon-mode.js';
 import { log, getPersistentSigningKeys } from './utils.js';
 import { createSigner } from './journal.js';
 import { JournalService } from './services/JournalService.js';
@@ -57,7 +58,7 @@ export async function runTick(pool) {
 
 const _signer = createSigner({
   ...getPersistentSigningKeys(),
-  canonMode: process.env.CANON_MODE || 'jcs'
+  canonMode: normalizeCanonMode(process.env.CANON_MODE)
 });
 
 export function startWatcher({ databaseUrl, intervalMs = 1000 } = {}) {

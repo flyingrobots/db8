@@ -28,15 +28,33 @@ export const CANON_MODES = Object.freeze(['sorted', 'jcs']);
  *   silently select a different canonicalizer, because what gets signed depends
  *   on it.
  */
-export function resolveCanonicalizer(raw, { varName = 'CANON_MODE' } = {}) {
-  const mode = String(raw ?? 'jcs')
+/**
+ * Normalize a configured mode to one of CANON_MODES.
+ *
+ * Separate from resolveCanonicalizer because some callers need the *name*, not
+ * the function — the watcher hands a mode string to createSigner. Both go
+ * through here so no reader of a canonicalization mode can silently fall back:
+ * what gets hashed and signed depends on it.
+ *
+ * @param {unknown} raw
+ * @param {object} [opts]
+ * @param {string} [opts.varName] variable named in the error, for a useful message
+ * @returns {'sorted'|'jcs'}
+ * @throws {Error} tagged `invalid_canon_mode`
+ */
+export function normalizeCanonMode(raw, { varName = 'CANON_MODE' } = {}) {
+  const mode = String(raw ?? '')
     .toLowerCase()
     .trim();
-  if (mode === '' || mode === 'jcs') return canonicalizeJCS;
-  if (mode === 'sorted') return canonicalizeSorted;
+  if (mode === '') return 'jcs';
+  if (CANON_MODES.includes(mode)) return mode;
   const err = new Error(`Invalid ${varName}: '${raw}'. Allowed: ${CANON_MODES.join('|')}`);
   // Tagged so a caller can tell permanent misconfiguration from a transient
   // fault, rather than matching on the message.
   err.code = 'invalid_canon_mode';
   throw err;
+}
+
+export function resolveCanonicalizer(raw, { varName = 'CANON_MODE' } = {}) {
+  return normalizeCanonMode(raw, { varName }) === 'sorted' ? canonicalizeSorted : canonicalizeJCS;
 }

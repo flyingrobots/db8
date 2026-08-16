@@ -4,6 +4,12 @@ lastUpdated: 2026-08-15
 
 # Changelog
 
+## 2026-08-15 — Verdict persistence behind a port
+
+- `VerificationService` no longer knows Postgres exists. Persistence sits behind a `VerdictStore` port with a Postgres adapter, a memory adapter, and a selector that chooses by configuration — never by failure. Path resolution stays above the port, because `server/claims/paths.js` owns the grammar and resolving per-adapter would be two implementations free to disagree.
+- One contract suite runs against every adapter. The two adapters had already drifted twice — the summary aggregate ignored `claim_path`, and the memory key omitted `client_nonce`, so a judge's revised verdict was silently discarded — and neither was visible while each adapter was tested alone.
+- **Memory-mode verdict writes are now refused at a capacity bound** rather than evicting. Eviction made the summary report fewer findings than were filed; unbounded growth exhausted the heap, since `client_nonce` mints a new identity. A repeat of an existing verdict is still answered when full, so retry-after-timeout stays idempotent.
+
 ## 2026-08-15 — Final vote integrity, CLI canonical form, and test isolation (breaking)
 
 - **One ballot per voter.** `final_votes` was keyed `(round_id, voter_id, client_nonce)`, so a voter resubmitting under a fresh nonce inserted a _second_ row and `view_final_tally` counted both — a result could be inflated by looping with new nonces. The key is now `(round_id, voter_id)` and `vote_final_submit` upserts on it, so a resubmission revises the ballot. Databases carrying the old key are deduplicated to the most recent ballot per voter, under an `ACCESS EXCLUSIVE` lock so a concurrent insert cannot slip in before the constraint is added.
@@ -17,12 +23,6 @@ lastUpdated: 2026-08-15
 - **The web app could not reach the API from a browser.** `web` serves on :3001, the API defaults to :3000, `apiBase()` builds an absolute URL and there is no proxy — so every response was blocked with `No 'Access-Control-Allow-Origin' header is present`. `state` never loaded, and the room page rendered a shell with no submission form. Confirmed in Chromium, not inferred.
 - `server/cors.js` grants cross-origin access to an allow-list, configured with `DB8_ALLOWED_ORIGINS` (comma-separated) and defaulting to the local dev web origins. Never `*`: these endpoints accept a bearer token, and an open policy would let any page a participant has open call them with that participant's credentials. Responses carry `Vary: Origin` so a cache cannot serve one origin a header meant for another.
 - Browser tests for the claim term editor in `web/e2e/`, run with `npm run test:e2e` from `web/`. Deliberately not part of `npm test`, which runs on every push: requiring a browser engine there would make an ordinary commit depend on a 95MB install.
-
-## 2026-08-12 — Verdict persistence behind a port
-
-- `VerificationService` no longer knows Postgres exists. Persistence sits behind a `VerdictStore` port with a Postgres adapter, a memory adapter, and a selector that chooses by configuration — never by failure. Path resolution stays above the port, because `server/claims/paths.js` owns the grammar and resolving per-adapter would be two implementations free to disagree.
-- One contract suite runs against every adapter. The two adapters had already drifted twice — the summary aggregate ignored `claim_path`, and the memory key omitted `client_nonce`, so a judge's revised verdict was silently discarded — and neither was visible while each adapter was tested alone.
-- **Memory-mode verdict writes are now refused at a capacity bound** rather than evicting. Eviction made the summary report fewer findings than were filed; unbounded growth exhausted the heap, since `client_nonce` mints a new identity. A repeat of an existing verdict is still answered when full, so retry-after-timeout stays idempotent.
 
 ## 2026-08-11 — Claim terms wired through submissions and verdicts (breaking)
 
