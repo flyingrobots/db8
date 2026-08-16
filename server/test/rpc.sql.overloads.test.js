@@ -14,6 +14,21 @@ import path from 'node:path';
 // The test harness rebuilds from schema.sql every run, so a fresh database never
 // has the old function and cannot catch this. Only an upgrade can, which is what
 // this seeds.
+
+// The DROP + CREATE for verify_submit, read out of the committed db/rpc.sql so
+// this test cannot drift from the file it is asserting about.
+function verifySubmitSection() {
+  const sql = fs.readFileSync(path.join(process.cwd(), 'db', 'rpc.sql'), 'utf8');
+  const start = sql.indexOf('DROP FUNCTION IF EXISTS verify_submit');
+  if (start === -1) throw new Error('db/rpc.sql no longer drops the legacy verify_submit');
+  const createAt = sql.indexOf('CREATE OR REPLACE FUNCTION verify_submit', start);
+  if (createAt === -1) throw new Error('db/rpc.sql no longer creates verify_submit');
+  // plpgsql bodies are dollar-quoted; the section ends at the closing $$;
+  const end = sql.indexOf('$$;', createAt);
+  if (end === -1) throw new Error('could not find the end of verify_submit');
+  return sql.slice(start, end + 3);
+}
+
 describe('rpc.sql leaves no stale function overloads', () => {
   let pool;
   const dbUrl =
@@ -59,8 +74,13 @@ describe('rpc.sql leaves no stale function overloads', () => {
       );
       expect(seeded.rows[0].n, 'legacy overload should be seeded').toBe(1);
 
-      const sql = fs.readFileSync(path.join(process.cwd(), 'db', 'rpc.sql'), 'utf8');
-      await client.query(sql);
+      // Only the verify_submit section of the real file, not all 1100 lines.
+      // Applying the whole thing took AccessExclusive on every view it
+      // replaces, which deadlocked against ordinary DML running in parallel
+      // test files - the advisory lock above only serializes DDL against DDL.
+      // Extracting the section keeps the invariant honest: it still reads the
+      // committed rpc.sql and still fails if the DROP is removed from it.
+      await client.query(verifySubmitSection());
 
       const after = await client.query(
         `SELECT pronargs FROM pg_proc WHERE proname = 'verify_submit' ORDER BY pronargs`
