@@ -61,3 +61,6 @@ supabase/generated/
 # Playwright artifacts
 web/test-results/
 web/playwright-report/
+
+# Agent working notes (cool ideas, code-smell journal)
+.claude/
