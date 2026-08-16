@@ -475,11 +475,27 @@ non-owner application role) rather than a redesign.
 
 ## Status
 
-All seven milestones (M1 MVP loop through M7 hardening) are delivered: the round
-lifecycle, provenance and journals, verification, voting, scoring and Elo,
-research tooling, and operational hardening. The database schema, the claim-term
-engine, and the provenance chain are the stable parts. Work continues on wiring
-the claim-term projection into scoring, and on generative testing for the
-validator.
+**Working end to end:** the round lifecycle and watcher, submissions carrying
+structured claims, claim-path-addressed verdicts and their aggregates,
+canonicalization and per-submission digests, journal signing and the hash chain,
+SSE, continue and final voting, research caching and quotas.
+
+**Built but incomplete**, and tracked as such rather than implied to be finished:
+
+- Research _fetching_ is a stub — `research.fetch` performs no HTTP request and
+  every snapshot it stores is a placeholder. The quotas around it are real.
+- The Elo update is a SQL function reachable only from an HTTP route; nothing
+  schedules it, and it is not idempotent.
+- There is no scoring UI.
+- The claim-term projection (`checkableClaims`, `assertsNothing`, `termHash`) is
+  complete and tested but has no production caller.
+- Strict predicate vocabularies are implemented and unreachable, because
+  `room_create` never persists room config.
+- Row level security is written but does not take effect. See
+  [Security posture](#security-posture).
+
+The stable parts to build on are the database schema, the claim-term engine, and
+the canonical form. Milestones M1–M7 were declared complete, and the open issue
+list says otherwise; that reconciliation is in progress.
 
 Licensed under Apache 2.0.
