@@ -57,3 +57,6 @@ supabase/generated/
 .supabase/
 
 .obsidian/
+
+# Agent working notes (cool ideas, code-smell journal)
+.claude/
