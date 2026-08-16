@@ -418,24 +418,24 @@ a verdict only from a judge or host.
 
 **What does not hold.** Four gaps, all real, none subtle:
 
-1. **There is no authentication.** No route reads the `Authorization` header —
+1. **There is no authentication** ([#210](https://github.com/flyingrobots/db8/issues/210)). No route reads the `Authorization` header —
    it appears in the codebase only as an allow-listed CORS header name. The
    `author_id`, `voter_id`, and `reporter_id` in a request body are taken at
    face value, so anyone who can reach the API can submit, vote, or rule as
    anyone. The token `db8 login` stores is sent and ignored, and the JWT the
    server mints carries `alg: "none"` with the literal string `sig` where a
    signature belongs.
-2. **`db8 journal verify` does not bind `core` to `hash`.** It checks the
+2. **`db8 journal verify` does not bind `core` to `hash`** ([#209](https://github.com/flyingrobots/db8/issues/209)). It checks the
    signature over `hash` but never recomputes `sha256(canonicalize(core))`, so
    rewriting an entire round record — tallies, transcript hashes, timestamps —
    leaves verification passing. It also takes the verifying public key from the
    journal it is verifying, with no pinned key or trust anchor.
-3. **Signatures are never checked on the write path.** `submission.create`
+3. **Signatures are never checked on the write path** ([#11](https://github.com/flyingrobots/db8/issues/11)). `submission.create`
    accepts `signature_kind`, `signature_b64`, and `signer_fingerprint`, and
    reads none of them; they are not part of the digest either. Verification
    exists only as a separate, caller-driven `POST /rpc/provenance.verify`, and
    nothing stores its result.
-4. **Submissions are not actually hidden before publication.** `db/rls.sql`
+4. **Submissions are not actually hidden before publication** ([#208](https://github.com/flyingrobots/db8/issues/208)). `db/rls.sql`
    carries a policy that says they are, and it does not take effect: the API
    connects as the table owner, which is a superuser with `rolbypassrls`, and no
    table sets `FORCE ROW LEVEL SECURITY`. The view `/state` reads has no phase
