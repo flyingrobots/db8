@@ -57,3 +57,7 @@ supabase/generated/
 .supabase/
 
 .obsidian/
+
+# Playwright artifacts
+web/test-results/
+web/playwright-report/
