@@ -1,8 +1,17 @@
 ---
-lastUpdated: 2026-08-15
+lastUpdated: 2026-08-16
 ---
 
 # Changelog
+
+## 2026-08-16 — Testing standards, and the tests they condemned
+
+- **Testing standards adopted** in `AGENTS.md`: rule-ID'd sections A–K governing any change that adds, modifies, or deletes a test, or that fixes a defect. Rule IDs are stable and citable in commits and review.
+- **Two canonicalization tests were tautologies.** `canonicalizeJCS(v)` is defined as `return canonicalizeJcsLib(v)`, and both tests asserted the two were equal — `lib(x) === lib(x)`, which no input can fail. One was titled "handles edge cases (unicode keys, numbers, -0, null chars)" and looped four fixtures, so it read as though the hard cases were pinned; nothing was. The oracle is now RFC 8785 itself, as literal expected strings never computed by a canonicalizer, covering code-unit member ordering with locale ignored, an astral-plane key sorting by its leading surrogate, ECMAScript number formatting including `-0`, and minimal escaping.
+- **`sorted` canonical form is not lexicographic for integer-like keys.** `Object.keys(v).sort()` looks like it orders keys lexicographically, but JavaScript emits integer-index properties first in ascending numeric order and silently overrides the sort — so `sorted` mode emits `{"2":..,"10":..}` where a lexicographic sort, and JCS, emit `{"10":..,"2":..}`. Reachable, since a claim term's `object` is arbitrary JSON and reaches the signed digest. Output is still deterministic, so db8 agrees with itself and signatures are not wrong; an independent implementation of `sorted` doing a true lexicographic sort would disagree and fail verification. Recorded as a labelled divergence rather than changed, because resolving it changes every signature over a document with numeric keys.
+- **Six suites only passed in declaration order** and now arrange their own fixtures: a submission id filled by one test and read by three others, verdict-row counts that grew as later tests added rows, an audit assertion needing an earlier test's delete, a cache read of what an earlier test fetched, a nonce reused across runs so an upsert logged `update` instead of `create`, and a four-step scoring script that passed only on residue left by previous runs.
+- **Test order is randomized by default**, files and tests, with a pinned seed printed on every run and overridable via `VITEST_SEED`. Before this, five of seven seeds failed; now ten seeds pass across both persistence modes and both passes of `npm test`.
+- Assertions that stopped at a success indicator now assert the effect: submission acceptance reads the transcript back, rubric scores are read back field by field, the research cache compares the snapshot it returns against the one the fetch stored, and the Elo test asserts the better-scored debater ends above the default rating and the worse-scored below it rather than merely "not 1200".
 
 ## 2026-08-15 — Verdict persistence behind a port
 
