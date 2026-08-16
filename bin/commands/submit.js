@@ -78,7 +78,16 @@ export async function run(args, context) {
     // gets stored and chained into the journal. Printing the client's over the
     // top of it hid a real divergence: the CLI's own canonicalizer had drifted,
     // and `submit --json` cheerfully reported a hash that matched nothing.
-    if (body.canonical_sha256 && body.canonical_sha256 !== canonical_sha256) {
+    // A response with no digest is unverifiable, not verified. Skipping the
+    // comparison when the field is absent would return OK and print the client's
+    // digest - which is the shadowing this check exists to prevent.
+    if (typeof body.canonical_sha256 !== 'string') {
+      printerr(
+        'server response carried no canonical_sha256; cannot confirm the document it stored'
+      );
+      return EXIT.VALIDATION;
+    }
+    if (body.canonical_sha256 !== canonical_sha256) {
       printerr(
         `canonical_sha256 mismatch: client ${canonical_sha256}, server ${body.canonical_sha256}. ` +
           'The document you signed is not the document the server stored.'
@@ -86,10 +95,7 @@ export async function run(args, context) {
       return EXIT.VALIDATION;
     }
     if (args.json) print(JSON.stringify(body));
-    else
-      print(
-        `submission_id: ${body.submission_id}\ncanonical_sha256: ${body.canonical_sha256 ?? canonical_sha256}`
-      );
+    else print(`submission_id: ${body.submission_id}\ncanonical_sha256: ${body.canonical_sha256}`);
     return EXIT.OK;
   } catch (e) {
     printerr(e?.message || String(e));

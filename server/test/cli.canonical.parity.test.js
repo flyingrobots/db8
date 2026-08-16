@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -218,5 +220,76 @@ describe('the CLI hashes what it sends', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('the CLI insists on a server digest to check against', () => {
+  // `if (body.canonical_sha256 && ...)` skipped the comparison entirely when the
+  // field was absent, returned EXIT.OK, and printed the CLIENT digest — the
+  // shadowing this PR removed, reintroduced through the back door. A response
+  // with no digest is unverifiable, not verified.
+  //
+  // Async exec, deliberately: execFileSync blocks the event loop, so an
+  // in-process HTTP stub could never accept the connection.
+  const run = promisify(execFile);
+
+  async function submitAgainst(responseBody) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'db8-no-digest-'));
+    const file = path.join(dir, 'draft.json');
+    fs.writeFileSync(file, JSON.stringify(DOC));
+
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(responseBody));
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+
+    try {
+      await run(
+        process.execPath,
+        [
+          path.join(repoRoot, 'bin', 'db8.js'),
+          'submit',
+          '--path',
+          file,
+          '--nonce',
+          DOC.client_nonce
+        ],
+        {
+          env: {
+            ...process.env,
+            CANON_MODE: 'jcs',
+            DB8_CANON_MODE: 'jcs',
+            DB8_API_URL: `http://127.0.0.1:${port}`,
+            DB8_ROOM_ID: DOC.room_id,
+            DB8_PARTICIPANT_ID: DOC.author_id,
+            DB8_JWT: 'token'
+          }
+        }
+      );
+      return 0;
+    } catch (err) {
+      return err.code;
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('fails when the server returns no canonical_sha256', async () => {
+    expect(await submitAgainst({ ok: true, submission_id: 'abc' })).toBe(2);
+  });
+
+  it('fails when the server returns a non-string canonical_sha256', async () => {
+    expect(await submitAgainst({ ok: true, submission_id: 'abc', canonical_sha256: 12345 })).toBe(
+      2
+    );
+  });
+
+  it('succeeds when the digests agree', async () => {
+    expect(
+      await submitAgainst({ ok: true, submission_id: 'abc', canonical_sha256: serverDigest('jcs') })
+    ).toBe(0);
   });
 });
