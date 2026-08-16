@@ -164,7 +164,17 @@
     "factive",
     "cutover",
     "recanonicalizes",
-    "fixednonce"
+    "fixednonce",
+    "hermeticity",
+    "retriable",
+    "presubmit",
+    "pessimated",
+    "baselined",
+    "fixpoints",
+    "goldens",
+    "Irreproducible",
+    "linearizability",
+    "namespacing"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
