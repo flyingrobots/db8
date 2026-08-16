@@ -4,6 +4,15 @@ lastUpdated: 2026-08-16
 
 # Changelog
 
+## 2026-08-16 — Documentation standards, and three defects the rewrite found
+
+- **Standards split out of `AGENTS.md`**, which had grown to 1429 lines — 350 of standards on top of ~1000 of 2025 session logs, milestone status, and merged-PR debriefs. Now 121 lines that state how to work here and link to [testing](docs/TESTING-STANDARDS.md) and [documentation](docs/DOCUMENTATION-STANDARDS.md) standards. Historical pages are deleted rather than archived: git history holds them, and a stale page cannot mislead anyone once it is gone.
+- **`docs/Teardown.md`** — an end-to-end explanation from process entry point to durable row, for a reader with no prior knowledge. **`README.md`** rewritten as a front door that teaches from one real submission and its real digest.
+- **Submissions are not hidden before publication.** `db/rls.sql` carries a policy saying they are; it does not take effect. No table sets `FORCE ROW LEVEL SECURITY`, the API connects as the table owner (a superuser with `rolbypassrls` in the default setup), and views default to `SECURITY DEFINER`. The view `/state` reads has no phase filter of its own — its `CASE` handles attribution masking, and the phase predicate only suppresses flags. Verified directly: with a round still in `submit`, a second debater querying the statement `RoomService` issues gets the opponent's row back, `content` included. Simultaneous submission is the property the format exists to provide.
+- **`db8 journal verify` does not bind `core` to `hash`.** It verifies the signature over `hash` but never recomputes `sha256(canonicalize(core))`. Demonstrated by rewriting a signed journal's vote tally to 99–0 and watching verification still pass. It also reads the verifying public key from the journal being verified, so there is no trust anchor, and it re-fetches from the live API rather than checking the artifacts `journal pull` wrote to disk.
+- **No route reads the `Authorization` header.** It appears in the server only as an allow-listed CORS header name. `author_id`, `voter_id`, and `reporter_id` are taken from the request body at face value; the JWT the server mints carries `alg: "none"` with the literal string `sig` where a signature belongs. `POST /rpc/participant.fingerprint.set` is likewise unauthenticated, which inverts the author-binding guarantee.
+- These three are documented in [the README's security posture](README.md#security-posture) and §11 of the Teardown rather than left implicit. None is a design disagreement; the row-level-security one is a two-line fix.
+
 ## 2026-08-16 — Testing standards, and the tests they condemned
 
 - **Testing standards adopted** in `AGENTS.md`: rule-ID'd sections A–K governing any change that adds, modifies, or deletes a test, or that fixes a defect. Rule IDs are stable and citable in commits and review.
