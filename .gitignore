@@ -62,3 +62,6 @@ supabase/generated/
 web/test-results/
 web/playwright-report/
 web/e2e/*.png
+
+# Agent working notes (cool ideas, code-smell journal)
+.claude/

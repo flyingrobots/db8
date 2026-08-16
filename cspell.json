@@ -156,9 +156,13 @@
     "SQLSTATE",
     "resends",
     "setof",
+    "xact",
+    "hashtext",
     "unvalidated",
     "factive",
-    "cutover"
+    "cutover",
+    "recanonicalizes",
+    "fixednonce"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }

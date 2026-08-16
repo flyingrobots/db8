@@ -27,6 +27,9 @@ async function main() {
   const schemaPath = path.join(rootDir, 'db', 'schema.sql');
   const rpcPath = path.join(rootDir, 'db', 'rpc.sql');
   const rlsPath = path.join(rootDir, 'db', 'rls.sql');
+  // Applied here so no test file has to apply DDL at runtime. Each helper
+  // self-guards on a *_test database name.
+  const helpersPath = path.join(rootDir, 'db', 'test', 'helpers.sql');
 
   const client = new Client({ connectionString: dbUrl });
   await client.connect();
@@ -34,6 +37,7 @@ async function main() {
     if (await fileExists(schemaPath)) await applyFile(client, schemaPath);
     if (await fileExists(rpcPath)) await applyFile(client, rpcPath);
     if (await fileExists(rlsPath)) await applyFile(client, rlsPath);
+    if (await fileExists(helpersPath)) await applyFile(client, helpersPath);
   } finally {
     await client.end();
   }
