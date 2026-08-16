@@ -178,7 +178,8 @@
     "pêche",
     "péché",
     "peach",
-    "Clef"
+    "Clef",
+    "behaviours"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }

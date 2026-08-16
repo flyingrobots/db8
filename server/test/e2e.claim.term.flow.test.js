@@ -81,7 +81,12 @@ for (const mode of MODES) {
       await pool.end();
     });
 
-    const submission = (term) => ({
+    // Nonces are derived from the test's own name rather than Math.random().
+    // Ambient randomness made a failure here unreproducible, and it bought
+    // nothing: submission.create is idempotent on (room, round, author, nonce),
+    // and beforeAll drops the room, so a stable nonce is safe across reruns and
+    // is exactly what the second `npm test` pass exercises (E3, E4).
+    const submission = (term, nonce) => ({
       room_id: roomId,
       round_id: roundId,
       author_id: authorId,
@@ -92,20 +97,39 @@ for (const mode of MODES) {
         { id: 'c1', term, support: [{ kind: 'citation', ref: 'https://example.com/study' }] }
       ],
       citations: [{ url: 'https://example.com/a' }, { url: 'https://example.com/b' }],
-      client_nonce: `e2e-${Math.random().toString(36).slice(2)}`
+      client_nonce: `e2e-${mode.name}-${nonce}`
     });
 
-    let submissionId;
-
-    it('accepts a submission carrying a structured claim term', async () => {
+    // Each test that needs a submission makes its own.
+    //
+    // This used to be a `let submissionId` at describe scope, written by the
+    // first test and read by three later ones. That is shared mutable fixture
+    // state (E12): the suite only passed in declaration order, and under
+    // `--sequence.shuffle.tests` the later tests failed with
+    // `submission_id: undefined` because the writer had not run yet (E11).
+    const createSubmission = async (nonce, term = ATTRIBUTED) => {
       const res = await request(app)
         .post('/rpc/submission.create')
-        .send(submission(ATTRIBUTED))
+        .send(submission(term, nonce))
         .expect(200);
 
-      expect(res.body.ok).toBe(true);
-      submissionId = res.body.submission_id;
-      expect(submissionId).toBeTruthy();
+      expect(res.body.ok, `submission.create -> ${JSON.stringify(res.body)}`).toBe(true);
+      expect(res.body.submission_id, 'submission.create must return an id').toBeTruthy();
+      return res.body.submission_id;
+    };
+
+    it('accepts a submission carrying a structured claim term', async () => {
+      const submissionId = await createSubmission('accepts-structured-term');
+
+      // Not just an id: the stored submission is readable back through the
+      // transcript, which is what "accepted" has to mean to a client.
+      const res = await request(app).get(`/state?room_id=${roomId}`).expect(200);
+      const transcript = res.body.round?.transcript ?? [];
+      const mine = transcript.filter((t) => t.submission_id === submissionId);
+      expect(
+        mine,
+        `submission ${submissionId} in a transcript of ${transcript.length} entries`
+      ).toHaveLength(1);
     });
 
     // The gate that was unreachable for the whole of the previous PR. A route
@@ -119,7 +143,7 @@ for (const mode of MODES) {
 
       const res = await request(app)
         .post('/rpc/submission.create')
-        .send(submission(overDeep))
+        .send(submission(overDeep, 'malformed-term'))
         .expect(400);
 
       expect(res.body.error).toBe('invalid_claim_term');
@@ -139,6 +163,8 @@ for (const mode of MODES) {
     };
 
     it('rules on the attribution and the proposition as separate findings', async () => {
+      const submissionId = await createSubmission('separate-findings');
+
       await postVerdict({
         round_id: roundId,
         reporter_id: judgeId,
@@ -172,6 +198,7 @@ for (const mode of MODES) {
     });
 
     it('refuses a verdict aimed at a node the claim does not have', async () => {
+      const submissionId = await createSubmission('node-not-present');
       const res = await request(app)
         .post('/rpc/verify.submit')
         .send({
@@ -190,6 +217,7 @@ for (const mode of MODES) {
     });
 
     it('refuses a path with no claim to anchor it', async () => {
+      const submissionId = await createSubmission('unanchored-path');
       await request(app)
         .post('/rpc/verify.submit')
         .send({

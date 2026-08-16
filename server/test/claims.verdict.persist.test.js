@@ -5,6 +5,27 @@ import pg from 'pg';
 // claim must be two rows. If the uniqueness key ignores claim_path, the second
 // silently overwrites the first and "the source does not say that" is lost the
 // moment someone also rules on the proposition.
+
+// The claim carries a real term, because a verdict's path is checked against
+// it: "the study says remote work reduces productivity" has an addressable
+// attribution at `$` and the proposition it attributes at `$.body`.
+const CLAIMS = [
+  {
+    id: 'c1',
+    term: {
+      kind: 'framed',
+      frame: { kind: 'attribution', source: { kind: 'named', name: 'the_study' } },
+      body: {
+        kind: 'claim',
+        subject: { kind: 'named', name: 'remote_work' },
+        predicate: 'reduces',
+        object: 'productivity'
+      }
+    },
+    support: [{ kind: 'citation', ref: 'https://example.com/study' }]
+  }
+];
+
 describe('verdict claim_path persistence', () => {
   let pool;
   const dbUrl =
@@ -16,7 +37,38 @@ describe('verdict claim_path persistence', () => {
   const roundId = '5c1a0000-0000-0000-0000-000000000002';
   const authorId = '5c1a0000-0000-0000-0000-000000000003';
   const judgeId = '5c1a0000-0000-0000-0000-000000000004';
-  let submissionId;
+
+  // Every test makes its own submission and scopes its assertions to it.
+  //
+  // There used to be a single `let submissionId` filled in beforeAll, and every
+  // test wrote verdicts against that one row. The counts then depended on
+  // declaration order: "stores verdicts on different paths as separate rows"
+  // asserted exactly 2 rows, while four later tests added more to the same
+  // submission. Under `--sequence.shuffle.tests` it failed with `got 3` and
+  // `got 4`, and the summary test saw a stray null-path row (E11, E12).
+  const createSubmission = async (nonce) => {
+    const sub = await pool.query(
+      `insert into submissions (round_id, author_id, content, claims, canonical_sha256, client_nonce)
+       values ($1, $2, $3, $4, $5, $6)
+       on conflict (round_id, author_id, client_nonce) do update set content = excluded.content
+       returning id`,
+      [roundId, authorId, 'contested', JSON.stringify(CLAIMS), 'b'.repeat(64), nonce]
+    );
+    expect(sub.rows[0]?.id, `submission insert for nonce ${nonce}`).toBeTruthy();
+    return sub.rows[0].id;
+  };
+
+  const writeVerdict = (submissionId, verdict, rationale, nonce, claimPath) =>
+    pool.query('select verify_submit($1,$2,$3,$4,$5,$6,$7,$8)', [
+      roundId,
+      judgeId,
+      submissionId,
+      'c1',
+      verdict,
+      rationale,
+      nonce,
+      claimPath
+    ]);
 
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: dbUrl });
@@ -30,31 +82,6 @@ describe('verdict claim_path persistence', () => {
       'insert into participants(id, room_id, anon_name, role) values ($1, $2, $3, $4), ($5, $2, $6, $7)',
       [authorId, roomId, 'path_author', 'debater', judgeId, 'path_judge', 'judge']
     );
-    // The claim carries a real term, because a verdict's path is checked against
-    // it: "the study says remote work reduces productivity" has an addressable
-    // attribution at `$` and the proposition it attributes at `$.body`.
-    const claims = [
-      {
-        id: 'c1',
-        term: {
-          kind: 'framed',
-          frame: { kind: 'attribution', source: { kind: 'named', name: 'the_study' } },
-          body: {
-            kind: 'claim',
-            subject: { kind: 'named', name: 'remote_work' },
-            predicate: 'reduces',
-            object: 'productivity'
-          }
-        },
-        support: [{ kind: 'citation', ref: 'https://example.com/study' }]
-      }
-    ];
-    const sub = await pool.query(
-      `insert into submissions (round_id, author_id, content, claims, canonical_sha256, client_nonce)
-       values ($1, $2, $3, $4, $5, $6) returning id`,
-      [roundId, authorId, 'contested', JSON.stringify(claims), 'b'.repeat(64), 'nonce-verdict-path']
-    );
-    submissionId = sub.rows[0].id;
   });
 
   afterAll(async () => {
@@ -63,26 +90,9 @@ describe('verdict claim_path persistence', () => {
   });
 
   it('stores verdicts on different paths as separate rows', async () => {
-    await pool.query('select verify_submit($1,$2,$3,$4,$5,$6,$7,$8)', [
-      roundId,
-      judgeId,
-      submissionId,
-      'c1',
-      'false',
-      'the study does not say that',
-      'nonce-path-outer',
-      '$'
-    ]);
-    await pool.query('select verify_submit($1,$2,$3,$4,$5,$6,$7,$8)', [
-      roundId,
-      judgeId,
-      submissionId,
-      'c1',
-      'true',
-      'the study says it, and it holds',
-      'nonce-path-inner',
-      '$.body'
-    ]);
+    const submissionId = await createSubmission('nonce-sub-separate-rows');
+    await writeVerdict(submissionId, 'false', 'the study does not say that', 'outer', '$');
+    await writeVerdict(submissionId, 'true', 'the study says it, and it holds', 'inner', '$.body');
 
     const rows = await pool.query(
       'select claim_path, verdict from verification_verdicts where submission_id = $1 order by claim_path',
@@ -100,6 +110,10 @@ describe('verdict claim_path persistence', () => {
   // the stated reason claim paths exist: "the study does not say that" and "the
   // study says it and it is false" must not land in the same false_count.
   it('reports the two paths as separate rows in the summary', async () => {
+    const submissionId = await createSubmission('nonce-sub-summary');
+    await writeVerdict(submissionId, 'false', 'the study does not say that', 'outer', '$');
+    await writeVerdict(submissionId, 'true', 'the study says it, and it holds', 'inner', '$.body');
+
     const summary = await pool.query('select * from verify_summary($1::uuid)', [roundId]);
     const mine = summary.rows.filter((r) => r.submission_id === submissionId);
 
@@ -122,6 +136,7 @@ describe('verdict claim_path persistence', () => {
   // to drift. The trade is that a client reaching the function directly is not
   // stopped — revisit if the SQL-only direction lands.
   it('refuses a verdict whose path names no node in the claim term', async () => {
+    const submissionId = await createSubmission('nonce-sub-bogus-path');
     const { VerificationService } = await import('../services/VerificationService.js');
     const { createVerdictStore } = await import('../adapters/ConfiguredVerdictStore.js');
     const service = new VerificationService({
@@ -147,6 +162,7 @@ describe('verdict claim_path persistence', () => {
   });
 
   it('accepts a path that does resolve against the stored term', async () => {
+    const submissionId = await createSubmission('nonce-sub-resolves');
     const { VerificationService } = await import('../services/VerificationService.js');
     const { createVerdictStore } = await import('../adapters/ConfiguredVerdictStore.js');
     const service = new VerificationService({
@@ -168,23 +184,28 @@ describe('verdict claim_path persistence', () => {
       client_nonce: 'nonce-path-resolves'
     });
     expect(result.id).toBeTruthy();
+
+    // A returned id is the service's claim, not evidence. Read the row back:
+    // "accepts" has to mean the verdict is durable and bound to the node named.
+    const rows = await pool.query(
+      'select claim_path, verdict from verification_verdicts where id = $1',
+      [result.id]
+    );
+    expect(rows.rows, `verdict ${result.id} must be stored`).toHaveLength(1);
+    expect(rows.rows[0]).toMatchObject({ claim_path: '$.body', verdict: 'true' });
   });
 
   it('is still idempotent for the same path and nonce', async () => {
+    const submissionId = await createSubmission('nonce-sub-idempotent');
+    await writeVerdict(submissionId, 'false', 'first ruling', 'outer', '$');
+
     const before = await pool.query(
       'select count(*)::int as n from verification_verdicts where submission_id = $1',
       [submissionId]
     );
-    await pool.query('select verify_submit($1,$2,$3,$4,$5,$6,$7,$8)', [
-      roundId,
-      judgeId,
-      submissionId,
-      'c1',
-      'unclear',
-      'revised',
-      'nonce-path-outer',
-      '$'
-    ]);
+    expect(before.rows[0].n, 'one verdict before the resubmission').toBe(1);
+
+    await writeVerdict(submissionId, 'unclear', 'revised', 'outer', '$');
     const after = await pool.query(
       'select count(*)::int as n, max(verdict) filter (where claim_path = $2) as v from verification_verdicts where submission_id = $1',
       [submissionId, '$']
@@ -194,16 +215,10 @@ describe('verdict claim_path persistence', () => {
   });
 
   it('treats a whole-claim verdict as distinct from one naming a path', async () => {
-    await pool.query('select verify_submit($1,$2,$3,$4,$5,$6,$7,$8)', [
-      roundId,
-      judgeId,
-      submissionId,
-      'c1',
-      'needs_work',
-      'no path given',
-      'nonce-path-null',
-      null
-    ]);
+    const submissionId = await createSubmission('nonce-sub-null-path');
+    await writeVerdict(submissionId, 'false', 'on the attribution', 'outer', '$');
+    await writeVerdict(submissionId, 'needs_work', 'no path given', 'null-path', null);
+
     const rows = await pool.query(
       'select count(*)::int as n from verification_verdicts where submission_id = $1 and claim_path is null',
       [submissionId]
