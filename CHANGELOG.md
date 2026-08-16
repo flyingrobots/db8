@@ -12,6 +12,12 @@ lastUpdated: 2026-08-15
 - **The CLI canonicalizes through the same code as the server.** `bin/db8.js` carried its own implementation whose `sorted` branch used a replacer _array_ — an allow-list applied at every depth — so nested keys were deleted and a submission's claims and citations canonicalized to `{}`. Two different arguments produced one digest, and anything signed under `sorted` failed verification. `server/canon-mode.js` now resolves a mode in one place and validates it; an unrecognized mode is an error rather than a silent fall back to the broken branch. `db8 submit` also stopped printing its own digest over the server's, and now fails if the response carries none.
 - **Tests no longer apply DDL at runtime.** `db/rls.sql` locks `rooms` before `rounds` and `db/rpc.sql` the reverse, which deadlocked about one run in five. `prepare-db` applies the test helpers instead, and the one remaining schema test runs inside an isolated scratch schema so it cannot contend with anything.
 
+## 2026-08-15 — Cross-origin access, and browser tests
+
+- **The web app could not reach the API from a browser.** `web` serves on :3001, the API defaults to :3000, `apiBase()` builds an absolute URL and there is no proxy — so every response was blocked with `No 'Access-Control-Allow-Origin' header is present`. `state` never loaded, and the room page rendered a shell with no submission form. Confirmed in Chromium, not inferred.
+- `server/cors.js` grants cross-origin access to an allow-list, configured with `DB8_ALLOWED_ORIGINS` (comma-separated) and defaulting to the local dev web origins. Never `*`: these endpoints accept a bearer token, and an open policy would let any page a participant has open call them with that participant's credentials. Responses carry `Vary: Origin` so a cache cannot serve one origin a header meant for another.
+- Browser tests for the claim term editor in `web/e2e/`, run with `npm run test:e2e` from `web/`. Deliberately not part of `npm test`, which runs on every push: requiring a browser engine there would make an ordinary commit depend on a 95MB install.
+
 ## 2026-08-11 — Claim terms wired through submissions and verdicts (breaking)
 
 - Submissions

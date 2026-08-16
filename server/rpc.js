@@ -12,6 +12,7 @@ import { AuthService } from './services/AuthService.js';
 import { RoomService } from './services/RoomService.js';
 import { VoteService } from './services/VoteService.js';
 import { ScoringService } from './services/ScoringService.js';
+import { cors } from './cors.js';
 import { VerificationService } from './services/VerificationService.js';
 import { createVerdictStore } from './adapters/ConfiguredVerdictStore.js';
 
@@ -28,6 +29,7 @@ import { createEventsRouter } from './routes/events.js';
 
 const app = express();
 const config = loadConfig();
+app.use(cors({ origins: config.allowedOrigins }));
 app.use(express.json());
 app.use(rateLimitStub({ enforce: true }));
 app.use(express.static('public'));
