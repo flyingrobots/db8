@@ -126,6 +126,11 @@ BEGIN
        AND contype = 'u'
        AND pg_get_constraintdef(oid) = 'UNIQUE (round_id, voter_id, client_nonce)'
   ) THEN
+    -- Against writers, not just other readers. DELETE takes ROW EXCLUSIVE, which
+    -- stays compatible with concurrent INSERTs: a fresh-nonce ballot uncommitted
+    -- during the delete's snapshot could commit before ADD CONSTRAINT takes its
+    -- exclusive lock, leaving a duplicate pair and rolling back the upgrade.
+    LOCK TABLE final_votes IN ACCESS EXCLUSIVE MODE;
     DELETE FROM final_votes f
      WHERE EXISTS (
        SELECT 1 FROM final_votes newer

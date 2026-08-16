@@ -101,4 +101,61 @@ describeDb('final vote integrity', () => {
     await setPhase('submit');
     await expect(castVote(true, 'too-early')).rejects.toThrow(/phase|not_final|window/i);
   });
+
+  describe('a rejected final vote is not reported as accepted', () => {
+    // The phase guard raises inside vote_final_submit, but VoteService caught
+    // every query error and fell through to memory — returning a random vote_id
+    // and HTTP 200. The guard enforced nothing: the caller was told an invalid,
+    // unpersisted ballot had been accepted.
+    //
+    // Postgres sets `severity` on anything it replied with. A connection that
+    // never got an answer has none. That is the difference between a rule and an
+    // outage, and it is the same discrimination PostgresVerdictStore already makes.
+    it('propagates the phase rejection instead of falling back to memory', async () => {
+      const { VoteService } = await import('../services/VoteService.js');
+      await pool.query('update rounds set phase = $2 where id = $1', [roundId, 'submit']);
+
+      const service = new VoteService({
+        dbRef: { pool },
+        memVotes: new Map(),
+        memVoteTotals: new Map()
+      });
+
+      await expect(
+        service.castFinalVote({
+          round_id: roundId,
+          voter_id: voterId,
+          approval: true,
+          ranking: [],
+          client_nonce: 'rejected-should-not-succeed'
+        })
+      ).rejects.toThrow(/final phase/i);
+    });
+
+    it('still falls back to memory when the database is genuinely unreachable', async () => {
+      const { VoteService } = await import('../services/VoteService.js');
+      const service = new VoteService({
+        dbRef: {
+          pool: {
+            query: async () => {
+              const err = new Error('connect ECONNREFUSED 127.0.0.1:54329');
+              err.code = 'ECONNREFUSED';
+              throw err;
+            }
+          }
+        },
+        memVotes: new Map(),
+        memVoteTotals: new Map()
+      });
+
+      const result = await service.castFinalVote({
+        round_id: roundId,
+        voter_id: voterId,
+        approval: true,
+        ranking: [],
+        client_nonce: 'unreachable-may-fall-back'
+      });
+      expect(result.vote_id).toBeTruthy();
+    });
+  });
 });
