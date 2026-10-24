@@ -195,7 +195,7 @@ export class RoomService {
     if (this.pool) {
       try {
         const roomRes = await this.pool.query(
-          'SELECT id, title, status, config FROM rooms WHERE id = $1',
+          'SELECT id, title, status, config FROM rooms_view WHERE id = $1',
           [roomId]
         );
         const row = roomRes.rows[0];

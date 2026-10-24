@@ -189,3 +189,36 @@ describe('room.get when the database is unreachable', () => {
     expect(room.topic).toBe('Made during outage');
   });
 });
+
+describe('room.get database reads', () => {
+  function serviceWith(pool) {
+    return new RoomService({
+      dbRef: { pool },
+      memRooms: new Map(),
+      memRoomNonces: new Map(),
+      memSubmissions: new Map(),
+      memFlags: new Map(),
+      memVoteTotals: new Map(),
+      config: {}
+    });
+  }
+
+  it('reads only through secure views, never base tables', async () => {
+    const seen = [];
+    const pool = {
+      query: async (sql) => {
+        seen.push(sql);
+        return {
+          rows: [{ id: 'r', title: 't', status: 'active', config: {} }]
+        };
+      }
+    };
+    await serviceWith(pool).getRoom('23000000-0000-4000-8000-000000000004');
+    expect(seen.length).toBeGreaterThan(0);
+    for (const sql of seen) {
+      for (const [, table] of sql.matchAll(/\bfrom\s+([a-z_]+)/gi)) {
+        expect(table).toMatch(/_view$/);
+      }
+    }
+  });
+});
