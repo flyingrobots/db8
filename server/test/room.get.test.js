@@ -221,4 +221,19 @@ describe('room.get database reads', () => {
       }
     }
   });
+
+  it('still finds a room created in memory during an outage after the database recovers', async () => {
+    let down = true;
+    const pool = {
+      query: async () => {
+        if (down) throw new Error('connect ECONNREFUSED 127.0.0.1:54329');
+        return { rows: [] };
+      }
+    };
+    const service = serviceWith(pool);
+    const { room_id } = await service.createRoom({ topic: 'Outage room', client_nonce: nonce() });
+    down = false;
+    const room = await service.getRoom(room_id);
+    expect(room?.topic).toBe('Outage room');
+  });
 });

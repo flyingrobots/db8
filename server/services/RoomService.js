@@ -199,7 +199,9 @@ export class RoomService {
           [roomId]
         );
         const row = roomRes.rows[0];
-        if (!row) return null;
+        // No row is not proof the room is missing: one created in memory
+        // during an outage lives only there, so check memory before saying so.
+        if (!row) return this._memoryRoom(roomId);
         const seatsRes = await this.pool.query(
           `SELECT id, anon_name, role FROM participants_view
             WHERE room_id = $1
@@ -219,16 +221,19 @@ export class RoomService {
       }
     }
 
+    const room = this._memoryRoom(roomId);
+    // Memory holds only rooms created while the database was unavailable.
+    // After a failed query, "not in memory" is not "does not exist": say so
+    // rather than reporting a real room as missing.
+    if (!room && dbError) throw new Error('database_unavailable', { cause: dbError });
+    return room;
+  }
+
+  _memoryRoom(roomId) {
     // Rooms that getRoomState invents on the fly have no seats; they were never
     // created, so they are not reported here.
     const room = this.memRooms.get(roomId);
-    if (!room?.participants) {
-      // Memory holds only rooms created while the database was unavailable.
-      // After a failed query, "not in memory" is not "does not exist": say so
-      // rather than reporting a real room as missing.
-      if (dbError) throw new Error('database_unavailable', { cause: dbError });
-      return null;
-    }
+    if (!room?.participants) return null;
     return {
       room_id: roomId,
       topic: room.topic,
