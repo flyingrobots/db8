@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-12-23
+lastUpdated: 2026-10-24
 ---
 
 # Getting Started
@@ -81,6 +81,7 @@ SSH verification (M2)
 Endpoints (canonical realtime = SSE):
 
 - `GET /state` — returns the active round snapshot, continue tally, and transcript
+- `GET /rpc/room.get?room_id=<uuid>` — returns `{ok, room_id, topic, status, config, participants: [{id, anon_name, role}]}`, with seats ordered by number (`agent_1`, `agent_2`, …). Unknown room: 404 `room_not_found`. While identity is unauthenticated ([#210](https://github.com/flyingrobots/db8/issues/210)), participant ids act as bearer identifiers, so treat this endpoint as local or trusted use only.
 - `GET /events?room_id=<uuid>` — SSE stream of realtime events
   - event: timer
     - t: "timer"
