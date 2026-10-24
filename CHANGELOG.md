@@ -7,7 +7,8 @@ lastUpdated: 2026-10-24
 ## 2026-10-24 — Room and seat lookup
 
 - **`GET /rpc/room.get?room_id=<uuid>`** returns a room's topic, status, config and seats (`id`, `anon_name`, `role`), ordered by seat number so `agent_2` precedes `agent_10`. Before this, `room.create` returned only `room_id`, `/state` had no topic or roster, and a participant could learn their id only from Postgres (#230).
-- An unknown room is 404 `room_not_found`; a non-UUID id is 400 `invalid_room_id`. If the database is configured but unreachable, the answer is 503 `database_unavailable` rather than a 404 for a room that exists. Rooms created in memory during the outage are still answered.
+- An unknown room is 404 `room_not_found`; a non-UUID id is 400 `invalid_room_id`. If the database is configured but unreachable, the answer is 503 `database_unavailable` rather than a 404 for a room that exists. Rooms created in memory during the outage are still answered, including after the database recovers.
+- Room metadata is read through a new `rooms_view` (`security_barrier`), so `room.get` follows the rule that server reads go through views.
 - Memory-mode `room.create` now seeds `agent_1..agent_N` debaters like SQL `room_create`, so both modes answer with the same shape.
 - CLI: `db8 room seats` (`--json`), exit 8 for an unknown room.
 
