@@ -47,6 +47,8 @@ export function createSubmissionRouter({ submissionService, requireDbInProductio
         return res.status(500).json({ ok: false, error: err.message });
       if (err.message === 'deadline_passed' || err.message === 'invalid_nonce')
         return res.status(400).json({ ok: false, error: err.message });
+      if (err.message === 'nonce_reused')
+        return res.status(409).json({ ok: false, error: 'nonce_reused' });
       return res.status(400).json({ ok: false, error: err?.message || String(err) });
     }
   });

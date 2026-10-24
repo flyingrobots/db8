@@ -98,8 +98,17 @@ BEGIN
   VALUES (p_round_id, p_author_id, p_content, p_claims, p_citations,
           'submitted', now(), p_canonical_sha256, p_client_nonce)
   ON CONFLICT (round_id, author_id, client_nonce)
+  -- A replayed nonce is idempotent only for the same document. Updating the hash
+  -- alone left the old content beside the new hash (#236), so a different
+  -- document under a reused nonce is refused and the stored row is untouched.
   DO UPDATE SET canonical_sha256 = EXCLUDED.canonical_sha256
+    WHERE submissions.canonical_sha256 = EXCLUDED.canonical_sha256
   RETURNING id INTO v_id;
+
+  IF v_id IS NULL THEN
+    RAISE EXCEPTION 'nonce_reused' USING ERRCODE = 'P0001',
+      DETAIL = 'client_nonce was already used for a different document in this round';
+  END IF;
 
   PERFORM admin_audit_log_write(
     CASE WHEN v_exists THEN 'update' ELSE 'create' END,

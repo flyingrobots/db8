@@ -83,6 +83,9 @@ export class SubmissionService {
       } catch (e) {
         const msg = typeof e === 'string' ? e : e?.message || String(e) || 'db_error';
         if (/invalid_nonce/i.test(msg)) throw new Error('invalid_nonce', { cause: e });
+        // A refused nonce reuse (#236) is a decision, not a database failure: falling
+        // back to memory here would report ok:true for a document that was refused.
+        if (/nonce_reused/i.test(msg)) throw new Error('nonce_reused', { cause: e });
 
         // Log DB error and fall back to memory (except invalid_nonce handled above)
         console.error('[SubmissionService] DB error, falling back to memory:', msg);
@@ -101,7 +104,11 @@ export class SubmissionService {
   _createInMemory(key, input, canonical_sha256, dbError = null) {
     let submission_id;
     if (this.memSubmissions.has(key)) {
-      submission_id = this.memSubmissions.get(key).id;
+      const existing = this.memSubmissions.get(key);
+      // Same rule as submission_upsert (#236): a reused nonce is idempotent only for
+      // the same document.
+      if (existing.canonical_sha256 !== canonical_sha256) throw new Error('nonce_reused');
+      submission_id = existing.id;
     } else {
       submission_id = crypto.randomUUID();
       this.memSubmissions.set(key, {

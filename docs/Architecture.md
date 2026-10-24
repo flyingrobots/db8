@@ -281,7 +281,10 @@ Server flow:
    - Verify ed25519: libsodium crypto_sign_verify_detached.
    - Enforce that the signer principal/fingerprint maps to author_id.
 1. Check deadline and RLS.
-1. Enforce idempotency via (round_id, author_id, client_nonce) uniqueness.
+1. Enforce idempotency via (round_id, author_id, client_nonce) uniqueness. A
+   replay of the same document returns the same id; a different document under
+   a reused nonce is refused with `409 nonce_reused` and the stored row is
+   unchanged (#236).
 1. Insert row (status = submitted), persist signature fields.
 1. Return {ok, submission_id, canonical_sha256}.
 

@@ -320,6 +320,7 @@ Story: Submit and resubmit
   `--nonce`) and resubmit with a new nonce to bump version server-side.
 - Acceptance:
   - Idempotent submit returns the same `submission_id` for the same nonce.
+  - Reusing a nonce for a different document is refused (`409 nonce_reused`).
   - JSON output includes `{ submission_id, canonical_sha256 }` when `--json`.
 
 Story: Watch room
