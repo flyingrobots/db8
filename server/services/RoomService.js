@@ -161,8 +161,12 @@ export class RoomService {
     }
 
     const tally = this.memVoteTotals.get(roomId) || { yes: 0, no: 0 };
+    // Blind submission (#226): the memory store keeps only the current round, so
+    // every other round in it has already published. Hide the current round's
+    // submissions until it does too.
+    const hidden = room.round.phase === 'submit' ? room.round.round_id : null;
     const transcript = Array.from(this.memSubmissions.entries())
-      .filter(([key]) => key.startsWith(`${roomId}:`))
+      .filter(([key, value]) => key.startsWith(`${roomId}:`) && value.round_id !== hidden)
       .map(([, value]) => {
         const flags = this.memFlags.get(value.id);
         const count = flags ? flags.size : 0;

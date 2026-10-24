@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-12-23
+lastUpdated: 2026-10-24
 ---
 
 # Getting Started
@@ -81,6 +81,7 @@ SSH verification (M2)
 Endpoints (canonical realtime = SSE):
 
 - `GET /state` — returns the active round snapshot, continue tally, and transcript
+  - The transcript only includes submissions from rounds that are `published` or `final`. A round's submissions stay hidden while it is in `submit`, so debaters cannot read each other's turns early ([#226](https://github.com/flyingrobots/db8/issues/226)).
 - `GET /events?room_id=<uuid>` — SSE stream of realtime events
   - event: timer
     - t: "timer"
