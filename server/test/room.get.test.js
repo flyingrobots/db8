@@ -142,3 +142,50 @@ describe('CLI room seats', () => {
     expect(err.stderr).toContain('room_not_found');
   });
 });
+
+describe('room.get when the database is unreachable', () => {
+  const failingPool = {
+    query: async () => {
+      throw new Error('connect ECONNREFUSED 127.0.0.1:54329');
+    }
+  };
+
+  function serviceWith(pool) {
+    return new RoomService({
+      dbRef: { pool },
+      memRooms: new Map(),
+      memRoomNonces: new Map(),
+      memSubmissions: new Map(),
+      memFlags: new Map(),
+      memVoteTotals: new Map(),
+      config: {}
+    });
+  }
+
+  it('answers 503, not 404, for a room the memory store does not hold', async () => {
+    const express = (await import('express')).default;
+    const { createRoomRouter } = await import('../routes/room.js');
+    const mini = express();
+    mini.use(
+      createRoomRouter({
+        roomService: serviceWith(failingPool),
+        requireDbInProduction: (_q, _s, n) => n()
+      })
+    );
+
+    const res = await request(mini)
+      .get('/rpc/room.get?room_id=23000000-0000-4000-8000-000000000003')
+      .expect(503);
+    expect(res.body).toEqual({ ok: false, error: 'database_unavailable' });
+  });
+
+  it('still answers for a room that memory mode created during the outage', async () => {
+    const service = serviceWith(failingPool);
+    const { room_id } = await service.createRoom({
+      topic: 'Made during outage',
+      client_nonce: nonce()
+    });
+    const room = await service.getRoom(room_id);
+    expect(room.topic).toBe('Made during outage');
+  });
+});

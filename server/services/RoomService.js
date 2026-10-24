@@ -191,6 +191,7 @@ export class RoomService {
    * agent_10).
    */
   async getRoom(roomId) {
+    let dbError = null;
     if (this.pool) {
       try {
         const roomRes = await this.pool.query(
@@ -214,13 +215,20 @@ export class RoomService {
         };
       } catch (err) {
         console.error('[RoomService] DB error (getRoom), falling back to memory:', err.message);
+        dbError = err;
       }
     }
 
     // Rooms that getRoomState invents on the fly have no seats; they were never
     // created, so they are not reported here.
     const room = this.memRooms.get(roomId);
-    if (!room?.participants) return null;
+    if (!room?.participants) {
+      // Memory holds only rooms created while the database was unavailable.
+      // After a failed query, "not in memory" is not "does not exist": say so
+      // rather than reporting a real room as missing.
+      if (dbError) throw new Error('database_unavailable', { cause: dbError });
+      return null;
+    }
     return {
       room_id: roomId,
       topic: room.topic,

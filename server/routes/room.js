@@ -22,6 +22,9 @@ export function createRoomRouter({ roomService, requireDbInProduction }) {
       if (!room) return res.status(404).json({ ok: false, error: 'room_not_found' });
       return res.json({ ok: true, ...room });
     } catch (err) {
+      if (err?.message === 'database_unavailable') {
+        return res.status(503).json({ ok: false, error: 'database_unavailable' });
+      }
       return res.status(500).json({ ok: false, error: err?.message || String(err) });
     }
   });
