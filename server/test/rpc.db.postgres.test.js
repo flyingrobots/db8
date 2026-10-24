@@ -132,6 +132,44 @@ suite('Postgres-backed RPC integration', () => {
     expect(transcriptEntry?.canonical_sha256).toEqual(expectedHash);
   });
 
+  it('refuses a different document under a reused nonce and keeps the stored hash (#236)', async () => {
+    const body = {
+      room_id: '0b8e0000-0000-0000-0000-000000000001',
+      round_id: '0b8e0000-0000-0000-0000-000000000002',
+      author_id: '0b8e0000-0000-0000-0000-000000000003',
+      phase: 'submit',
+      deadline_unix: 0,
+      content: 'First draft: the claim is X.',
+      claims: [
+        {
+          id: 'c1',
+          term: {
+            kind: 'claim',
+            subject: { kind: 'named', name: 'claimant' },
+            predicate: 'asserts',
+            object: 'Claim'
+          },
+          support: [{ kind: 'logic', ref: 'a' }]
+        }
+      ],
+      citations: [{ url: 'https://example.com/a' }, { url: 'https://example.com/b' }],
+      client_nonce: 'pg-nonce-reused-236'
+    };
+    const first = await request(app).post('/rpc/submission.create').send(body).expect(200);
+    const edited = { ...body, content: 'Edited after seeing the room: the claim is Y.' };
+    const second = await request(app).post('/rpc/submission.create').send(edited).expect(409);
+    expect(second.body).toMatchObject({ ok: false, error: 'nonce_reused' });
+
+    const rows = await pool.query(
+      'select content, canonical_sha256 from submissions where id = $1',
+      [first.body.submission_id]
+    );
+    expect(rows.rows[0]).toEqual({
+      content: body.content,
+      canonical_sha256: first.body.canonical_sha256
+    });
+  });
+
   it('persists continue votes through vote_submit', async () => {
     // Ensure round is in a voteable phase with an open window
     const now = Math.floor(Date.now() / 1000);

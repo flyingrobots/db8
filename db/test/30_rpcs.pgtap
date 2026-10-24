@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(27);
+SELECT plan(28);
 
 -- RPC existence: room_create(topic, cfg)
 SELECT has_function('public','room_create', ARRAY['text','jsonb','text']);
@@ -125,15 +125,24 @@ BEGIN
   SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', n) INTO id1;
   SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', n) INTO id2;
   PERFORM ok(id1 = id2, 'submission_upsert idempotent for same nonce');
-  -- Change canonical and ensure the row updates
-  PERFORM submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe', n);
-  PERFORM ok((SELECT canonical_sha256 FROM submissions WHERE id = id1) = 'cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe',
-    'submission_upsert updates canonical on conflict');
   SELECT count(*) INTO sub_count FROM submissions WHERE round_id = round AND author_id = author;
   PERFORM ok(sub_count = 1, 'submission_upsert stores single row for repeated nonce');
   SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', n2) INTO id3;
   PERFORM ok(id3 <> id1, 'submission_upsert creates new row for different nonce');
 END$$;
+
+-- A different document under a reused nonce is refused, and the row keeps the
+-- hash of the content it actually stores (#236). Top-level so TAP output is visible.
+SELECT throws_ok(
+  $$SELECT submission_upsert('00000000-0000-0000-0000-0000000000aa', '00000000-0000-0000-0000-0000000000bb', 'edited', '[]'::jsonb, '[]'::jsonb,
+                             'cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe', 'nonce-sub-1')$$,
+  'P0001', 'nonce_reused',
+  'submission_upsert refuses a different document under a reused nonce (#236)');
+SELECT is(
+  (SELECT content || '|' || canonical_sha256 FROM submissions
+    WHERE round_id = '00000000-0000-0000-0000-0000000000aa' AND author_id = '00000000-0000-0000-0000-0000000000bb' AND client_nonce = 'nonce-sub-1'),
+  'hello|deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+  'a refused nonce reuse leaves content and hash unchanged (#236)');
 
 -- RPC existence: vote_submit(round_id, voter_id, kind, ballot, client_nonce)
 SELECT has_function('public','vote_submit', ARRAY['uuid','uuid','text','jsonb','text']);
