@@ -147,6 +147,9 @@ export class RoomService {
       // Tally continue votes
       const tally = this.memVoteTotals.get(roomId) || { yes: 0, no: 0 };
       if (tally.yes > tally.no) {
+        // The outgoing round has published; remember it so its submissions
+        // stay visible after the room moves on.
+        room.publishedRounds = new Set(room.publishedRounds).add(room.round.round_id);
         room.round = {
           round_id: crypto.randomUUID(),
           idx: room.round.idx + 1,
@@ -161,8 +164,14 @@ export class RoomService {
     }
 
     const tally = this.memVoteTotals.get(roomId) || { yes: 0, no: 0 };
+    // Blind submission (#226), failing closed: a submission is visible only if
+    // its round is known to have published. That is a round this room has moved
+    // past, or the current round once it is no longer in submit. A submission
+    // naming any other round id, or a room whose round has no id, shows nothing.
+    const published = new Set(room.publishedRounds);
+    if (room.round.round_id && room.round.phase !== 'submit') published.add(room.round.round_id);
     const transcript = Array.from(this.memSubmissions.entries())
-      .filter(([key]) => key.startsWith(`${roomId}:`))
+      .filter(([key, value]) => key.startsWith(`${roomId}:`) && published.has(value.round_id))
       .map(([, value]) => {
         const flags = this.memFlags.get(value.id);
         const count = flags ? flags.size : 0;
@@ -210,6 +219,9 @@ export class RoomService {
     this.memRooms.set(roomId, {
       topic,
       round: {
+        // Without an id, /state could never name this round, and the blind
+        // submission filter could never show its submissions.
+        round_id: crypto.randomUUID(),
         idx: 0,
         phase: 'submit',
         submit_deadline_unix: Math.floor(Date.now() / 1000) + (cfg?.submit_minutes || 60) * 60

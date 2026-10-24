@@ -1,8 +1,14 @@
 ---
-lastUpdated: 2026-08-15
+lastUpdated: 2026-10-24
 ---
 
 # Changelog
+
+## 2026-10-24 — Blind submission at the read path
+
+- **`/state` no longer shows a submission while its round is in `submit`.** Its transcript read every submission in the room through `submissions_with_flags_view`, which had no phase filter and relied on RLS that does not take effect (#208), so a debater could read an opponent's turn before writing their own (#226).
+- The view now returns a submission only when its round is `published` or `final`, or to its own author when `db8.participant_id` is set. `final` is included, unlike the RLS read policy, so a finished debate keeps its transcript.
+- Memory mode fails closed: a submission is shown only if its round is known to have published. A submission naming an unknown round id, such as the CLI's placeholder, stays hidden. Memory-mode `room.create` rooms now carry a `round_id`.
 
 ## 2026-08-15 — Verdict persistence behind a port
 

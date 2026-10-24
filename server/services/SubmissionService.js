@@ -109,7 +109,8 @@ export class SubmissionService {
         canonical_sha256,
         content: input.content,
         author_id: input.author_id,
-        room_id: input.room_id
+        room_id: input.room_id,
+        round_id: input.round_id
       });
       // Claims are kept so the memory path can resolve a verdict's claim_path
       // the same way the database path does.

@@ -469,7 +469,13 @@ CREATE OR REPLACE VIEW submissions_with_flags_view AS
       JOIN rounds rr ON rr.id = s2.round_id
      WHERE rr.phase = 'published'
      GROUP BY sf.submission_id
-  ) f ON f.submission_id = s.id;
+  ) f ON f.submission_id = s.id
+  -- Blind submission (#226): /state reads this view, and RLS does not hold the
+  -- line on its own (#208), so the view filters by phase itself. Mirrors the
+  -- submissions read policy, plus `final` so a finished debate keeps its
+  -- transcript. The author branch only matches when db8.participant_id is set.
+  WHERE r.phase IN ('published', 'final')
+     OR s.author_id = db8_current_participant_id();
 
 DROP VIEW IF EXISTS view_final_tally CASCADE;
 CREATE OR REPLACE VIEW view_final_tally AS

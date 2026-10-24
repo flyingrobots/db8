@@ -65,6 +65,13 @@ suite('Postgres-backed RPC integration', () => {
   });
 
   it('persists submissions through submission_upsert', async () => {
+    // The round row outlives a run and the next test publishes it, so set the
+    // phase here: the transcript assertions below depend on it.
+    await pool.query(
+      `update rounds
+          set phase='submit', published_at_unix = null, continue_vote_close_unix = null
+        where id = '0b8e0000-0000-0000-0000-000000000002'`
+    );
     const body = {
       room_id: '0b8e0000-0000-0000-0000-000000000001',
       round_id: '0b8e0000-0000-0000-0000-000000000002',
@@ -107,10 +114,20 @@ suite('Postgres-backed RPC integration', () => {
     ]);
     expect(rows.rows[0]?.canonical_sha256).toEqual(expectedHash);
 
-    const state = await request(app).get(`/state?room_id=${body.room_id}`).expect(200);
-    const transcriptEntry = state.body?.round?.transcript?.find(
-      (t) => t.submission_id === first.body.submission_id
+    const entryFor = async () => {
+      const state = await request(app).get(`/state?room_id=${body.room_id}`).expect(200);
+      return state.body?.round?.transcript?.find(
+        (t) => t.submission_id === first.body.submission_id
+      );
+    };
+
+    // Blind submission (#226): invisible while its round is still in submit.
+    expect(await entryFor()).toBeUndefined();
+
+    await pool.query(
+      "update rounds set phase='published' where id = '0b8e0000-0000-0000-0000-000000000002'"
     );
+    const transcriptEntry = await entryFor();
     expect(transcriptEntry).toBeTruthy();
     expect(transcriptEntry?.canonical_sha256).toEqual(expectedHash);
   });
