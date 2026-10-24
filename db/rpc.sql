@@ -420,6 +420,11 @@ CREATE OR REPLACE VIEW participants_view AS
   SELECT id, room_id, anon_name, role, ssh_fingerprint, created_at
   FROM participants;
 
+DROP VIEW IF EXISTS rooms_view CASCADE;
+CREATE OR REPLACE VIEW rooms_view AS
+  SELECT id, title, status, config, created_at
+  FROM rooms;
+
 DROP VIEW IF EXISTS rounds_view CASCADE;
 CREATE OR REPLACE VIEW rounds_view AS
   SELECT id, room_id, idx, phase, submit_deadline_unix, published_at_unix, continue_vote_close_unix
@@ -493,6 +498,7 @@ CREATE OR REPLACE VIEW view_final_tally AS
 ALTER VIEW submissions_view SET (security_barrier = true);
 ALTER VIEW votes_view SET (security_barrier = true);
 ALTER VIEW participants_view SET (security_barrier = true);
+ALTER VIEW rooms_view SET (security_barrier = true);
 ALTER VIEW rounds_view SET (security_barrier = true);
 ALTER VIEW submissions_with_flags_view SET (security_barrier = true);
 ALTER VIEW view_final_tally SET (security_barrier = true);

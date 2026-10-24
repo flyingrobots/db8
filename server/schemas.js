@@ -73,6 +73,10 @@ export const RoomCreate = z.object({
   client_nonce: z.string().min(8).optional()
 });
 
+export const RoomGet = z.object({
+  room_id: z.guid()
+});
+
 export const SubmissionFlag = z.object({
   submission_id: z.guid(),
   reporter_id: z.string().min(1),

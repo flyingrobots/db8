@@ -1,5 +1,5 @@
 import express from 'express';
-import { RoomCreate } from '../schemas.js';
+import { RoomCreate, RoomGet } from '../schemas.js';
 
 export function createRoomRouter({ roomService, requireDbInProduction }) {
   const router = express.Router();
@@ -9,6 +9,24 @@ export function createRoomRouter({ roomService, requireDbInProduction }) {
     const roomId = String(req.query.room_id || 'local');
     const result = await roomService.getRoomState(roomId);
     return res.json(result);
+  });
+
+  // room.get: topic, status, config and seats
+  router.get('/rpc/room.get', async (req, res) => {
+    const parsed = RoomGet.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ ok: false, error: 'invalid_room_id' });
+    }
+    try {
+      const room = await roomService.getRoom(parsed.data.room_id);
+      if (!room) return res.status(404).json({ ok: false, error: 'room_not_found' });
+      return res.json({ ok: true, ...room });
+    } catch (err) {
+      if (err?.message === 'database_unavailable') {
+        return res.status(503).json({ ok: false, error: 'database_unavailable' });
+      }
+      return res.status(500).json({ ok: false, error: err?.message || String(err) });
+    }
   });
 
   // room.create

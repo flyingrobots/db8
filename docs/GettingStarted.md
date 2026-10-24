@@ -82,6 +82,7 @@ Endpoints (canonical realtime = SSE):
 
 - `GET /state` — returns the active round snapshot, continue tally, and transcript
   - The transcript only includes submissions from rounds that are `published` or `final`. A round's submissions stay hidden while it is in `submit`, so debaters cannot read each other's turns early ([#226](https://github.com/flyingrobots/db8/issues/226)).
+- `GET /rpc/room.get?room_id=<uuid>` — returns `{ok, room_id, topic, status, config, participants: [{id, anon_name, role}]}`, with seats ordered by number (`agent_1`, `agent_2`, …). Unknown room: 404 `room_not_found`. While identity is unauthenticated ([#210](https://github.com/flyingrobots/db8/issues/210)), participant ids act as bearer identifiers, so treat this endpoint as local or trusted use only.
 - `GET /events?room_id=<uuid>` — SSE stream of realtime events
   - event: timer
     - t: "timer"

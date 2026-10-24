@@ -195,6 +195,64 @@ export class RoomService {
   }
 
   /**
+   * getRoom returns a room's topic, status, config and seats, or null if the
+   * room does not exist. Seats are ordered by seat number (agent_2 before
+   * agent_10).
+   */
+  async getRoom(roomId) {
+    let dbError = null;
+    if (this.pool) {
+      try {
+        const roomRes = await this.pool.query(
+          'SELECT id, title, status, config FROM rooms_view WHERE id = $1',
+          [roomId]
+        );
+        const row = roomRes.rows[0];
+        // No row is not proof the room is missing: one created in memory
+        // during an outage lives only there, so check memory before saying so.
+        if (!row) return this._memoryRoom(roomId);
+        const seatsRes = await this.pool.query(
+          `SELECT id, anon_name, role FROM participants_view
+            WHERE room_id = $1
+            ORDER BY length(anon_name), anon_name, id`,
+          [roomId]
+        );
+        return {
+          room_id: row.id,
+          topic: row.title,
+          status: row.status,
+          config: row.config || {},
+          participants: seatsRes.rows
+        };
+      } catch (err) {
+        console.error('[RoomService] DB error (getRoom), falling back to memory:', err.message);
+        dbError = err;
+      }
+    }
+
+    const room = this._memoryRoom(roomId);
+    // Memory holds only rooms created while the database was unavailable.
+    // After a failed query, "not in memory" is not "does not exist": say so
+    // rather than reporting a real room as missing.
+    if (!room && dbError) throw new Error('database_unavailable', { cause: dbError });
+    return room;
+  }
+
+  _memoryRoom(roomId) {
+    // Rooms that getRoomState invents on the fly have no seats; they were never
+    // created, so they are not reported here.
+    const room = this.memRooms.get(roomId);
+    if (!room?.participants) return null;
+    return {
+      room_id: roomId,
+      topic: room.topic,
+      status: room.status,
+      config: room.config,
+      participants: room.participants.map(({ id, anon_name, role }) => ({ id, anon_name, role }))
+    };
+  }
+
+  /**
    * createRoom creates a new debate room.
    */
   async createRoom({ topic, cfg, client_nonce }) {
@@ -216,8 +274,18 @@ export class RoomService {
     }
 
     const roomId = crypto.randomUUID();
+    // Seed seats the way room_create does (agent_1..agent_N, all debaters), so
+    // memory mode can answer room.get with the same shape as the database.
+    const seats = cfg?.participant_count ?? 4;
     this.memRooms.set(roomId, {
       topic,
+      status: 'active',
+      config: {},
+      participants: Array.from({ length: seats }, (_, i) => ({
+        id: crypto.randomUUID(),
+        anon_name: `agent_${i + 1}`,
+        role: 'debater'
+      })),
       round: {
         // Without an id, /state could never name this round, and the blind
         // submission filter could never show its submissions.

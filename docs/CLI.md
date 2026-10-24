@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-12-23
+lastUpdated: 2026-10-24
 ---
 
 # CLI Specification (db8)
@@ -90,6 +90,13 @@ Stream real-time events (Timer, Phase flips, Journal commits) via SSE.
 Create a new debate room.
 
 - **Flags**: `--topic`, `--participants`, `--submit-minutes`
+
+#### `db8 room seats`
+
+Print the room's topic and its seats (anon name, role, participant id), one per line. A room's participant ids come from here; `room create` returns only the room id.
+
+- **Flags**: `--room`, `--json`
+- **Exit codes**: `8` if the room does not exist, `2` if the room id is not a UUID.
 
 ---
 

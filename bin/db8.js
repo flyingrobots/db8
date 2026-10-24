@@ -61,6 +61,7 @@ Commands:
   room status          show room snapshot
   room watch           stream events (WS/SSE)
   room create          create a new room
+  room seats           list the room's topic and seats
   draft open           create/open draft.json
   draft validate       validate and print canonical sha
   submit               submit current draft
@@ -93,6 +94,7 @@ async function main() {
     'room:status': './commands/room/status.js',
     'room:watch': './commands/room/watch.js',
     'room:create': './commands/room/create.js',
+    'room:seats': './commands/room/seats.js',
     'draft:open': './commands/draft/open.js',
     'draft:validate': './commands/draft/validate.js',
     submit: './commands/submit.js',
