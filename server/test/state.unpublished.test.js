@@ -95,7 +95,8 @@ describe('/state hides submissions from rounds still in submit (memory)', () => 
     const service = makeService(null);
     service.memRooms.set(roomId, {
       topic: 'Blind Room',
-      round: { round_id: round1, idx: 1, phase, submit_deadline_unix: 0 }
+      round: { round_id: round1, idx: 1, phase, submit_deadline_unix: 0 },
+      publishedRounds: new Set([round0])
     });
     const add = (round, id, content) =>
       service.memSubmissions.set(`${roomId}:${round}:author-${id}:nonce-${id}`, {
@@ -125,5 +126,58 @@ describe('/state hides submissions from rounds still in submit (memory)', () => 
   it('keeps it visible after the round goes final', async () => {
     const state = await seeded('final').getRoomState(roomId);
     expect(ids(state)).toEqual(['sub-pending', 'sub-published']);
+  });
+
+  it('fails closed for a room made by memory-mode room.create', async () => {
+    const service = makeService(null);
+    const { room_id } = await service.createRoom({
+      topic: 'Created in memory',
+      cfg: { participant_count: 2 },
+      client_nonce: 'nonce-blind-created'
+    });
+    service.memSubmissions.set(`${room_id}:any-round:author-x:nonce-x`, {
+      id: 'sub-created',
+      canonical_sha256: 'd'.repeat(64),
+      content: 'secret draft in a created room',
+      author_id: 'author-x',
+      room_id,
+      round_id: 'any-round'
+    });
+    const state = await service.getRoomState(room_id);
+    expect(state.round.phase).toBe('submit');
+    expect(ids(state)).toEqual([]);
+    expect(JSON.stringify(state)).not.toContain('secret draft in a created room');
+  });
+});
+
+describe('/state memory mode across a round transition', () => {
+  it('keeps a published round visible after the room moves to the next round', async () => {
+    const service = makeService(null);
+    const roomId = 'room-blind-transition';
+    const now = Math.floor(Date.now() / 1000);
+    service.memRooms.set(roomId, {
+      topic: 'Transition',
+      round: {
+        round_id: 'r0',
+        idx: 0,
+        phase: 'published',
+        submit_deadline_unix: now - 60,
+        continue_vote_close_unix: now - 1
+      }
+    });
+    service.memVoteTotals.set(roomId, { yes: 1, no: 0 });
+    service.memSubmissions.set(`${roomId}:r0:a:n`, {
+      id: 'sub-r0',
+      canonical_sha256: 'e'.repeat(64),
+      content: 'round 0 argument',
+      author_id: 'a',
+      room_id: roomId,
+      round_id: 'r0'
+    });
+
+    const state = await service.getRoomState(roomId);
+    expect(state.round.idx).toBe(1);
+    expect(state.round.phase).toBe('submit');
+    expect(ids(state)).toEqual(['sub-r0']);
   });
 });
