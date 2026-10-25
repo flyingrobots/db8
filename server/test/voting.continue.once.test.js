@@ -117,17 +117,37 @@ describeDb('continue votes count once per voter (database)', () => {
   });
 
   it('upgrading a database that holds duplicate ballots keeps the newest per voter', async () => {
-    const client = await pool.connect();
+    // A database of its own. Re-applying db/schema.sql takes schema-wide
+    // ACCESS EXCLUSIVE locks (its DROP ... CASCADE statements), and doing that
+    // on the shared test database, even inside a rolled-back transaction, made
+    // sibling suites' reads fail mid-run.
+    const name = `db8_votes_upgrade_${process.pid}_${Date.now()}`;
+    const admin = new pg.Client({ connectionString: dbUrl });
+    await admin.connect();
+    await admin.query(`create database ${name}`);
+    const url = new URL(dbUrl);
+    url.pathname = `/${name}`;
+    const db = new pg.Client({ connectionString: url.toString() });
     try {
-      // Rebuild the old shape inside a transaction and roll it back afterwards,
-      // so the shared test database is left as it was.
-      await client.query('BEGIN');
-      await client.query('delete from votes where round_id = $1', [roundId]);
-      await client.query('alter table votes drop constraint votes_round_id_voter_id_kind_key');
-      await client.query(
+      await db.connect();
+      const schema = await readFile(schemaPath, 'utf8');
+      await db.query(schema);
+
+      // Rebuild the old shape: the nonce back in the key, and duplicate ballots.
+      await db.query('alter table votes drop constraint votes_round_id_voter_id_kind_key');
+      await db.query(
         'alter table votes add constraint votes_round_id_voter_id_kind_client_nonce_key unique (round_id, voter_id, kind, client_nonce)'
       );
-      await client.query(
+      await db.query('insert into rooms(id, title) values ($1, $2)', [roomId, 'Upgrade']);
+      await db.query(
+        "insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, 'published')",
+        [roundId, roomId]
+      );
+      await db.query(
+        'insert into participants(id, room_id, anon_name, role) values ($1,$2,$3,$4), ($5,$2,$6,$7)',
+        [voterId, roomId, 'v1', 'debater', otherId, 'v2', 'debater']
+      );
+      await db.query(
         `insert into votes (round_id, voter_id, kind, ballot, client_nonce, created_at) values
            ($1, $2, 'continue', '{"choice":"continue"}', 'old-1', now() - interval '3 minutes'),
            ($1, $2, 'continue', '{"choice":"continue"}', 'old-2', now() - interval '2 minutes'),
@@ -136,23 +156,23 @@ describeDb('continue votes count once per voter (database)', () => {
         [roundId, voterId, otherId]
       );
 
-      await client.query(await readFile(schemaPath, 'utf8'));
+      await db.query(schema);
 
-      const rows = await client.query(
-        "select voter_id, ballot->>'choice' as choice from votes where round_id = $1 order by voter_id",
-        [roundId]
+      const rows = await db.query(
+        "select voter_id, ballot->>'choice' as choice from votes order by voter_id"
       );
       expect(rows.rows).toEqual([
         { voter_id: voterId, choice: 'end' },
         { voter_id: otherId, choice: 'continue' }
       ]);
-      const cons = await client.query(
+      const cons = await db.query(
         "select pg_get_constraintdef(oid) as def from pg_constraint where conrelid = 'votes'::regclass and contype = 'u'"
       );
       expect(cons.rows.map((r) => r.def)).toEqual(['UNIQUE (round_id, voter_id, kind)']);
     } finally {
-      await client.query('ROLLBACK');
-      client.release();
+      await db.end().catch(() => {});
+      await admin.query(`drop database if exists ${name}`);
+      await admin.end();
     }
   });
 });
