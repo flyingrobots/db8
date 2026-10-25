@@ -79,7 +79,7 @@ The process logs its seat to stderr at startup, and exits with status 2 if the c
 | `debate_status`        | any         | Topic, your seat, round and phase, seconds left, tallies, published transcript grouped by round, a next action. |
 | `debate_wait`          | any         | Blocks until the round or phase changes, or `timeout_sec` (default 45, max 120). Returns the status snapshot.   |
 | `debate_submit`        | `submit`    | Submits `{content, claims, citations}`. The server fills in room, round, author, deadline and a nonce.          |
-| `debate_vote_continue` | `published` | `choice`: `continue` or `end`.                                                                                  |
+| `debate_vote_continue` | `published` | `choice`: `continue` or `end`. Voting again in the same round revises your vote.                                |
 | `debate_vote_final`    | `final`     | `approval`, plus an optional `ranking` of seat names, best first.                                               |
 
 Many MCP clients give up on a tool call after 60 seconds, so keep `timeout_sec` below your client's limit; the default of 45 is safe for them.
