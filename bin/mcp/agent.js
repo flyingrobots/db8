@@ -95,9 +95,15 @@ export function createAgentServer({
   // it publishes, including the agent's own, so without this an agent cannot
   // tell "I have submitted" from "I have not".
   const submittedRounds = new Set();
+  // Rounds with a submission in flight. Checked and set with no await between,
+  // so two concurrent debate_submit calls cannot both pass the one-turn guard.
+  const pendingRounds = new Set();
+  // One continue-vote nonce per round. A repeated vote reuses it, so the API
+  // revises the ballot instead of counting a second one.
+  const voteNonces = new Map();
   let roomCache = null;
 
-  async function request(path, body) {
+  async function request(path, body, { signal } = {}) {
     // The API rate-limits per (x-room-id, x-participant-id), falling back to the
     // client IP. Without these headers every seat on one host shares one bucket,
     // and four agents waiting on the same room exhaust it within seconds.
@@ -107,7 +113,8 @@ export function createAgentServer({
     const res = await fetchImpl(`${base}${path}`, {
       method: body ? 'POST' : 'GET',
       headers,
-      body: body ? JSON.stringify(body) : undefined
+      body: body ? JSON.stringify(body) : undefined,
+      signal
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok || json.ok === false) {
@@ -129,9 +136,9 @@ export function createAgentServer({
     return json;
   }
 
-  async function room() {
+  async function room(opts) {
     if (roomCache) return roomCache;
-    const r = await request(`/rpc/room.get?room_id=${encodeURIComponent(roomId)}`);
+    const r = await request(`/rpc/room.get?room_id=${encodeURIComponent(roomId)}`, undefined, opts);
     const me = r.participants.find((p) => (seat ? p.anon_name === seat : p.id === participantId));
     if (!me) {
       const seats = r.participants.map((p) => p.anon_name).join(', ');
@@ -169,9 +176,9 @@ export function createAgentServer({
     }
   }
 
-  async function snapshot() {
-    const r = await room();
-    const state = await request(`/state?room_id=${encodeURIComponent(roomId)}`);
+  async function snapshot(opts) {
+    const r = await room(opts);
+    const state = await request(`/state?room_id=${encodeURIComponent(roomId)}`, undefined, opts);
     const rnd = state.round || {};
     // With a database the *_unix fields arrive as strings: pg serializes bigint
     // as text. Submitting that string back as deadline_unix fails validation.
@@ -271,20 +278,37 @@ export function createAgentServer({
     },
     guarded(async ({ timeout_sec = DEFAULT_WAIT_SEC }) => {
       // A monotonic clock: the timeout is real elapsed time, independent of the
-      // wall clock that round deadlines are measured against.
-      const start = await snapshot();
+      // wall clock that round deadlines are measured against. Every request is
+      // bounded by the time left, so a slow API cannot stretch the call past
+      // timeout_sec (and past the client's own tool-call timeout).
       const until = performance.now() + timeout_sec * 1000;
+      const left = () => Math.max(0, until - performance.now());
+      const bounded = () => ({
+        signal: globalThis.AbortSignal.timeout(Math.max(1, Math.ceil(left())))
+      });
+      const timedOut = (err) => err?.name === 'TimeoutError' || err?.name === 'AbortError';
+      let start;
+      try {
+        start = await snapshot(bounded());
+      } catch (err) {
+        if (!timedOut(err)) throw err;
+        throw new ToolError(
+          `The db8 API did not answer within timeout_sec (${timeout_sec} s). Call debate_wait again.`
+        );
+      }
       let snap = start;
-      while (performance.now() < until) {
-        await sleep(Math.max(0, Math.min(pollMs, until - performance.now())));
+      while (left() > 0) {
+        await sleep(Math.min(pollMs, left()));
+        if (left() <= 0) break;
         try {
-          snap = await snapshot();
+          snap = await snapshot(bounded());
         } catch (err) {
+          if (timedOut(err)) break;
           // Throttled while waiting: back off until the window resets (or the
           // wait ends) rather than failing a call whose whole job is to wait.
           if (!(err instanceof ToolError) || err.status !== 429) throw err;
           const backoff = err.retryAt ? err.retryAt - Date.now() : pollMs;
-          await sleep(Math.max(0, Math.min(backoff, until - performance.now())));
+          await sleep(Math.max(0, Math.min(backoff, left())));
           continue;
         }
         if (snap.round.round_id !== start.round.round_id || snap.round.phase !== start.round.phase)
@@ -327,28 +351,35 @@ export function createAgentServer({
       requirePhase(snap, 'submit', 'Submitting');
       // One turn per seat per round. The API does not enforce that yet (#237),
       // so a second call here would store a second turn beside the first.
-      if (snap.round.submitted) {
+      const rid = snap.round.round_id;
+      if (submittedRounds.has(rid) || pendingRounds.has(rid)) {
         throw new ToolError(
           `You already submitted in round ${snap.round.idx}. ${snap.next_action}`
         );
       }
-      const { me } = await room();
-      const issued = await request('/rpc/nonce.issue', {
-        round_id: snap.round.round_id,
-        author_id: me.participant_id
-      });
-      const res = await request('/rpc/submission.create', {
-        room_id: roomId,
-        round_id: snap.round.round_id,
-        author_id: me.participant_id,
-        phase: 'submit',
-        deadline_unix: snap.round.deadline_unix ?? 0,
-        content,
-        claims,
-        citations,
-        client_nonce: issued.nonce
-      });
-      submittedRounds.add(snap.round.round_id);
+      pendingRounds.add(rid);
+      let res;
+      try {
+        const { me } = await room();
+        const issued = await request('/rpc/nonce.issue', {
+          round_id: rid,
+          author_id: me.participant_id
+        });
+        res = await request('/rpc/submission.create', {
+          room_id: roomId,
+          round_id: rid,
+          author_id: me.participant_id,
+          phase: 'submit',
+          deadline_unix: snap.round.deadline_unix ?? 0,
+          content,
+          claims,
+          citations,
+          client_nonce: issued.nonce
+        });
+        submittedRounds.add(rid);
+      } finally {
+        pendingRounds.delete(rid);
+      }
       return ok({
         submitted: true,
         round: snap.round.idx,
@@ -373,12 +404,14 @@ export function createAgentServer({
       const snap = await snapshot();
       requirePhase(snap, 'published', 'A continue vote');
       const { me } = await room();
+      const rid = snap.round.round_id;
+      if (!voteNonces.has(rid)) voteNonces.set(rid, crypto.randomUUID());
       const res = await request('/rpc/vote.continue', {
         room_id: roomId,
-        round_id: snap.round.round_id,
+        round_id: rid,
         voter_id: me.participant_id,
         choice,
-        client_nonce: crypto.randomUUID()
+        client_nonce: voteNonces.get(rid)
       });
       return ok({ voted: choice, vote_id: res.vote_id, next_action: 'Call debate_wait.' });
     })

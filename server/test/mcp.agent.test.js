@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { performance } from 'node:perf_hooks';
+import { setTimeout } from 'node:timers';
 import http from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -309,6 +311,68 @@ describe('db8 MCP agent server', () => {
     expect(w.isError, w.text).toBe(false);
     expect(w.body.changed).toBe(false);
     expect(stateCalls).toBeGreaterThan(3);
+  });
+
+  it('accepts one of two concurrent submissions in a round', async () => {
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Concurrent submit',
+      cfg: { participant_count: 2 },
+      client_nonce: nonce()
+    });
+    const a1 = await seat(room_id, 'agent_1');
+    const results = await Promise.all([
+      call(a1, 'debate_submit', turn('first')),
+      call(a1, 'debate_submit', turn('second'))
+    ]);
+    expect(results.filter((r) => !r.isError)).toHaveLength(1);
+    expect(results.find((r) => r.isError).text).toMatch(/already submitted/);
+  });
+
+  it('a repeated continue vote revises the ballot instead of adding one', async () => {
+    const t0 = Date.now();
+    vi.useFakeTimers({ toFake: ['Date'], now: t0 });
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Repeat vote',
+      cfg: { participant_count: 2, submit_minutes: 1 },
+      client_nonce: nonce()
+    });
+    const a1 = await seat(room_id, 'agent_1');
+    vi.setSystemTime(t0 + 61_000);
+    expect((await call(a1, 'debate_status')).body.round.phase).toBe('published');
+    expect((await call(a1, 'debate_vote_continue', { choice: 'continue' })).isError).toBe(false);
+    expect((await call(a1, 'debate_vote_continue', { choice: 'continue' })).isError).toBe(false);
+    const s = await call(a1, 'debate_status');
+    expect(s.body.continue_tally).toEqual({ yes: 1, no: 0 });
+  });
+
+  it('debate_wait stays within timeout_sec when the API is slow', async () => {
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Slow API',
+      cfg: { participant_count: 2 },
+      client_nonce: nonce()
+    });
+    const a1 = await seat(room_id, 'agent_1');
+    await call(a1, 'debate_status'); // resolve the seat before timing
+    const slow = async (url, init) => {
+      if (String(url).includes('/state')) {
+        await new Promise((resolve, reject) => {
+          const t = setTimeout(resolve, 150);
+          init.signal?.addEventListener('abort', () => {
+            clearTimeout(t);
+            reject(init.signal.reason);
+          });
+        });
+      }
+      return fetch(url, init);
+    };
+    const slowSeat = await seat(room_id, 'agent_1', { fetch: slow });
+    await call(slowSeat, 'debate_status').catch(() => {});
+    const started = performance.now();
+    const w = await call(slowSeat, 'debate_wait', { timeout_sec: 0.05 });
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(140);
+    expect(w.isError).toBe(true);
+    expect(w.text).toMatch(/timeout_sec|did not answer/);
   });
 
   it('refuses a seat the room does not have', async () => {
