@@ -16,6 +16,10 @@ export class VoteService {
 
   async castContinueVote({ round_id, voter_id, choice, client_nonce, room_id }) {
     const key = `${round_id}:${voter_id}:continue:${client_nonce}`;
+    // `db_fallback` means "a configured database failed and this vote lives only
+    // in memory". Memory mode by configuration is not a fallback, and clients
+    // such as the MCP agent server treat the note as a failed write (#231).
+    let note;
     if (this.pool) {
       try {
         const r = await this.pool.query(
@@ -24,11 +28,16 @@ export class VoteService {
         );
         if (r.rows[0]?.id) return { vote_id: r.rows[0].id };
       } catch (err) {
+        // A rule vote_submit enforced (wrong phase, closed window) is not an
+        // outage. Counting the ballot in memory anyway answered 200 to a vote
+        // the database had refused. Same discrimination as castFinalVote.
+        if (err?.severity) throw err;
         console.error('[VoteService] DB error, falling back to memory:', err.message);
       }
+      note = 'db_fallback';
     }
 
-    if (this.memVotes.has(key)) return { vote_id: this.memVotes.get(key).id, note: 'db_fallback' };
+    if (this.memVotes.has(key)) return { vote_id: this.memVotes.get(key).id, note };
     const vote_id = crypto.randomUUID();
     this.memVotes.set(key, { id: vote_id, choice });
 
@@ -37,7 +46,7 @@ export class VoteService {
     else t.no += 1;
     this.memVoteTotals.set(room_id, t);
 
-    return { vote_id, note: 'db_fallback' };
+    return { vote_id, note };
   }
 
   async castFinalVote({ round_id, voter_id, approval, ranking, client_nonce }) {
@@ -60,7 +69,8 @@ export class VoteService {
         if (err?.severity) throw err;
         console.error('[VoteService] database unreachable (final_vote):', err.message);
       }
+      return { vote_id: crypto.randomUUID(), note: 'db_fallback' };
     }
-    return { vote_id: crypto.randomUUID(), note: 'db_fallback' };
+    return { vote_id: crypto.randomUUID() };
   }
 }

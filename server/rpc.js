@@ -199,12 +199,14 @@ app.post('/rpc/nonce.issue', requireDbInProduction, async (req, res) => {
       return res.json({ ok: true, nonce: r.rows[0].nonce });
     }
 
-    // Memory fallback
+    // Memory mode. Reached only when no database is configured, so this is not
+    // a fallback and is not labelled as one: clients treat `db_fallback` as "your
+    // write was not persisted" (#231).
     const nonce = crypto.randomUUID();
     const issueKey = `${round_id}:${author_id}:${nonce}`;
     memIssuedNonces.set(issueKey, { expiresAt: Date.now() + ttl * 1000 });
 
-    return res.json({ ok: true, nonce, note: 'db_fallback' });
+    return res.json({ ok: true, nonce });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err.message });
   }

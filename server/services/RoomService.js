@@ -44,6 +44,8 @@ export class RoomService {
         const submissionsRes = await this.pool
           .query(
             `select id,
+                    round_id,
+                    idx,
                     author_id,
                     author_anon_name,
                     content,
@@ -72,6 +74,8 @@ export class RoomService {
 
           const transcript = submissionsRes.rows.map((row) => ({
             submission_id: row.id,
+            round_id: row.round_id,
+            round_idx: row.idx,
             author_id: row.author_id,
             author_anon_name: row.author_anon_name,
             content: row.content,
@@ -177,6 +181,7 @@ export class RoomService {
         const count = flags ? flags.size : 0;
         return {
           submission_id: value.id,
+          round_id: value.round_id,
           author_id: value.author_id,
           content: value.content,
           canonical_sha256: value.canonical_sha256,
