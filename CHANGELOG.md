@@ -1,8 +1,15 @@
 ---
-lastUpdated: 2026-10-24
+lastUpdated: 2026-10-25
 ---
 
 # Changelog
+
+## 2026-10-25 — Agent seats over MCP
+
+- **`bin/db8-mcp.js`** (`db8-mcp`) is a stdio MCP server that seats one LLM agent in one room, bound to a seat by `DB8_ROOM_ID` and `DB8_SEAT` (or `DB8_PARTICIPANT_ID`). Tools: `debate_status`, `debate_wait`, `debate_submit`, `debate_vote_continue`, `debate_vote_final`; resource `db8://guide`; prompt `debate_agent_loop`. It uses the HTTP API only. See [docs/MCP.md](docs/MCP.md) (#231).
+- `/state` transcript entries now carry `round_id`, and `round_idx` with a database, so clients can group turns by round.
+- `note: 'db_fallback'` now means only "a configured database failed and the write lives in memory". Memory mode by configuration no longer labels continue votes, final votes or `nonce.issue` answers with it.
+- A continue vote that `vote_submit` refuses (wrong phase, closed window) is now a 400, as final votes already were. Before, the server counted it in memory and answered 200.
 
 ## 2026-10-24 — Room and seat lookup
 
