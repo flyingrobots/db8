@@ -15,7 +15,9 @@ export class VoteService {
   }
 
   async castContinueVote({ round_id, voter_id, choice, client_nonce, room_id }) {
-    const key = `${round_id}:${voter_id}:continue:${client_nonce}`;
+    // Keyed on the voter, not the nonce, like the database (#227): a later
+    // ballot replaces the earlier one in the tally instead of adding to it.
+    const key = `${round_id}:${voter_id}:continue`;
     if (this.pool) {
       try {
         const r = await this.pool.query(
@@ -28,11 +30,14 @@ export class VoteService {
       }
     }
 
-    if (this.memVotes.has(key)) return { vote_id: this.memVotes.get(key).id, note: 'db_fallback' };
-    const vote_id = crypto.randomUUID();
-    this.memVotes.set(key, { id: vote_id, choice });
-
     const t = this.memVoteTotals.get(room_id) || { yes: 0, no: 0 };
+    const previous = this.memVotes.get(key);
+    if (previous) {
+      if (previous.choice === 'continue') t.yes -= 1;
+      else t.no -= 1;
+    }
+    const vote_id = previous?.id ?? crypto.randomUUID();
+    this.memVotes.set(key, { id: vote_id, choice });
     if (choice === 'continue') t.yes += 1;
     else t.no += 1;
     this.memVoteTotals.set(room_id, t);
