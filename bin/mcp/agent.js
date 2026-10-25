@@ -15,6 +15,9 @@ import { GUIDE, AGENT_LOOP } from './guide.js';
 // reach the API can still post as any participant.
 
 const MAX_WAIT_SEC = 120;
+// Below the 60 s request timeout that MCP SDK clients apply by default, so a
+// wait called without arguments returns before the client gives up on it.
+export const DEFAULT_WAIT_SEC = 45;
 const SEAT = /^agent_[1-9][0-9]*$/;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -260,12 +263,13 @@ export function createAgentServer({
     {
       title: 'Wait for the debate to move',
       description:
-        'Block until the round or phase changes, or until timeout_sec passes (default 60, max 120). ' +
+        'Block until the round or phase changes, or until timeout_sec passes (default 45, max 120). ' +
+        "Keep timeout_sec under your client's tool-call timeout (often 60 s). " +
         'Returns the same snapshot as debate_status, plus changed: true|false.',
       inputSchema: { timeout_sec: z.number().positive().max(MAX_WAIT_SEC).optional() },
       annotations: { readOnlyHint: true }
     },
-    guarded(async ({ timeout_sec = 60 }) => {
+    guarded(async ({ timeout_sec = DEFAULT_WAIT_SEC }) => {
       // A monotonic clock: the timeout is real elapsed time, independent of the
       // wall clock that round deadlines are measured against.
       const start = await snapshot();

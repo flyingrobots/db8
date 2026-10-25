@@ -4,7 +4,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import app, { __setDbPool } from '../rpc.js';
 import { SubmissionIn } from '../schemas.js';
-import { createAgentServer, configFromEnv } from '../../bin/mcp/agent.js';
+import { DEFAULT_REQUEST_TIMEOUT_MSEC } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import { createAgentServer, configFromEnv, DEFAULT_WAIT_SEC } from '../../bin/mcp/agent.js';
 import { EXAMPLE_CLAIMS, EXAMPLE_CITATIONS } from '../../bin/mcp/guide.js';
 
 // #231: an independently launched LLM agent takes one seat in a room through a
@@ -198,6 +199,12 @@ describe('db8 MCP agent server', () => {
     });
     expect(unknownSeat.isError).toBe(true);
     expect(unknownSeat.text).toMatch(/agent_9/);
+  });
+
+  it('debate_wait by default returns before an SDK client times the call out', () => {
+    // A default at or above the client timeout fails every argument-less wait
+    // with "Request timed out" (found by the four-agent end-to-end run).
+    expect(DEFAULT_WAIT_SEC * 1000).toBeLessThan(DEFAULT_REQUEST_TIMEOUT_MSEC - 5000);
   });
 
   it('debate_wait returns unchanged at its timeout', async () => {
