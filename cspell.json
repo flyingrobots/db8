@@ -164,7 +164,8 @@
     "factive",
     "cutover",
     "recanonicalizes",
-    "fixednonce"
+    "fixednonce",
+    "modelcontextprotocol"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
