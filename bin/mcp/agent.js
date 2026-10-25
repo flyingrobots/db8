@@ -34,7 +34,13 @@ export function configFromEnv(env = process.env) {
 
 // A failure the agent can act on. Tool handlers turn it into an MCP tool error
 // instead of a protocol error, so the model reads the message.
-class ToolError extends Error {}
+class ToolError extends Error {
+  constructor(message, { status, retryAt } = {}) {
+    super(message);
+    this.status = status;
+    this.retryAt = retryAt;
+  }
+}
 
 const ok = (value) => ({ content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] });
 const fail = (message) => ({ isError: true, content: [{ type: 'text', text: message }] });
@@ -77,7 +83,7 @@ export function createAgentServer({
   seat,
   participantId,
   fetch: fetchImpl = globalThis.fetch,
-  pollMs = 1000
+  pollMs = 2000
 }) {
   const base = apiUrl.replace(/\/+$/, '');
   const mcp = new McpServer({ name: 'db8-agent', version: '0.1.0' });
@@ -89,13 +95,25 @@ export function createAgentServer({
   let roomCache = null;
 
   async function request(path, body) {
+    // The API rate-limits per (x-room-id, x-participant-id), falling back to the
+    // client IP. Without these headers every seat on one host shares one bucket,
+    // and four agents waiting on the same room exhaust it within seconds.
+    const headers = { 'content-type': 'application/json', 'x-room-id': roomId };
+    const pid = roomCache?.me.participant_id ?? participantId;
+    if (pid) headers['x-participant-id'] = pid;
     const res = await fetchImpl(`${base}${path}`, {
       method: body ? 'POST' : 'GET',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: body ? JSON.stringify(body) : undefined
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok || json.ok === false) throw new ToolError(describeApiError(json, res.status));
+    if (!res.ok || json.ok === false) {
+      const reset = Number(res.headers.get('x-ratelimit-reset'));
+      throw new ToolError(describeApiError(json, res.status), {
+        status: res.status,
+        retryAt: Number.isFinite(reset) && reset > 0 ? reset * 1000 : undefined
+      });
+    }
     // The API answers 200 when it kept a write only in memory because its
     // database failed. That write is not durable and other seats may never see
     // it, so it is not a success.
@@ -255,7 +273,16 @@ export function createAgentServer({
       let snap = start;
       while (performance.now() < until) {
         await sleep(Math.max(0, Math.min(pollMs, until - performance.now())));
-        snap = await snapshot();
+        try {
+          snap = await snapshot();
+        } catch (err) {
+          // Throttled while waiting: back off until the window resets (or the
+          // wait ends) rather than failing a call whose whole job is to wait.
+          if (!(err instanceof ToolError) || err.status !== 429) throw err;
+          const backoff = err.retryAt ? err.retryAt - Date.now() : pollMs;
+          await sleep(Math.max(0, Math.min(backoff, until - performance.now())));
+          continue;
+        }
         if (snap.round.round_id !== start.round.round_id || snap.round.phase !== start.round.phase)
           return ok({ changed: true, ...snap });
       }

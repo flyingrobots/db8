@@ -262,6 +262,48 @@ describe('db8 MCP agent server', () => {
     expect(r.isError, r.text).toBe(false);
   });
 
+  it('identifies its room and seat to the rate limiter', async () => {
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Rate partition',
+      cfg: { participant_count: 2 },
+      client_nonce: nonce()
+    });
+    const seen = [];
+    const spy = async (url, init) => {
+      seen.push({ url: String(url), headers: init.headers });
+      return fetch(url, init);
+    };
+    const a2 = await seat(room_id, 'agent_2', { fetch: spy });
+    await call(a2, 'debate_status');
+    const room = (await api(`/rpc/room.get?room_id=${room_id}`)).participants;
+    const state = seen.find((r) => r.url.includes('/state'));
+    expect(state.headers['x-room-id']).toBe(room_id);
+    expect(state.headers['x-participant-id']).toBe(room.find((p) => p.anon_name === 'agent_2').id);
+  });
+
+  it('debate_wait backs off on 429 instead of failing', async () => {
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Throttled wait',
+      cfg: { participant_count: 2 },
+      client_nonce: nonce()
+    });
+    let stateCalls = 0;
+    const throttled = async (url, init) => {
+      if (String(url).includes('/state') && ++stateCalls > 1 && stateCalls <= 3) {
+        return new globalThis.Response(JSON.stringify({ ok: false, error: 'rate_limited' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      return fetch(url, init);
+    };
+    const a1 = await seat(room_id, 'agent_1', { fetch: throttled });
+    const w = await call(a1, 'debate_wait', { timeout_sec: 0.2 });
+    expect(w.isError, w.text).toBe(false);
+    expect(w.body.changed).toBe(false);
+    expect(stateCalls).toBeGreaterThan(3);
+  });
+
   it('refuses a seat the room does not have', async () => {
     const { room_id } = await api('/rpc/room.create', {
       topic: 'Seats',
