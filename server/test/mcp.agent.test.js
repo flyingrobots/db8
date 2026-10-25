@@ -236,6 +236,32 @@ describe('db8 MCP agent server', () => {
     expect(r.text).toMatch(/db_fallback/);
   });
 
+  it('accepts deadlines served as strings, as Postgres bigint columns are', async () => {
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Bigint deadlines',
+      cfg: { participant_count: 2 },
+      client_nonce: nonce()
+    });
+    const pgLikeFetch = async (url, init) => {
+      const res = await fetch(url, init);
+      if (!String(url).includes('/state')) return res;
+      const body = await res.json();
+      for (const k of ['submit_deadline_unix', 'published_at_unix', 'continue_vote_close_unix']) {
+        if (body.round?.[k] !== undefined) body.round[k] = String(body.round[k]);
+      }
+      return new globalThis.Response(JSON.stringify(body), {
+        status: res.status,
+        headers: { 'content-type': 'application/json' }
+      });
+    };
+    const a1 = await seat(room_id, 'agent_1', { fetch: pgLikeFetch });
+    const s = await call(a1, 'debate_status');
+    expect(typeof s.body.round.deadline_unix).toBe('number');
+    expect(s.body.round.seconds_remaining).toBeGreaterThan(0);
+    const r = await call(a1, 'debate_submit', turn('Deadline as text'));
+    expect(r.isError, r.text).toBe(false);
+  });
+
   it('refuses a seat the room does not have', async () => {
     const { room_id } = await api('/rpc/room.create', {
       topic: 'Seats',

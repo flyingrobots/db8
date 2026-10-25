@@ -152,11 +152,14 @@ export function createAgentServer({
     const r = await room();
     const state = await request(`/state?room_id=${encodeURIComponent(roomId)}`);
     const rnd = state.round || {};
+    // With a database the *_unix fields arrive as strings: pg serializes bigint
+    // as text. Submitting that string back as deadline_unix fails validation.
+    const unix = (v) => (v === null || v === undefined || v === '' ? null : Number(v));
     const deadline =
       rnd.phase === 'submit'
-        ? rnd.submit_deadline_unix
+        ? unix(rnd.submit_deadline_unix)
         : rnd.phase === 'published'
-          ? rnd.continue_vote_close_unix
+          ? unix(rnd.continue_vote_close_unix)
           : null;
 
     // Group the published transcript by round, in the order the server sent it
