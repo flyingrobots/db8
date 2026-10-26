@@ -4,6 +4,10 @@ lastUpdated: 2026-10-26
 
 # Changelog
 
+## 2026-10-26 — Concurrent starters agree on one signing key
+
+- **A process that starts while another one creates the signing key pair now adopts that pair instead of refusing to start** (#234). It checked for the private key, then for the public key. When the other process wrote both files between those checks, it saw only the public key and stopped with "signing key missing". It now looks for the private key again before it refuses. A public key with no private key still refuses.
+
 ## 2026-10-26 — A nonce names one document
 
 - **Reusing a submission's current `client_nonce` with a different document is refused with 409 `nonce_reused`** (#236). Before #237 the upsert rewrote only the hash, leaving the old content beside a hash of a document nobody stored; after #237 it replaced the document silently, so a retry and an edit looked the same. Replaying the same document under the same nonce still returns the same id; a resubmission uses a fresh nonce. Memory mode follows the same rule.
