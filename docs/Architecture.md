@@ -583,6 +583,8 @@ RLS (sketch)
 
 Keep all business logic in SQL so web/CLI/agents are thin.
 
+The SQL below is the design sketch. The functions that run are in `db/rpc.sql`, and their signatures and rules can differ from it.
+
 ```sql
 -- helper: get participant by session (JWT sub or provided fp)
 create or replace function me(room uuid, jwt_sub_in text, ssh_fp_in text)
@@ -616,18 +618,31 @@ end; $$ language plpgsql;
 create or replace function submission_upsert(
   room uuid, round_in uuid, author uuid, payload jsonb,
   canonical_sha text, sig_kind text, sig_b64 text, signer_fp text, jwt_sub_in
-  text
+  text, nonce text
 ) returns uuid as $$
-declare sid uuid;
+declare sid uuid; cur record;
 begin
+  select id, client_nonce, canonical_sha256 into cur from submissions
+   where round_id = round_in and author_id = author;
+  -- same nonce, same document: a replay; return the id and change nothing
+  if cur.client_nonce = nonce and cur.canonical_sha256 = canonical_sha then
+    return cur.id;
+  end if;
+  -- same nonce, different document: refused, the row is unchanged
+  if cur.client_nonce = nonce then
+    raise exception 'nonce_reused';
+  end if;
+  -- (db/rpc.sql also refuses a superseded nonce and a closed round)
+
   insert into submissions(round_id, author_id, content, claims, citations,
   status,
                           submitted_at, canonical_sha256, signature_kind,
-                          signature_b64, signer_fingerprint, jwt_sub)
+                          signature_b64, signer_fingerprint, jwt_sub,
+                          client_nonce)
   values (round_in, author,
           payload->>'content', payload->'claims', payload->'citations',
           'submitted', now(), canonical_sha, sig_kind, sig_b64, signer_fp,
-          jwt_sub_in)
+          jwt_sub_in, nonce)
   on conflict (round_id, author_id) do update
     set content = excluded.content,
         claims = excluded.claims,
@@ -639,7 +654,8 @@ begin
         signature_kind = sig_kind,
         signature_b64 = sig_b64,
         signer_fingerprint = signer_fp,
-        jwt_sub = jwt_sub_in
+        jwt_sub = jwt_sub_in,
+        client_nonce = nonce
   returning id into sid;
 
   return sid;
