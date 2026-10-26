@@ -53,6 +53,8 @@ describeDb('one submission per participant per round (database)', () => {
     author_id: `${run}-0000-4000-8000-000000000003`
   };
   const other = `${run}-0000-4000-8000-000000000004`;
+  const round2 = `${run}-0000-4000-8000-000000000005`;
+  const sha = (x) => crypto.createHash('sha256').update(x).digest('hex');
 
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: dbUrl });
@@ -65,6 +67,10 @@ describeDb('one submission per participant per round (database)', () => {
     await pool.query(
       "insert into participants(id, room_id, anon_name, role) values ($1, $2, 'agent_1', 'debater'), ($3, $2, 'agent_2', 'debater')",
       [ids.author_id, ids.room_id, other]
+    );
+    await pool.query(
+      "insert into rounds(id, room_id, idx, phase, submit_deadline_unix) values ($1, $2, 1, 'submit', 0)",
+      [round2, ids.room_id]
     );
   });
 
@@ -129,6 +135,77 @@ describeDb('one submission per participant per round (database)', () => {
     expect(core.transcript_hashes).toHaveLength(2);
   });
 
+  it('a replacement after the round has published is refused', async () => {
+    // The round is published by the test above. A replacement now would keep
+    // the submission id, and with it the verdicts judges gave the old claims.
+    const res = await request(app)
+      .post('/rpc/submission.create')
+      .send(doc(ids, 'Rewritten after publish.', `once-${run}-late`))
+      .expect(409);
+    expect(res.body.error).toBe('submission_closed');
+    const row = await pool.query(
+      'select content from submissions where round_id = $1 and author_id = $2',
+      [ids.round_id, ids.author_id]
+    );
+    expect(row.rows).toEqual([{ content: 'Draft two.' }]);
+  });
+
+  it('a retry of a superseded nonce is refused instead of undoing the resubmission', async () => {
+    const r2 = { ...ids, round_id: round2 };
+    await request(app)
+      .post('/rpc/submission.create')
+      .send(doc(r2, 'A', `sup-${run}-1`))
+      .expect(200);
+    await request(app)
+      .post('/rpc/submission.create')
+      .send(doc(r2, 'B', `sup-${run}-2`))
+      .expect(200);
+    const retry = await request(app)
+      .post('/rpc/submission.create')
+      .send(doc(r2, 'A', `sup-${run}-1`))
+      .expect(409);
+    expect(retry.body.error).toBe('nonce_superseded');
+    const row = await pool.query(
+      'select content, version from submissions where round_id = $1 and author_id = $2',
+      [round2, ids.author_id]
+    );
+    expect(row.rows).toEqual([{ content: 'B', version: 2 }]);
+  });
+
+  it('concurrent replacements each record the version they actually replaced', async () => {
+    const upsert = (client, content, nonce) =>
+      client.query(
+        'select submission_upsert($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id',
+        [round2, other, content, '[]', '[]', sha(content), nonce]
+      );
+    await upsert(pool, `base-${run}`, `cc-${run}-0`);
+    const c1 = await pool.connect();
+    const c2 = await pool.connect();
+    try {
+      await c1.query('BEGIN');
+      await upsert(c1, `first-${run}`, `cc-${run}-1`); // holds its change uncommitted
+      const second = upsert(c2, `second-${run}`, `cc-${run}-2`);
+      await new Promise((r) => setTimeout(r, 200));
+      await c1.query('COMMIT');
+      await second;
+    } finally {
+      c1.release();
+      c2.release();
+    }
+    const audit = await pool.query(
+      `select details->>'canonical_sha256' as sha, details->>'previous_sha256' as prev
+         from admin_audit_log
+        where entity_type = 'submission' and action = 'update'
+          and entity_id = (select id from submissions where round_id = $1 and author_id = $2)
+        order by created_at, id`,
+      [round2, other]
+    );
+    expect(audit.rows).toEqual([
+      { sha: sha(`first-${run}`), prev: sha(`base-${run}`) },
+      { sha: sha(`second-${run}`), prev: sha(`first-${run}`) }
+    ]);
+  });
+
   it('upgrading a database with several drafts per author keeps the newest', async () => {
     // Its own database: re-applying db/schema.sql takes schema-wide locks that
     // sibling suites must not run into.
@@ -143,7 +220,7 @@ describeDb('one submission per participant per round (database)', () => {
       await db.connect();
       const schema = await readFile(schemaPath, 'utf8');
       await db.query(schema);
-      await db.query('alter table submissions drop constraint submissions_round_id_author_id_key');
+      await db.query('drop index submissions_one_per_author_round');
       await db.query(
         'alter table submissions add constraint submissions_round_id_author_id_client_nonce_key unique (round_id, author_id, client_nonce)'
       );
@@ -152,30 +229,66 @@ describeDb('one submission per participant per round (database)', () => {
         ids.round_id,
         ids.room_id
       ]);
+      // A round already published: its submissions are in a signed journal.
+      await db.query(
+        "insert into rounds(id, room_id, idx, phase) values ($1, $2, 1, 'published')",
+        [round2, ids.room_id]
+      );
       await db.query(
         "insert into participants(id, room_id, anon_name, role) values ($1, $2, 'a1', 'debater'), ($3, $2, 'a2', 'debater')",
         [ids.author_id, ids.room_id, other]
       );
-      const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
       await db.query(
         `insert into submissions (round_id, author_id, content, canonical_sha256, client_nonce, submitted_at) values
            ($1, $2, 'old', $4, 'n1', now() - interval '2 minutes'),
            ($1, $2, 'new', $5, 'n2', now() - interval '1 minute'),
-           ($1, $3, 'only', $6, 'n3', now())`,
-        [ids.round_id, ids.author_id, other, sha('old'), sha('new'), sha('only')]
+           ($1, $3, 'only', $6, 'n3', now()),
+           ($7, $2, 'pub-old', $8, 'p1', now() - interval '2 minutes'),
+           ($7, $2, 'pub-new', $9, 'p2', now() - interval '1 minute')`,
+        [
+          ids.round_id,
+          ids.author_id,
+          other,
+          sha('old'),
+          sha('new'),
+          sha('only'),
+          round2,
+          sha('pub-old'),
+          sha('pub-new')
+        ]
       );
 
       await db.query(schema);
 
-      const rows = await db.query('select author_id, content from submissions order by content');
-      expect(rows.rows).toEqual([
+      // Drafts in a round still in submit were never published: keep the newest.
+      const draft = await db.query(
+        'select author_id, content from submissions where round_id = $1 order by content',
+        [ids.round_id]
+      );
+      expect(draft.rows).toEqual([
         { author_id: ids.author_id, content: 'new' },
         { author_id: other, content: 'only' }
       ]);
-      const cons = await db.query(
-        "select pg_get_constraintdef(oid) as def from pg_constraint where conrelid = 'submissions'::regclass and contype = 'u'"
+      // A published round keeps every row, so its transcript still matches the
+      // journal that signed it; the older one is marked, not deleted.
+      const published = await db.query(
+        'select content, legacy_duplicate from submissions where round_id = $1 order by content',
+        [round2]
       );
-      expect(cons.rows.map((r) => r.def)).toEqual(['UNIQUE (round_id, author_id)']);
+      expect(published.rows).toEqual([
+        { content: 'pub-new', legacy_duplicate: false },
+        { content: 'pub-old', legacy_duplicate: true }
+      ]);
+      const idx = await db.query(
+        "select indexdef from pg_indexes where tablename = 'submissions' and indexname = 'submissions_one_per_author_round'"
+      );
+      expect(idx.rows[0].indexdef).toMatch(
+        /\(round_id, author_id\) WHERE \(NOT legacy_duplicate\)/
+      );
+      const cons = await db.query(
+        "select count(*)::int as n from pg_constraint where conrelid = 'submissions'::regclass and contype = 'u'"
+      );
+      expect(cons.rows[0].n).toBe(0);
     } finally {
       await db.end().catch(() => {});
       await admin.query(`drop database if exists ${name}`);
@@ -186,6 +299,27 @@ describeDb('one submission per participant per round (database)', () => {
 
 describe('one submission per participant per round (memory)', () => {
   beforeAll(() => __setDbPool(null));
+
+  it('a retry of a superseded nonce is refused', async () => {
+    const ids = {
+      room_id: crypto.randomUUID(),
+      round_id: crypto.randomUUID(),
+      author_id: crypto.randomUUID()
+    };
+    await request(app)
+      .post('/rpc/submission.create')
+      .send(doc(ids, 'A', 'mem-sup-1'))
+      .expect(200);
+    await request(app)
+      .post('/rpc/submission.create')
+      .send(doc(ids, 'B', 'mem-sup-2'))
+      .expect(200);
+    const retry = await request(app)
+      .post('/rpc/submission.create')
+      .send(doc(ids, 'A', 'mem-sup-1'))
+      .expect(409);
+    expect(retry.body.error).toBe('nonce_superseded');
+  });
 
   it('a resubmission replaces the turn in the published transcript', async () => {
     const created = await request(app)

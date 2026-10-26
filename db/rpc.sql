@@ -87,25 +87,51 @@ AS $$
 DECLARE
   v_id uuid;
   v_prev record;
+  v_round record;
   v_version integer;
+  v_now bigint := extract(epoch from now())::bigint;
 BEGIN
-  -- One submission per participant per round (#237). A resubmission replaces
-  -- the document and bumps the version; replaying the same nonce with the same
-  -- document returns the same id and changes nothing.
+  -- One submission per participant per round (#237). Serialise per round and
+  -- author first, so a concurrent replacement cannot read a version that is
+  -- about to be replaced and record the wrong previous_sha256.
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_round_id::text || ':' || p_author_id::text, 0));
+
   SELECT id, canonical_sha256, client_nonce, version INTO v_prev
     FROM submissions
-   WHERE round_id = p_round_id AND author_id = p_author_id;
+   WHERE round_id = p_round_id AND author_id = p_author_id AND NOT legacy_duplicate;
 
-  IF FOUND AND v_prev.client_nonce = p_client_nonce
-     AND v_prev.canonical_sha256 = p_canonical_sha256 THEN
-    RETURN v_prev.id;
+  IF FOUND THEN
+    -- Replaying the current nonce with the same document changes nothing.
+    IF v_prev.client_nonce = p_client_nonce AND v_prev.canonical_sha256 = p_canonical_sha256 THEN
+      RETURN v_prev.id;
+    END IF;
+    -- A nonce this submission was stored under before was superseded by a
+    -- resubmission. Replaying it would silently undo the newer document.
+    IF EXISTS (
+      SELECT 1 FROM submission_nonce_log
+       WHERE submission_id = v_prev.id
+         AND client_nonce = p_client_nonce
+         AND client_nonce <> v_prev.client_nonce
+    ) THEN
+      RAISE EXCEPTION 'nonce_superseded' USING ERRCODE = '22023',
+        DETAIL = 'a newer submission replaced the one stored under this nonce';
+    END IF;
+    -- A replacement keeps the submission id, and with it any flags and
+    -- verdicts. Once the round has left submit (or its deadline has passed),
+    -- those ruled on the published document, so the document is frozen.
+    SELECT phase, submit_deadline_unix INTO v_round FROM rounds WHERE id = p_round_id;
+    IF v_round.phase IS DISTINCT FROM 'submit'
+       OR (v_round.submit_deadline_unix > 0 AND v_round.submit_deadline_unix < v_now) THEN
+      RAISE EXCEPTION 'submission_closed' USING ERRCODE = '22023',
+        DETAIL = 'the round is no longer accepting replacements';
+    END IF;
   END IF;
 
   INSERT INTO submissions (round_id, author_id, content, claims, citations, status,
                            submitted_at, canonical_sha256, client_nonce)
   VALUES (p_round_id, p_author_id, p_content, p_claims, p_citations,
           'submitted', now(), p_canonical_sha256, p_client_nonce)
-  ON CONFLICT (round_id, author_id)
+  ON CONFLICT (round_id, author_id) WHERE NOT legacy_duplicate
   DO UPDATE SET content = EXCLUDED.content,
                 claims = EXCLUDED.claims,
                 citations = EXCLUDED.citations,
@@ -114,6 +140,11 @@ BEGIN
                 submitted_at = now(),
                 version = submissions.version + 1
   RETURNING id, version INTO v_id, v_version;
+
+  INSERT INTO submission_nonce_log (submission_id, client_nonce, canonical_sha256)
+  VALUES (v_id, p_client_nonce, p_canonical_sha256)
+  ON CONFLICT (submission_id, client_nonce)
+    DO UPDATE SET canonical_sha256 = EXCLUDED.canonical_sha256;
 
   PERFORM admin_audit_log_write(
     CASE WHEN v_prev.id IS NULL THEN 'create' ELSE 'update' END,

@@ -47,6 +47,10 @@ export function createSubmissionRouter({ submissionService, requireDbInProductio
         return res.status(500).json({ ok: false, error: err.message });
       if (err.message === 'deadline_passed' || err.message === 'invalid_nonce')
         return res.status(400).json({ ok: false, error: err.message });
+      // One submission per participant per round (#237): a superseded nonce
+      // and a replacement after the round closed conflict with what is stored.
+      if (err.message === 'nonce_superseded' || err.message === 'submission_closed')
+        return res.status(409).json({ ok: false, error: err.message });
       return res.status(400).json({ ok: false, error: err?.message || String(err) });
     }
   });

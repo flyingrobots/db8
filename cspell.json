@@ -165,7 +165,9 @@
     "cutover",
     "recanonicalizes",
     "fixednonce",
-    "constraintdef"
+    "constraintdef",
+    "indexdef",
+    "tablename"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }

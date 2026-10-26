@@ -85,6 +85,11 @@ export class SubmissionService {
       } catch (e) {
         const msg = typeof e === 'string' ? e : e?.message || String(e) || 'db_error';
         if (/invalid_nonce/i.test(msg)) throw new Error('invalid_nonce', { cause: e });
+        // Rules submission_upsert enforced (#237). Falling back to memory would
+        // answer 200 for a document the database refused.
+        if (msg === 'nonce_superseded' || msg === 'submission_closed') {
+          throw new Error(msg, { cause: e });
+        }
 
         // Log DB error and fall back to memory (except invalid_nonce handled above)
         console.error('[SubmissionService] DB error, falling back to memory:', msg);
@@ -102,6 +107,15 @@ export class SubmissionService {
 
   _createInMemory(key, input, canonical_sha256, dbError = null) {
     const previous = this.memSubmissions.get(key);
+    // As in the database: replaying a nonce a resubmission superseded would
+    // undo the newer document, so it is refused.
+    if (
+      previous &&
+      input.client_nonce !== previous.client_nonce &&
+      previous.nonces?.has(input.client_nonce)
+    ) {
+      throw new Error('nonce_superseded');
+    }
     const submission_id = previous?.id ?? crypto.randomUUID();
     this.memSubmissions.set(key, {
       id: submission_id,
@@ -111,6 +125,7 @@ export class SubmissionService {
       room_id: input.room_id,
       round_id: input.round_id,
       client_nonce: input.client_nonce,
+      nonces: new Set(previous?.nonces).add(input.client_nonce),
       version:
         previous &&
         (previous.client_nonce !== input.client_nonce ||
