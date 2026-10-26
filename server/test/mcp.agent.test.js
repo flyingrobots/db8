@@ -442,6 +442,32 @@ describe('db8 MCP agent server', () => {
     expect(s.body.transcript[0].turns.filter((t) => t.author === 'agent_1')).toHaveLength(1);
   });
 
+  it('a retry with a different turn under an unknown nonce is refused', async () => {
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Changed retry',
+      cfg: { participant_count: 2 },
+      client_nonce: nonce()
+    });
+    let creates = 0;
+    const lossy = async (url, init) => {
+      if (String(url).includes('submission.create') && ++creates === 1) {
+        await fetch(url, init);
+        throw new TypeError('fetch failed');
+      }
+      return fetch(url, init);
+    };
+    const a1 = await seat(room_id, 'agent_1', { fetch: lossy });
+    expect((await call(a1, 'debate_submit', turn('Original'))).isError).toBe(true);
+    // The earlier attempt may be stored. Sending another turn under its nonce
+    // would pair the new hash with whatever document the server kept.
+    const changed = await call(a1, 'debate_submit', turn('Revised'));
+    expect(changed.isError).toBe(true);
+    expect(changed.text).toMatch(/same turn/);
+    expect(creates).toBe(1);
+    const same = await call(a1, 'debate_submit', turn('Original'));
+    expect(same.isError, same.text).toBe(false);
+  });
+
   it('a throttled retry of an unknown submission keeps its nonce', async () => {
     const t0 = Date.now();
     vi.useFakeTimers({ toFake: ['Date'], now: t0 });

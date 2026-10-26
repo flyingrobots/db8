@@ -404,9 +404,21 @@ export function createAgentServer({
             'confirmed until the round publishes. Submitting again could store a second turn. Call debate_wait.'
         );
       }
+      // The nonce of an attempt with an unknown outcome belongs to that exact
+      // turn. Sending a different turn under it would pair the new hash with
+      // whatever document the server kept, so only the same turn may retry.
+      const turnKey = JSON.stringify({ content, claims, citations });
+      const kept = attemptNonces.get(rid);
+      if (kept && kept.turn !== turnKey) {
+        throw new ToolError(
+          `An earlier submission in round ${snap.round.idx} has an unknown outcome. Retry with ` +
+            "exactly the same turn (it reuses that attempt's nonce), or call debate_wait and check the " +
+            'transcript when the round publishes.'
+        );
+      }
       pendingRounds.add(rid);
       let res;
-      const reused = attemptNonces.get(rid);
+      const reused = kept?.nonce;
       try {
         const { me } = await room();
         const nonce =
@@ -417,7 +429,7 @@ export function createAgentServer({
               author_id: me.participant_id
             })
           ).nonce;
-        attemptNonces.set(rid, nonce);
+        attemptNonces.set(rid, { nonce, turn: turnKey });
         res = await request('/rpc/submission.create', {
           room_id: roomId,
           round_id: rid,
