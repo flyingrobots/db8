@@ -205,13 +205,36 @@ DECLARE
   now_unix bigint := extract(epoch from now())::bigint;
   v_round record;
 BEGIN
-  FOR v_round IN 
-    UPDATE rounds SET
+  -- A submit round publishes at its deadline, or as soon as every debater in its
+  -- room has submitted to it (#229). A room with no debaters never qualifies for
+  -- the early rule: "everyone has submitted" would be vacuously true at once.
+  -- Hosts and judges do not submit turns, so they do not hold a round open.
+  FOR v_round IN
+    UPDATE rounds r SET
       phase = 'published',
       published_at_unix = now_unix,
       continue_vote_close_unix = now_unix + 30::bigint
-    WHERE phase = 'submit' AND submit_deadline_unix > 0 AND submit_deadline_unix < now_unix
-    RETURNING id, room_id, idx
+    WHERE r.phase = 'submit'
+      AND (
+        (r.submit_deadline_unix > 0 AND r.submit_deadline_unix < now_unix)
+        OR (
+          EXISTS (
+            SELECT 1 FROM participants p
+             WHERE p.room_id = r.room_id AND p.role = 'debater'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM participants p
+             WHERE p.room_id = r.room_id AND p.role = 'debater'
+               AND NOT EXISTS (
+                 SELECT 1 FROM submissions s
+                  WHERE s.round_id = r.id AND s.author_id = p.id
+               )
+          )
+        )
+      )
+    RETURNING r.id, r.room_id, r.idx,
+              CASE WHEN r.submit_deadline_unix > 0 AND r.submit_deadline_unix < now_unix
+                   THEN 'deadline' ELSE 'all_submitted' END AS reason
   LOOP
     PERFORM admin_audit_log_write(
       'publish',
@@ -220,7 +243,7 @@ BEGIN
       NULL,
       'watcher',
       jsonb_build_object('room_id', v_round.room_id, 'idx', v_round.idx),
-      jsonb_build_object('phase', 'published')
+      jsonb_build_object('phase', 'published', 'reason', v_round.reason)
     );
   END LOOP;
 END;
