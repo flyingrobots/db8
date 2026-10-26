@@ -12,8 +12,10 @@ export class SubmissionService {
     config,
     memSubmissions,
     memSubmissionIndex,
-    validateAndConsumeNonceMemory
+    validateAndConsumeNonceMemory,
+    memRooms = new Map()
   }) {
+    this.memRooms = memRooms;
     this.dbRef = dbRef;
     this.config = config;
     this.memSubmissions = memSubmissions;
@@ -57,7 +59,9 @@ export class SubmissionService {
       throw new Error('deadline_passed');
     }
 
-    const key = `${input.room_id}:${input.round_id}:${input.author_id}:${input.client_nonce}`;
+    // One submission per participant per round, as in the database (#237): a
+    // resubmission replaces the stored one under the same id.
+    const key = `${input.room_id}:${input.round_id}:${input.author_id}`;
 
     if (this.db) {
       try {
@@ -83,6 +87,11 @@ export class SubmissionService {
       } catch (e) {
         const msg = typeof e === 'string' ? e : e?.message || String(e) || 'db_error';
         if (/invalid_nonce/i.test(msg)) throw new Error('invalid_nonce', { cause: e });
+        // Rules submission_upsert enforced (#237). Falling back to memory would
+        // answer 200 for a document the database refused.
+        if (msg === 'nonce_superseded' || msg === 'submission_closed') {
+          throw new Error(msg, { cause: e });
+        }
 
         // Log DB error and fall back to memory (except invalid_nonce handled above)
         console.error('[SubmissionService] DB error, falling back to memory:', msg);
@@ -105,24 +114,70 @@ export class SubmissionService {
     );
   }
 
+  // The memory room's own view of the round: a round it has moved past, or the
+  // current one once it has left submit or its deadline has passed. Unknown
+  // rooms (no memory room) cannot be judged and are left open.
+  _memoryRoundClosed(roomId, roundId) {
+    const room = this.memRooms.get(roomId);
+    if (!room?.round) return false;
+    if (room.publishedRounds?.has(roundId)) return true;
+    if (room.round.round_id !== roundId) return false;
+    if (room.round.phase !== 'submit') return true;
+    const deadline = Number(room.round.submit_deadline_unix || 0);
+    return deadline > 0 && Math.floor(Date.now() / 1000) > deadline;
+  }
+
   _createInMemory(key, input, canonical_sha256, dbError = null) {
-    let submission_id;
-    if (this.memSubmissions.has(key)) {
-      submission_id = this.memSubmissions.get(key).id;
-    } else {
-      submission_id = crypto.randomUUID();
-      this.memSubmissions.set(key, {
-        id: submission_id,
-        canonical_sha256,
-        content: input.content,
-        author_id: input.author_id,
-        room_id: input.room_id,
-        round_id: input.round_id
-      });
-      // Claims are kept so the memory path can resolve a verdict's claim_path
-      // the same way the database path does.
-      this.memSubmissionIndex.set(submission_id, { room_id: input.room_id, claims: input.claims });
+    const previous = this.memSubmissions.get(key);
+    // As in the database: replaying a nonce a resubmission superseded would
+    // undo the newer document, so it is refused.
+    if (
+      previous &&
+      input.client_nonce !== previous.client_nonce &&
+      previous.nonces?.has(input.client_nonce)
+    ) {
+      throw new Error('nonce_superseded');
     }
+    // Replaying the stored nonce with the stored document changes nothing, so
+    // it is answered with the same id even after the round closes, as
+    // submission_upsert answers it before any closure check.
+    if (
+      previous &&
+      previous.client_nonce === input.client_nonce &&
+      previous.canonical_sha256 === canonical_sha256
+    ) {
+      return {
+        submission_id: previous.id,
+        canonical_sha256,
+        note: dbError ? 'db_fallback' : undefined,
+        db_error: dbError || undefined
+      };
+    }
+    if (previous && this._memoryRoundClosed(input.room_id, input.round_id)) {
+      // As submission_upsert does: once the round has closed, the document is
+      // frozen, because flags and verdicts stay attached to its id.
+      throw new Error('submission_closed');
+    }
+    const submission_id = previous?.id ?? crypto.randomUUID();
+    this.memSubmissions.set(key, {
+      id: submission_id,
+      canonical_sha256,
+      content: input.content,
+      author_id: input.author_id,
+      room_id: input.room_id,
+      round_id: input.round_id,
+      client_nonce: input.client_nonce,
+      nonces: new Set(previous?.nonces).add(input.client_nonce),
+      version:
+        previous &&
+        (previous.client_nonce !== input.client_nonce ||
+          previous.canonical_sha256 !== canonical_sha256)
+          ? previous.version + 1
+          : (previous?.version ?? 1)
+    });
+    // Claims are kept so the memory path can resolve a verdict's claim_path
+    // the same way the database path does.
+    this.memSubmissionIndex.set(submission_id, { room_id: input.room_id, claims: input.claims });
 
     return {
       submission_id,

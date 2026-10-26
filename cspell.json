@@ -165,8 +165,10 @@
     "cutover",
     "recanonicalizes",
     "fixednonce",
-    "modelcontextprotocol",
-    "constraintdef"
+    "constraintdef",
+    "indexdef",
+    "tablename",
+    "modelcontextprotocol"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }

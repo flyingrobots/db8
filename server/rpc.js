@@ -140,7 +140,8 @@ const submissionService = new SubmissionService({
   config,
   memSubmissions,
   memSubmissionIndex,
-  validateAndConsumeNonceMemory
+  validateAndConsumeNonceMemory,
+  memRooms
 });
 
 // Helper for router mounting

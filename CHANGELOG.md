@@ -4,6 +4,15 @@ lastUpdated: 2026-10-25
 
 # Changelog
 
+## 2026-10-25 — One submission per participant per round
+
+- **A resubmission replaces the earlier submission** (#237). `submissions` was unique on `(round_id, author_id, client_nonce)`, so `db8 resubmit` (a fresh nonce) added a second row that was published and journaled beside the first. The key is now `(round_id, author_id)`; `submission_upsert` replaces content, claims, citations and hash, keeps the id, and bumps a new `version` column. The audit entry records `version` and `previous_sha256`.
+- Replaying the same nonce with the same document returns the same id and changes nothing.
+- Replaying a nonce that a resubmission superseded is refused with 409 `nonce_superseded`; it would otherwise undo the newer document. A replacement after the round has left `submit` (or its deadline has passed) is refused with 409 `submission_closed`, because flags and verdicts on the published document stay attached to the same id.
+- Replacements are serialized per round and author, so each audit entry's `previous_sha256` names the version it actually replaced.
+- Upgrading a database: in rounds still in `submit`, older drafts are dropped and the newest kept. In rounds that have published, every row is kept (it is in a signed journal) and older duplicates are marked `legacy_duplicate`. One-per-author is a partial unique index over the unmarked rows.
+- Memory mode follows the same rule, including `nonce_superseded`; it does not check the round phase.
+
 ## 2026-10-25 — The pgTAP suite tells the truth
 
 - **`db/test/run.sh` fails on a failing assertion, a plan mismatch or a SQL error** (#238). psql exits 0 for all three, so the suite reported success while `30_rpcs` failed three tests and three files had wrong plans.

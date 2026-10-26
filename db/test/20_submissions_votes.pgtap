@@ -22,15 +22,15 @@ SELECT ok(
   'submissions table exists'
 );
 
--- submissions idempotency unique on (round_id, author_id, client_nonce)
+-- submissions: one per author per round (#237); the nonce is not in the key
 SELECT ok(
   EXISTS (
     SELECT 1 FROM pg_indexes
     WHERE schemaname = 'public' AND tablename = 'submissions'
       AND indexdef ILIKE '%UNIQUE%'
-      AND indexdef ILIKE '%(round_id, author_id, client_nonce)%'
+      AND indexdef ILIKE '%(round_id, author_id) WHERE (NOT legacy_duplicate)%'
   ),
-  'submissions unique (round_id, author_id, client_nonce) exists'
+  'submissions partial unique (round_id, author_id) WHERE NOT legacy_duplicate exists'
 );
 
 -- votes table exists

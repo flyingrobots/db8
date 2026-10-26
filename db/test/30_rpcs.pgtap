@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(30);
+SELECT plan(31);
 
 -- Assertions made inside DO blocks are collected here and reported at top
 -- level after each block. An assertion PERFORMed inside DO counts towards the
@@ -146,13 +146,14 @@ BEGIN
   SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', n) INTO id1;
   SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', n) INTO id2;
   INSERT INTO _tap(passed, descr) VALUES ((id1 = id2), 'submission_upsert idempotent for same nonce');
-  -- Change canonical and ensure the row updates
-  PERFORM submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe', n);
-  INSERT INTO _tap(passed, descr) VALUES (((SELECT canonical_sha256 FROM submissions WHERE id = id1) = 'cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe'), 'submission_upsert updates canonical on conflict');
   SELECT count(*) INTO sub_count FROM submissions WHERE round_id = round AND author_id = author;
   INSERT INTO _tap(passed, descr) VALUES ((sub_count = 1), 'submission_upsert stores single row for repeated nonce');
-  SELECT submission_upsert(round, author, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', n2) INTO id3;
-  INSERT INTO _tap(passed, descr) VALUES ((id3 <> id1), 'submission_upsert creates new row for different nonce');
+  -- One submission per author per round (#237): a fresh nonce replaces it.
+  SELECT submission_upsert(round, author, 'hello again', '[]'::jsonb, '[]'::jsonb, 'cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe', n2) INTO id3;
+  INSERT INTO _tap(passed, descr) VALUES ((id3 = id1), 'submission_upsert replaces the same row for a different nonce');
+  SELECT count(*) INTO sub_count FROM submissions WHERE round_id = round AND author_id = author;
+  INSERT INTO _tap(passed, descr) VALUES ((sub_count = 1), 'submission_upsert keeps one row per author per round');
+  INSERT INTO _tap(passed, descr) VALUES (((SELECT content FROM submissions WHERE id = id1) = 'hello again'), 'submission_upsert stores the latest document');
 END$$;
 
 SELECT ok(passed, descr) FROM _tap ORDER BY seq;
