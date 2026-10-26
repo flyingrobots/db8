@@ -175,8 +175,12 @@ BEGIN
 
   INSERT INTO votes (round_id, voter_id, kind, ballot, client_nonce)
   VALUES (p_round_id, p_voter_id, p_kind, p_ballot, p_client_nonce)
-  ON CONFLICT (round_id, voter_id, kind, client_nonce)
-  DO UPDATE SET ballot = EXCLUDED.ballot
+  -- Keyed on the voter, not the nonce (#227): a later ballot replaces the
+  -- earlier one instead of being counted beside it.
+  ON CONFLICT (round_id, voter_id, kind)
+  DO UPDATE SET ballot = EXCLUDED.ballot,
+                client_nonce = EXCLUDED.client_nonce,
+                created_at = now()
   RETURNING id INTO v_id;
 
   PERFORM admin_audit_log_write(

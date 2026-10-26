@@ -10,6 +10,12 @@ lastUpdated: 2026-10-25
 - The publish audit entry records `reason`: `deadline` or `all_submitted`.
 - Memory mode is unchanged and still publishes at the deadline only.
 
+## 2026-10-25 — One continue vote per participant
+
+- **A participant's continue vote counts once per round.** `votes` was unique on `(round_id, voter_id, kind, client_nonce)`, so a voter who sent ballots under fresh nonces was counted once per nonce, and one participant could decide whether the debate continued (#227). The key is now `(round_id, voter_id, kind)`; `vote_submit` replaces the earlier ballot, and replaying a nonce still returns the same id.
+- Upgrading a database that already holds duplicate ballots keeps each voter's newest ballot, then swaps the constraint, in the same way as `final_votes`.
+- Memory mode follows the same rule: a later ballot replaces the earlier one in the tally.
+
 ## 2026-10-24 — Room and seat lookup
 
 - **`GET /rpc/room.get?room_id=<uuid>`** returns a room's topic, status, config and seats (`id`, `anon_name`, `role`), ordered by seat number so `agent_2` precedes `agent_10`. Before this, `room.create` returned only `room_id`, `/state` had no topic or roster, and a participant could learn their id only from Postgres (#230).

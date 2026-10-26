@@ -149,8 +149,7 @@ Endpoints (canonical realtime = SSE):
 
 - `POST /rpc/submission.create` — accepts a validated submission and returns `{
 ok, submission_id, canonical_sha256 }`
-- `POST /rpc/vote.continue` — idempotent continue vote; returns `{ ok, vote_id
-}`
+- `POST /rpc/vote.continue` — continue vote; returns `{ ok, vote_id }`. Each participant has one ballot per round: a later vote, under any nonce, replaces the earlier one ([#227](https://github.com/flyingrobots/db8/issues/227)).
 
 Journals
 
