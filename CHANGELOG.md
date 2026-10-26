@@ -4,6 +4,13 @@ lastUpdated: 2026-10-25
 
 # Changelog
 
+## 2026-10-25 — Room config is stored
+
+- **`room_create` stores its `cfg` in `rooms.config`** (#200). It read `participant_count` and `submit_minutes` and then dropped the rest, so every room's config was `{}`. Research quotas (`max_fetches_per_round`) were therefore never enforced, and `attribution_mode` could not be switched on.
+- `POST /rpc/room.create` accepts `max_fetches_per_round`, `attribution_mode` (`masked` or `real`) and `predicates` (snake_case) besides the two existing keys, and rejects invalid values with 400. Unknown keys are dropped.
+- Memory-mode `room.create` stores the same config, so `room.get` answers alike in both modes.
+- Not wired yet: the submission path does not read `predicates`, so strict vocabularies are stored but not enforced (#244).
+
 ## 2026-10-25 — Publish when every debater has submitted
 
 - **`round_publish_due` publishes a `submit` round as soon as every debater in its room has submitted to it**, instead of always waiting for the deadline (#229). The deadline rule is unchanged. Hosts and judges do not hold a round open, and a room with no debaters still waits for its deadline.

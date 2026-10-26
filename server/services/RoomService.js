@@ -280,7 +280,8 @@ export class RoomService {
     this.memRooms.set(roomId, {
       topic,
       status: 'active',
-      config: {},
+      // The config the room was created with, as room_create stores it (#200).
+      config: { ...cfg },
       participants: Array.from({ length: seats }, (_, i) => ({
         id: crypto.randomUUID(),
         anon_name: `agent_${i + 1}`,

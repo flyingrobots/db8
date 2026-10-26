@@ -31,8 +31,11 @@ BEGIN
 
   v_submit_deadline := v_now + (v_submit_minutes::bigint * 60);
 
-  INSERT INTO rooms (title, client_nonce)
-  VALUES (NULLIF(p_topic, ''), v_client_nonce)
+  -- The config is stored as given (#200); it was read for the two values above
+  -- and then dropped. A replayed nonce keeps the first creation's config, as it
+  -- keeps the first title.
+  INSERT INTO rooms (title, client_nonce, config)
+  VALUES (NULLIF(p_topic, ''), v_client_nonce, COALESCE(p_cfg, '{}'::jsonb))
   ON CONFLICT (client_nonce)
     DO UPDATE SET title = COALESCE(rooms.title, EXCLUDED.title)
   RETURNING id INTO v_room_id;
