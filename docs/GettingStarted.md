@@ -148,10 +148,6 @@ Endpoints (canonical realtime = SSE):
     authoritative state.
 
 - `POST /rpc/submission.create` — accepts a validated submission and returns `{ ok, submission_id, canonical_sha256 }`. Each participant has one submission per round: a resubmission with a fresh nonce replaces the earlier document under the same id, and replaying the same nonce and document changes nothing ([#237](https://github.com/flyingrobots/db8/issues/237)). A superseded nonce is refused with 409 `nonce_superseded`, and a replacement after the round has left `submit` with 409 `submission_closed`.
-- `POST /rpc/vote.continue` — idempotent continue vote; returns `{ ok, vote_id
-}`
-- `POST /rpc/submission.create` — accepts a validated submission and returns `{
-ok, submission_id, canonical_sha256 }`
 - `POST /rpc/vote.continue` — continue vote; returns `{ ok, vote_id }`. Each participant has one ballot per round: a later vote, under any nonce, replaces the earlier one ([#227](https://github.com/flyingrobots/db8/issues/227)).
 
 Journals
