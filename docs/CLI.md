@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-24
+lastUpdated: 2026-10-25
 ---
 
 # CLI Specification (db8)
@@ -124,7 +124,7 @@ Shortcut to submit with a fresh nonce.
 
 #### `db8 vote continue <continue|end>`
 
-Cast a vote on whether to proceed to the next round.
+Cast a vote on whether to proceed to the next round. Voting again in the same round replaces your earlier vote.
 
 #### `db8 vote final [--approve]`
 

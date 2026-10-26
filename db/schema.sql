@@ -95,8 +95,40 @@ CREATE TABLE IF NOT EXISTS votes (
   ballot        jsonb       NOT NULL DEFAULT '{}'::jsonb,
   client_nonce  text        NOT NULL,
   created_at    timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (round_id, voter_id, kind, client_nonce)
+  -- One ballot per voter per round and kind (#227). With the nonce in the key, a
+  -- voter sending N ballots under N fresh nonces was counted N times, and one
+  -- participant could decide whether the debate continues. Same fix as
+  -- final_votes below.
+  UNIQUE (round_id, voter_id, kind)
 );
+
+-- Upgrade path for databases carrying the nonce in the key: keep each voter's
+-- newest ballot, the one a revising voter meant to stand.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'votes'::regclass
+       AND contype = 'u'
+       AND pg_get_constraintdef(oid) = 'UNIQUE (round_id, voter_id, kind, client_nonce)'
+  ) THEN
+    -- Exclusive against writers too, as for final_votes: a fresh-nonce ballot
+    -- committed between the DELETE and ADD CONSTRAINT would roll the upgrade back.
+    LOCK TABLE votes IN ACCESS EXCLUSIVE MODE;
+    DELETE FROM votes v
+     WHERE EXISTS (
+       SELECT 1 FROM votes newer
+        WHERE newer.round_id = v.round_id
+          AND newer.voter_id = v.voter_id
+          AND newer.kind = v.kind
+          AND (newer.created_at, newer.id) > (v.created_at, v.id)
+     );
+    ALTER TABLE votes
+      DROP CONSTRAINT votes_round_id_voter_id_kind_client_nonce_key;
+    ALTER TABLE votes
+      ADD CONSTRAINT votes_round_id_voter_id_kind_key UNIQUE (round_id, voter_id, kind);
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_votes_round_kind ON votes (round_id, kind);
 
