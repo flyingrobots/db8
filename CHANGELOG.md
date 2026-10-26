@@ -1,8 +1,15 @@
 ---
-lastUpdated: 2026-10-24
+lastUpdated: 2026-10-25
 ---
 
 # Changelog
+
+## 2026-10-25 — Room config is stored
+
+- **`room_create` stores its `cfg` in `rooms.config`** (#200). It read `participant_count` and `submit_minutes` and then dropped the rest, so every room's config was `{}`. Research quotas (`max_fetches_per_round`) were therefore never enforced, and `attribution_mode` could not be switched on.
+- `POST /rpc/room.create` accepts `max_fetches_per_round`, `attribution_mode` (`masked` or `real`) and `predicates` (snake_case) besides the two existing keys, and rejects invalid values with 400. Unknown keys are dropped.
+- Memory-mode `room.create` stores the same config, so `room.get` answers alike in both modes.
+- Not wired yet: the submission path does not read `predicates`, so strict vocabularies are stored but not enforced (#244).
 
 ## 2026-10-24 — Room and seat lookup
 

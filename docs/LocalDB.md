@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-05
+lastUpdated: 2026-10-25
 ---
 
 # Local Database Setup (Postgres / Supabase)
@@ -53,6 +53,18 @@ The new `room_create(topic text, cfg jsonb DEFAULT '{}'::jsonb, nonce text)` RPC
 seeds a room, round 0, and a roster of anonymous participants. Defaults:
 `participant_count=4`, `submit_minutes=5`; pass a `nonce` to make the call
 idempotent.
+
+`cfg` is stored as `rooms.config` ([#200](https://github.com/flyingrobots/db8/issues/200)); a replayed nonce keeps the first creation's config. Through `POST /rpc/room.create` the accepted keys are:
+
+| Key                     | Meaning                                                              |
+| ----------------------- | -------------------------------------------------------------------- |
+| `participant_count`     | seats to seed, 1–64                                                  |
+| `submit_minutes`        | round 0 submit window, 1–1440                                        |
+| `max_fetches_per_round` | research fetches per round; 0 or absent means no limit               |
+| `attribution_mode`      | `masked` hides authors while a round is in `submit`; `real` does not |
+| `predicates`            | opt-in strict predicate vocabulary (snake_case names)                |
+
+Other keys are dropped. `GET /rpc/room.get` returns the stored config in both database and memory mode.
 
 Examples:
 
