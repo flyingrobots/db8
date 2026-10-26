@@ -16,7 +16,9 @@ export class VoteService {
   }
 
   async castContinueVote({ round_id, voter_id, choice, client_nonce, room_id }) {
-    const key = `${round_id}:${voter_id}:continue:${client_nonce}`;
+    // Keyed on the voter, not the nonce, like the database (#227): a later
+    // ballot replaces the earlier one in the tally instead of adding to it.
+    const key = `${round_id}:${voter_id}:continue`;
     // `db_fallback` means "a configured database failed and this vote lives only
     // in memory". Memory mode by configuration is not a fallback, and clients
     // such as the MCP agent server treat the note as a failed write (#231).
@@ -38,18 +40,25 @@ export class VoteService {
       note = 'db_fallback';
     }
 
-    // A repeat of the same ballot key revises the choice, as vote_submit's
-    // ON CONFLICT ... DO UPDATE SET ballot does. Returning early left the old
-    // choice counted after a voter changed their mind.
+    // The ballots live inside the tally they were counted in. rpc.js bounds
+    // ballots and tallies in separate caches; kept apart, a tally evicted while
+    // its ballot survived made a revision subtract from a fresh zero tally and
+    // drive a count negative. Together they are evicted together. The field is
+    // non-enumerable, so /state still serializes the tally as { yes, no }.
     const t = this.memVoteTotals.get(room_id) || { yes: 0, no: 0 };
-    const previous = this.memVotes.get(key);
+    if (!(t.ballots instanceof Map)) {
+      Object.defineProperty(t, 'ballots', { value: new Map(), enumerable: false });
+    }
+    const previous = t.ballots.get(key);
+    // The same choice again changes nothing; a different one revises the
+    // ballot, as vote_submit does.
     if (previous && previous.choice === choice) return { vote_id: previous.id, note };
     if (previous) {
-      if (previous.choice === 'continue') t.yes = Math.max(0, t.yes - 1);
-      else t.no = Math.max(0, t.no - 1);
+      if (previous.choice === 'continue') t.yes -= 1;
+      else t.no -= 1;
     }
     const vote_id = previous?.id ?? crypto.randomUUID();
-    this.memVotes.set(key, { id: vote_id, choice });
+    t.ballots.set(key, { id: vote_id, choice });
     if (choice === 'continue') t.yes += 1;
     else t.no += 1;
     this.memVoteTotals.set(room_id, t);

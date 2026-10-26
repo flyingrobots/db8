@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-02
+lastUpdated: 2026-10-25
 ---
 
 # Architecture
@@ -743,7 +743,7 @@ STATE: research_k      (tools on, no writes)      [timer T_research]
 
 Transitions (guards):
 
-- submit_k → verify_k: now() ≥ submit_deadline.
+- submit_k → verify_k: now() ≥ submit_deadline, or every debater in the room has submitted (implemented as `round_publish_due`, which publishes directly; [#229](https://github.com/flyingrobots/db8/issues/229)).
 - verify_k → published_k: all submissions.status ∈ {'verified','forfeit'} for
   round.
 - published*k → research*{k+1}: continue vote passed.

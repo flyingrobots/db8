@@ -12,6 +12,25 @@ lastUpdated: 2026-10-25
 - Memory mode: a repeated continue vote with the same ballot key revises the choice, as `vote_submit` does; final ballots are kept (one per voter per round) and `/state` reports `final_tally`; transcript entries carry `round_idx`.
 - A continue vote that `vote_submit` refuses (wrong phase, closed window) is now a 400, as final votes already were. Before, the server counted it in memory and answered 200.
 
+## 2026-10-25 — Room config is stored
+
+- **`room_create` stores its `cfg` in `rooms.config`** (#200). It read `participant_count` and `submit_minutes` and then dropped the rest, so every room's config was `{}`. Research quotas (`max_fetches_per_round`) were therefore never enforced, and `attribution_mode` could not be switched on.
+- `POST /rpc/room.create` accepts `max_fetches_per_round`, `attribution_mode` (`masked` or `real`) and `predicates` (snake_case) besides the two existing keys, and rejects invalid values with 400. Unknown keys are dropped.
+- Memory-mode `room.create` stores the same config, so `room.get` answers alike in both modes.
+- Not wired yet: the submission path does not read `predicates`, so strict vocabularies are stored but not enforced (#244).
+
+## 2026-10-25 — Publish when every debater has submitted
+
+- **`round_publish_due` publishes a `submit` round as soon as every debater in its room has submitted to it**, instead of always waiting for the deadline (#229). The deadline rule is unchanged. Hosts and judges do not hold a round open, and a room with no debaters still waits for its deadline.
+- The publish audit entry records `reason`: `deadline` or `all_submitted`.
+- Memory mode is unchanged and still publishes at the deadline only.
+
+## 2026-10-25 — One continue vote per participant
+
+- **A participant's continue vote counts once per round.** `votes` was unique on `(round_id, voter_id, kind, client_nonce)`, so a voter who sent ballots under fresh nonces was counted once per nonce, and one participant could decide whether the debate continued (#227). The key is now `(round_id, voter_id, kind)`; `vote_submit` replaces the earlier ballot, and replaying a nonce still returns the same id.
+- Upgrading a database that already holds duplicate ballots keeps each voter's newest ballot, then swaps the constraint, in the same way as `final_votes`.
+- Memory mode follows the same rule: a later ballot replaces the earlier one in the tally.
+
 ## 2026-10-24 — Room and seat lookup
 
 - **`GET /rpc/room.get?room_id=<uuid>`** returns a room's topic, status, config and seats (`id`, `anon_name`, `role`), ordered by seat number so `agent_2` precedes `agent_10`. Before this, `room.create` returned only `room_id`, `/state` had no topic or roster, and a participant could learn their id only from Postgres (#230).

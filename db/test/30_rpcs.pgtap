@@ -162,10 +162,15 @@ BEGIN
   PERFORM ok(id1 = id2, 'vote_submit idempotent for same nonce');
   SELECT count(*) INTO votes_count FROM votes WHERE round_id = v_round AND voter_id = voter AND kind = 'continue';
   PERFORM ok(votes_count = 1, 'vote_submit stores single row for repeated nonce');
-  SELECT vote_submit(v_round, voter, 'continue', '{}'::jsonb, n2) INTO id3;
-  PERFORM ok(id3 <> id1, 'vote_submit creates new row for different nonce');
+  -- One ballot per voter (#227): a fresh nonce revises the ballot, not adds one.
+  SELECT vote_submit(v_round, voter, 'continue', '{"choice":"end"}'::jsonb, n2) INTO id3;
+  PERFORM ok(id3 = id1, 'vote_submit revises the same row for a different nonce');
   SELECT count(*) INTO votes_count FROM votes WHERE round_id = v_round AND voter_id = voter AND kind = 'continue';
-  PERFORM ok(votes_count = 2, 'vote_submit stores two rows for two different nonces');
+  PERFORM ok(votes_count = 1, 'vote_submit stores one row per voter across nonces');
+  PERFORM ok(
+    (SELECT ballot->>'choice' FROM votes WHERE id = id1) = 'end',
+    'vote_submit keeps the latest ballot'
+  );
 END$$;
 
 -- Round ops existence (skeleton)
