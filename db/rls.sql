@@ -4,6 +4,10 @@ alter table if exists rooms enable row level security;
 alter table if exists participants enable row level security;
 alter table if exists rounds enable row level security;
 alter table if exists submissions enable row level security;
+-- Every nonce and hash a submission was stored under (#237). No policy: only
+-- the owner and SECURITY DEFINER functions read it, so a hash cannot be
+-- compared against a guess while the round is still blind.
+alter table if exists submission_nonce_log enable row level security;
 alter table if exists votes enable row level security;
 alter table if exists admin_audit_log enable row level security;
 alter table if exists submission_flags enable row level security;

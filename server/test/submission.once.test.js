@@ -16,6 +16,13 @@ const dbUrl =
   process.env.DATABASE_URL ||
   'postgresql://postgres:test@localhost:54329/db8_test';
 const describeDb = process.env.DB8_TEST_PG ? describe : describe.skip;
+const rpcPath = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  'db',
+  'rpc.sql'
+);
 const schemaPath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..',
@@ -143,8 +150,10 @@ describeDb('one submission per participant per round (database)', () => {
   });
 
   it('a replacement after the round has published is refused', async () => {
-    // The round is published by the test above. A replacement now would keep
-    // the submission id, and with it the verdicts judges gave the old claims.
+    // A replacement now would keep the submission id, and with it the verdicts
+    // judges gave the old claims. Set the phase here rather than relying on the
+    // test above having published the round.
+    await pool.query("update rounds set phase = 'published' where id = $1", [ids.round_id]);
     const res = await request(app)
       .post('/rpc/submission.create')
       .send(doc(ids, 'Rewritten after publish.', `once-${run}-late`))
@@ -155,6 +164,26 @@ describeDb('one submission per participant per round (database)', () => {
       [ids.round_id, ids.author_id]
     );
     expect(row.rows).toEqual([{ content: 'Draft two.' }]);
+  });
+
+  it('a replacement after the submit deadline is refused even while the phase is still submit', async () => {
+    // The watcher may not have flipped the phase yet; the deadline alone closes
+    // the round to replacements.
+    const round4 = `${run}-0000-4000-8000-000000000007`;
+    await pool.query(
+      "insert into rounds(id, room_id, idx, phase, submit_deadline_unix) values ($1, $2, 3, 'submit', 100)",
+      [round4, ids.room_id]
+    );
+    const r4 = { ...ids, round_id: round4 };
+    await request(app)
+      .post('/rpc/submission.create')
+      .send(doc(r4, 'On time', `dl-${run}-1`))
+      .expect(200);
+    const late = await request(app)
+      .post('/rpc/submission.create')
+      .send(doc(r4, 'Too late', `dl-${run}-2`))
+      .expect(409);
+    expect(late.body.error).toBe('submission_closed');
   });
 
   it('a retry of a superseded nonce is refused instead of undoing the resubmission', async () => {
@@ -196,6 +225,9 @@ describeDb('one submission per participant per round (database)', () => {
       await c1.query('COMMIT');
       await second;
     } finally {
+      // An open transaction must not go back to the pool: it would keep its
+      // locks and swallow later queries on that connection.
+      await c1.query('ROLLBACK').catch(() => {});
       c1.release();
       c2.release();
     }
@@ -239,6 +271,7 @@ describeDb('one submission per participant per round (database)', () => {
       await publisher.query('COMMIT');
       expect(await replacement).toBe('submission_closed');
     } finally {
+      await publisher.query('ROLLBACK').catch(() => {});
       publisher.release();
       author.release();
     }
@@ -260,6 +293,7 @@ describeDb('one submission per participant per round (database)', () => {
       await db.connect();
       const schema = await readFile(schemaPath, 'utf8');
       await db.query(schema);
+      await db.query(await readFile(rpcPath, 'utf8'));
       await db.query('drop index submissions_one_per_author_round');
       await db.query(
         'alter table submissions add constraint submissions_round_id_author_id_client_nonce_key unique (round_id, author_id, client_nonce)'
@@ -329,6 +363,14 @@ describeDb('one submission per participant per round (database)', () => {
         "select count(*)::int as n from pg_constraint where conrelid = 'submissions'::regclass and contype = 'u'"
       );
       expect(cons.rows[0].n).toBe(0);
+      // The dropped draft's nonce is still known, so replaying it cannot
+      // replace the newer draft that survived.
+      await expect(
+        db.query(
+          'select submission_upsert($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text)',
+          [ids.round_id, ids.author_id, 'old', '[]', '[]', sha('old'), 'n1']
+        )
+      ).rejects.toThrow(/nonce_superseded/);
     } finally {
       await db.end().catch(() => {});
       await admin.query(`drop database if exists ${name}`);

@@ -22,9 +22,9 @@ SELECT ok(
     SELECT 1 FROM pg_indexes
     WHERE schemaname = 'public' AND tablename = 'submissions'
       AND indexdef ILIKE '%UNIQUE%'
-      AND indexdef ILIKE '%(round_id, author_id)%'
+      AND indexdef ILIKE '%(round_id, author_id) WHERE (NOT legacy_duplicate)%'
   ),
-  'submissions unique (round_id, author_id) exists'
+  'submissions partial unique (round_id, author_id) WHERE NOT legacy_duplicate exists'
 );
 
 -- votes table exists

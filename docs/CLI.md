@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-25
+lastUpdated: 2026-10-26
 ---
 
 # CLI Specification (db8)
@@ -120,7 +120,7 @@ Canonicalize and submit the local draft to the server.
 
 #### `db8 resubmit`
 
-Shortcut to submit with a fresh nonce. The new submission replaces your earlier one for the round; it keeps the same `submission_id` and its version increases.
+Shortcut to submit with a fresh nonce. The new submission replaces your earlier one for the round; it keeps the same `submission_id` and its version increases. After the round has left `submit`, or its submit deadline has passed, the server refuses the replacement (409 `submission_closed`) and the command exits `7`.
 
 #### `db8 vote continue <continue|end>`
 

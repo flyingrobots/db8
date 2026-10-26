@@ -116,6 +116,20 @@ BEGIN
        AND pg_get_constraintdef(oid) = 'UNIQUE (round_id, author_id, client_nonce)'
   ) THEN
     LOCK TABLE submissions IN ACCESS EXCLUSIVE MODE;
+    -- Carry each dropped draft's nonce over to the draft that survives, before
+    -- the delete cascades its log rows away. Otherwise a delayed retry of a
+    -- dropped nonce would pass the superseded check and replace the newer draft.
+    INSERT INTO submission_nonce_log (submission_id, client_nonce, canonical_sha256)
+    SELECT keep.id, s.client_nonce, s.canonical_sha256
+      FROM submissions s
+      JOIN rounds r ON r.id = s.round_id AND r.phase = 'submit'
+      JOIN LATERAL (
+        SELECT n.id FROM submissions n
+         WHERE n.round_id = s.round_id AND n.author_id = s.author_id
+         ORDER BY n.submitted_at DESC, n.id DESC
+         LIMIT 1
+      ) keep ON keep.id <> s.id
+    ON CONFLICT DO NOTHING;
     DELETE FROM submissions s
      USING rounds r
      WHERE r.id = s.round_id AND r.phase = 'submit'

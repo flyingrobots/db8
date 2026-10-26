@@ -1,6 +1,6 @@
 -- 40_rls.pgtap — minimal RLS invariants for submissions visibility
 BEGIN;
-SELECT plan(6);
+SELECT plan(5);
 
 -- Ensure RLS is enabled (portable across pgTAP versions)
 WITH f AS (
@@ -10,6 +10,11 @@ WITH f AS (
   WHERE n.nspname = 'public' AND c.relname = 'submissions'
 )
 SELECT ok((SELECT enabled FROM f), 'RLS enabled on submissions');
+
+SELECT ok(
+  (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.submission_nonce_log'::regclass),
+  'RLS enabled on submission_nonce_log'
+);
 
 -- Seed minimal data
 DO $$
