@@ -4,6 +4,10 @@ lastUpdated: 2026-10-26
 
 # Changelog
 
+## 2026-10-26 — A replayed room_create changes nothing
+
+- **Replaying `room_create` with the same `client_nonce` returns the existing room and changes nothing** (#249). The replay seeded `agent_1..agent_N` again with `ON CONFLICT DO NOTHING`, so a replay with a larger `participant_count` added seats, and the stored `participant_count` no longer matched the room. A replay no longer fills in a missing title either. The two pgTAP assertions that #238 marked TODO for this now pass.
+
 ## 2026-10-26 — A nonce names one document
 
 - **Reusing a submission's current `client_nonce` with a different document is refused with 409 `nonce_reused`** (#236). Before #237 the upsert rewrote only the hash, leaving the old content beside a hash of a document nobody stored; after #237 it replaced the document silently, so a retry and an edit looked the same. Replaying the same document under the same nonce still returns the same id; a resubmission uses a fresh nonce. Memory mode follows the same rule.
