@@ -151,7 +151,9 @@ export class RoomService {
     ) {
       room.round.phase = 'published';
       room.round.published_at_unix = now;
-      const continueWindow = this.config?.continueWindowSec ?? 30;
+      // The room's own window first, as round_publish_due reads it (#228).
+      const continueWindow =
+        room.config?.continue_vote_seconds ?? this.config?.continueWindowSec ?? 30;
       room.round.continue_vote_close_unix = now + continueWindow;
     } else if (
       room.round.phase === 'published' &&
@@ -171,7 +173,12 @@ export class RoomService {
           round_id: crypto.randomUUID(),
           idx: room.round.idx + 1,
           phase: 'submit',
-          submit_deadline_unix: now + 300
+          // submit_minutes applies to every round, as in round_open_next (#228).
+          submit_deadline_unix:
+            now +
+            (room.config?.submit_minutes
+              ? room.config.submit_minutes * 60
+              : (this.config?.submitWindowSec ?? 300))
         };
         // Reset vote totals for the next round
         this.memVoteTotals.set(roomId, { yes: 0, no: 0 });

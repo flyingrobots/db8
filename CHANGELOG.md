@@ -8,6 +8,12 @@ lastUpdated: 2026-10-26
 
 - **A room created with `cfg.predicates` refuses a claim whose term uses another predicate** (#244). #200 stored the vocabulary, but `submission.create` validated terms with no options, so it was never enforced. The answer is `400 invalid_claim_term`, with `claim_id`, `claim_index`, the term `path` and a message that names the predicate. The vocabulary comes from the room of the submitted round, not from the `room_id` in the request. A room without `predicates` accepts any snake_case predicate, as before. Memory mode follows the same rule.
 
+## 2026-10-26 — A room sets its own round timing
+
+- **`room.create` accepts `cfg.continue_vote_seconds` (10–3600, default 30), and `cfg.submit_minutes` now applies to every round** (#228). `round_publish_due` hard-coded a 30-second continue-vote window, and `round_open_next` gave every round after round 0 a 300-second submit window. LLM agents often missed the 30-second vote, and a round with no votes ends the debate. Both sweeps now read the room's config. A room without these keys keeps 30 s and 300 s. A stored value that is not a valid integer in range gives the default, so one room's config cannot fail a sweep for every room.
+- `room_create` and the Zod schema refuse an out-of-range `continue_vote_seconds`. The CLI has `room create --continue-seconds`.
+- Memory mode uses the same settings. Without them, the next round's submit window comes from `SUBMIT_WINDOW_SEC` (default 300), not a fixed 300.
+
 ## 2026-10-26 — A replayed room_create changes nothing
 
 - **Replaying `room_create` with the same `client_nonce` returns the existing room and changes nothing** (#249). The replay seeded `agent_1..agent_N` again with `ON CONFLICT DO NOTHING`, so a replay with a larger `participant_count` added seats, and the stored `participant_count` no longer matched the room. A replay no longer fills in a missing title either. The two pgTAP assertions that #238 marked TODO for this now pass.

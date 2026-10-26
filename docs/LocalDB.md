@@ -59,7 +59,8 @@ idempotent.
 | Key                     | Meaning                                                                                                                                                                                 |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `participant_count`     | seats to seed, 1–64                                                                                                                                                                     |
-| `submit_minutes`        | round 0 submit window, 1–1440                                                                                                                                                           |
+| `submit_minutes`        | submit window of every round, 1–1440; 5 if absent ([#228](https://github.com/flyingrobots/db8/issues/228))                                                                              |
+| `continue_vote_seconds` | continue-vote window after each publish, 10–3600; 30 if absent ([#228](https://github.com/flyingrobots/db8/issues/228))                                                                 |
 | `max_fetches_per_round` | research fetches per round; 0 or absent means no limit                                                                                                                                  |
 | `attribution_mode`      | `masked` hides authors while a round is in `submit`; `real` does not                                                                                                                    |
 | `predicates`            | opt-in strict predicate vocabulary (snake_case names); a claim with another predicate is refused with `400 invalid_claim_term` ([#244](https://github.com/flyingrobots/db8/issues/244)) |
