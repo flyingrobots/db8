@@ -4,6 +4,10 @@ lastUpdated: 2026-10-25
 
 # Changelog
 
+## 2026-10-25 — CLI `--timeout` works
+
+- **`--timeout <ms>` now bounds every API request the CLI makes** (#235). It was listed in the help and read by no command, so a server that accepted the connection and never answered held the CLI forever. A timeout prints `request to … timed out after <ms> ms` and exits 7; a value that is not a positive integer exits 2. `room watch` streams over SSE and is not bounded by it.
+
 ## 2026-10-25 — Room config is stored
 
 - **`room_create` stores its `cfg` in `rooms.config`** (#200). It read `participant_count` and `submit_minutes` and then dropped the rest, so every room's config was `{}`. Research quotas (`max_fetches_per_round`) were therefore never enforced, and `attribution_mode` could not be switched on.
