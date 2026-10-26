@@ -1,8 +1,15 @@
 ---
-lastUpdated: 2026-10-24
+lastUpdated: 2026-10-25
 ---
 
 # Changelog
+
+## 2026-10-25 — One submission per participant per round
+
+- **A resubmission replaces the earlier submission** (#237). `submissions` was unique on `(round_id, author_id, client_nonce)`, so `db8 resubmit` (a fresh nonce) added a second row that was published and journaled beside the first. The key is now `(round_id, author_id)`; `submission_upsert` replaces content, claims, citations and hash, keeps the id, and bumps a new `version` column. The audit entry records `version` and `previous_sha256`.
+- Replaying the same nonce with the same document returns the same id and changes nothing.
+- Upgrading a database that holds several drafts per author keeps each author's newest submission per round, then swaps the constraint.
+- Memory mode follows the same rule.
 
 ## 2026-10-24 — Room and seat lookup
 

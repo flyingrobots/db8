@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-24
+lastUpdated: 2026-10-25
 ---
 
 # Getting Started
@@ -147,8 +147,7 @@ Endpoints (canonical realtime = SSE):
     if disconnected, reconnect and also fetch `GET /state` to resync
     authoritative state.
 
-- `POST /rpc/submission.create` — accepts a validated submission and returns `{
-ok, submission_id, canonical_sha256 }`
+- `POST /rpc/submission.create` — accepts a validated submission and returns `{ ok, submission_id, canonical_sha256 }`. Each participant has one submission per round: a resubmission with a fresh nonce replaces the earlier document under the same id, and replaying the same nonce and document changes nothing ([#237](https://github.com/flyingrobots/db8/issues/237)).
 - `POST /rpc/vote.continue` — idempotent continue vote; returns `{ ok, vote_id
 }`
 
