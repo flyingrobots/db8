@@ -64,10 +64,22 @@ export const ContinueVote = z.object({
 
 export const RoomCreate = z.object({
   topic: z.string().min(3),
+  // Stored as rooms.config (#200). Unknown keys are stripped, so only settings
+  // something reads can be persisted.
   cfg: z
     .object({
       participant_count: z.number().int().min(1).max(64).optional(),
-      submit_minutes: z.number().int().min(1).max(1440).optional()
+      submit_minutes: z.number().int().min(1).max(1440).optional(),
+      // Research fetches allowed per participant per round; 0 or absent means
+      // no limit (server/routes/research.js).
+      max_fetches_per_round: z.number().int().min(0).max(1000).optional(),
+      // Read by submissions_view: 'masked' hides authors during submit.
+      attribution_mode: z.enum(['masked', 'real']).optional(),
+      // Opt-in strict predicate vocabulary (docs/specs/ClaimTerms.md).
+      predicates: z
+        .array(z.string().regex(/^[a-z][a-z0-9_]*$/, 'predicates must be snake_case'))
+        .max(256)
+        .optional()
     })
     .optional(),
   client_nonce: z.string().min(8).optional()

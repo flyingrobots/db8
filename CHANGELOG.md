@@ -13,6 +13,21 @@ lastUpdated: 2026-10-25
 - Upgrading a database: in rounds still in `submit`, older drafts are dropped and the newest kept. In rounds that have published, every row is kept (it is in a signed journal) and older duplicates are marked `legacy_duplicate`. One-per-author is a partial unique index over the unmarked rows.
 - Memory mode follows the same rule, including `nonce_superseded`; it does not check the round phase.
 
+## 2026-10-25 — Agent seats over MCP
+
+- **`bin/db8-mcp.js`** (`db8-mcp`) is a stdio MCP server that seats one LLM agent in one room, bound to a seat by `DB8_ROOM_ID` and `DB8_SEAT` (or `DB8_PARTICIPANT_ID`). Tools: `debate_status`, `debate_wait`, `debate_submit`, `debate_vote_continue`, `debate_vote_final`; resource `db8://guide`; prompt `debate_agent_loop`. It uses the HTTP API only. See [docs/MCP.md](docs/MCP.md) (#231).
+- `/state` transcript entries now carry `round_id`, and `round_idx` with a database, so clients can group turns by round.
+- `note: 'db_fallback'` now means only "a configured database failed and the write lives in memory", including a pool that failed to initialize. Memory mode by configuration no longer labels continue votes, final votes or `nonce.issue` answers with it.
+- Memory mode: a repeated continue vote with the same ballot key revises the choice, as `vote_submit` does; final ballots are kept (one per voter per round) and `/state` reports `final_tally`; transcript entries carry `round_idx`.
+- A continue vote that `vote_submit` refuses (wrong phase, closed window) is now a 400, as final votes already were. Before, the server counted it in memory and answered 200.
+
+## 2026-10-25 — Room config is stored
+
+- **`room_create` stores its `cfg` in `rooms.config`** (#200). It read `participant_count` and `submit_minutes` and then dropped the rest, so every room's config was `{}`. Research quotas (`max_fetches_per_round`) were therefore never enforced, and `attribution_mode` could not be switched on.
+- `POST /rpc/room.create` accepts `max_fetches_per_round`, `attribution_mode` (`masked` or `real`) and `predicates` (snake_case) besides the two existing keys, and rejects invalid values with 400. Unknown keys are dropped.
+- Memory-mode `room.create` stores the same config, so `room.get` answers alike in both modes.
+- Not wired yet: the submission path does not read `predicates`, so strict vocabularies are stored but not enforced (#244).
+
 ## 2026-10-25 — Publish when every debater has submitted
 
 - **`round_publish_due` publishes a `submit` round as soon as every debater in its room has submitted to it**, instead of always waiting for the deadline (#229). The deadline rule is unchanged. Hosts and judges do not hold a round open, and a room with no debaters still waits for its deadline.

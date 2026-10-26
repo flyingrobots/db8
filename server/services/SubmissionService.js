@@ -102,7 +102,14 @@ export class SubmissionService {
       }
     }
 
-    return this._createInMemory(key, input, canonical_sha256);
+    // A configured database whose pool failed to initialize also lands here.
+    // That is a fallback, so say so rather than presenting it as persisted.
+    return this._createInMemory(
+      key,
+      input,
+      canonical_sha256,
+      this.dbRef.configured ? 'database_unavailable' : null
+    );
   }
 
   _createInMemory(key, input, canonical_sha256, dbError = null) {

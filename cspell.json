@@ -167,7 +167,8 @@
     "fixednonce",
     "constraintdef",
     "indexdef",
-    "tablename"
+    "tablename",
+    "modelcontextprotocol"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }
