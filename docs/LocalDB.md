@@ -227,7 +227,7 @@ DB8_API_URL=<http://localhost:3000> db8 room watch  --room
 
 ## Notes
 
-- CI applies `db/schema.sql` and `db/rpc.sql`. pgTAP runs only when enabled: run the `ci` workflow by hand with `run_pgtap=1`, or set the repository variable `RUN_PGTAP=1`. CI installs pgTAP into the Postgres service first.
+- CI applies `db/schema.sql` and `db/rpc.sql`. pgTAP runs only when enabled: run the `ci` workflow by hand with `run_pgtap=1`, or set the repository variable `RUN_PGTAP=1`. CI installs pgTAP into the Postgres service and runs the suite against a freshly prepared `db8_pgtap_test`, not the `db8_test` database the Vitest passes have just filled with fixtures. Run it locally against a fresh database for the same reason.
 - The server falls back to in-memory idempotent storage if `DATABASE_URL` is not
   set.
 - Configuration uses `SecretSource` + `ConfigBuilder`; only the EnvSecretSource
