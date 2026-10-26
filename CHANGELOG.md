@@ -13,6 +13,14 @@ lastUpdated: 2026-10-25
 - Upgrading a database: in rounds still in `submit`, older drafts are dropped and the newest kept. In rounds that have published, every row is kept (it is in a signed journal) and older duplicates are marked `legacy_duplicate`. One-per-author is a partial unique index over the unmarked rows.
 - Memory mode follows the same rule, including `nonce_superseded`; it does not check the round phase.
 
+## 2026-10-25 — The pgTAP suite tells the truth
+
+- **`db/test/run.sh` fails on a failing assertion, a plan mismatch or a SQL error** (#238). psql exits 0 for all three, so the suite reported success while `30_rpcs` failed three tests and three files had wrong plans.
+- Assertions made inside `DO` blocks (`10`, `20`, `30`, `44`) are now reported: pgTAP discards their TAP lines, so a failure there showed only as a plan mismatch. Surfacing them found a wrong test (finalization is `round_open_next`'s job, not `round_publish_due`'s) and a real bug, #249.
+- `throws_ok` in `30_rpcs` uses the four-argument form; the three-argument form compared each description with the error message. Plans are corrected.
+- Known failures are TODO with their issues: #208 (RLS) and #249.
+- CI can run the suite: a `workflow_dispatch` input `run_pgtap`, and a step that installs pgTAP into the Postgres service.
+
 ## 2026-10-25 — CLI `--timeout` works
 
 - **`--timeout <ms>` now bounds every API request the CLI makes** (#235). It was listed in the help and read by no command, so a server that accepted the connection and never answered held the CLI forever. A timeout prints `request to … timed out after <ms> ms` and exits 7; a value that is not a positive integer exits 2. `room watch` streams over SSE and is not bounded by it.
