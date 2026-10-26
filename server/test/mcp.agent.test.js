@@ -478,6 +478,55 @@ describe('db8 MCP agent server', () => {
     expect(s.body.transcript.map((g) => g.round)).toEqual([1]);
   });
 
+  it('a 200 whose body never arrives is an unknown outcome, not a success', async () => {
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Broken body',
+      cfg: { participant_count: 2 },
+      client_nonce: nonce()
+    });
+    let creates = 0;
+    const brokenBody = async (url, init) => {
+      if (String(url).includes('submission.create') && ++creates === 1) {
+        await fetch(url, init);
+        const body = new globalThis.ReadableStream({
+          start(c) {
+            c.error(new Error('body interrupted'));
+          }
+        });
+        return new globalThis.Response(body, {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      return fetch(url, init);
+    };
+    const a1 = await seat(room_id, 'agent_1', { fetch: brokenBody });
+    const first = await call(a1, 'debate_submit', turn('Body lost'));
+    expect(first.isError).toBe(true);
+    expect(first.text).toMatch(/unknown/);
+    expect((await call(a1, 'debate_status')).body.round.submitted).toBe(false);
+    const retry = await call(a1, 'debate_submit', turn('Body lost'));
+    expect(retry.isError, retry.text).toBe(false);
+  });
+
+  it('debate_wait returns at once when the phase moved since the agent last looked', async () => {
+    const t0 = Date.now();
+    vi.useFakeTimers({ toFake: ['Date'], now: t0 });
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Missed publish',
+      cfg: { participant_count: 2, submit_minutes: 1 },
+      client_nonce: nonce()
+    });
+    const a1 = await seat(room_id, 'agent_1');
+    expect((await call(a1, 'debate_submit', turn('Before publish'))).isError).toBe(false);
+    vi.setSystemTime(t0 + 61_000); // the round publishes between two tool calls
+    const started = performance.now();
+    const w = await call(a1, 'debate_wait', { timeout_sec: 2 });
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(w.body.changed).toBe(true);
+    expect(w.body.round.phase).toBe('published');
+  });
+
   it('refuses a seat the room does not have', async () => {
     const { room_id } = await api('/rpc/room.create', {
       topic: 'Seats',

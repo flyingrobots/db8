@@ -116,6 +116,15 @@ export function createAgentServer({
   // confirmed. Submitting again could duplicate it, so it is refused.
   const uncertainRounds = new Set();
   let roomCache = null;
+  // The round and phase last shown to the agent. debate_wait measures change
+  // from here, not from its own first poll: a round that published between two
+  // tool calls is a change the agent has not seen, and waiting for it to end
+  // would let the short continue-vote window pass unnoticed.
+  let lastSeen = null;
+  const seen = (snap) => {
+    lastSeen = { round_id: snap.round.round_id, phase: snap.round.phase };
+    return snap;
+  };
 
   async function request(path, body, { signal } = {}) {
     // The API rate-limits per (x-room-id, x-participant-id), falling back to the
@@ -132,7 +141,10 @@ export function createAgentServer({
       // until the MCP client gives up on it.
       signal: signal ?? globalThis.AbortSignal.timeout(requestTimeoutMs)
     });
-    const json = await res.json().catch(() => ({}));
+    // A success needs a readable body. On an error status a broken body still
+    // tells us the request was refused, so it falls back to the status alone;
+    // on 2xx it propagates, leaving a write's outcome unknown, not successful.
+    const json = res.ok ? await res.json() : await res.json().catch(() => ({}));
     if (!res.ok || json.ok === false) {
       const reset = Number(res.headers.get('x-ratelimit-reset'));
       throw new ToolError(describeApiError(json, res.status), {
@@ -283,7 +295,7 @@ export function createAgentServer({
         'transcript grouped by round. Turns from a round still in "submit" are hidden, including yours.',
       annotations: { readOnlyHint: true }
     },
-    guarded(async () => ok(await snapshot()))
+    guarded(async () => ok(seen(await snapshot())))
   );
 
   mcp.registerTool(
@@ -291,7 +303,7 @@ export function createAgentServer({
     {
       title: 'Wait for the debate to move',
       description:
-        'Block until the round or phase changes, or until timeout_sec passes (default 45, max 120). ' +
+        'Block until the round or phase differs from what you last saw, or until timeout_sec passes (default 45, max 120). ' +
         "Keep timeout_sec under your client's tool-call timeout (often 60 s). " +
         'Returns the same snapshot as debate_status, plus changed: true|false.',
       inputSchema: { timeout_sec: z.number().positive().max(MAX_WAIT_SEC).optional() },
@@ -319,6 +331,12 @@ export function createAgentServer({
           `The db8 API did not answer within timeout_sec (${timeout_sec} s). Call debate_wait again.`
         );
       }
+      if (
+        lastSeen &&
+        (start.round.round_id !== lastSeen.round_id || start.round.phase !== lastSeen.phase)
+      ) {
+        return ok({ changed: true, ...seen(start) });
+      }
       let snap = start;
       while (left() > 0) {
         await sleep(Math.min(pollMs, left()));
@@ -335,9 +353,9 @@ export function createAgentServer({
           continue;
         }
         if (snap.round.round_id !== start.round.round_id || snap.round.phase !== start.round.phase)
-          return ok({ changed: true, ...snap });
+          return ok({ changed: true, ...seen(snap) });
       }
-      return ok({ changed: false, ...snap });
+      return ok({ changed: false, ...seen(snap) });
     })
   );
 
@@ -370,7 +388,7 @@ export function createAgentServer({
       }
     },
     guarded(async ({ content, claims, citations }) => {
-      const snap = await snapshot();
+      const snap = seen(await snapshot());
       requirePhase(snap, 'submit', 'Submitting');
       // One turn per seat per round. The API does not enforce that yet (#237),
       // so a second call here would store a second turn beside the first.
@@ -462,7 +480,7 @@ export function createAgentServer({
       inputSchema: { choice: z.enum(['continue', 'end']) }
     },
     guarded(async ({ choice }) => {
-      const snap = await snapshot();
+      const snap = seen(await snapshot());
       requirePhase(snap, 'published', 'A continue vote');
       const { me } = await room();
       const rid = snap.round.round_id;
@@ -492,7 +510,7 @@ export function createAgentServer({
       }
     },
     guarded(async ({ approval, ranking }) => {
-      const snap = await snapshot();
+      const snap = seen(await snapshot());
       requirePhase(snap, 'final', 'A final vote');
       const r = await room();
       const ids = (ranking || []).map((name) => {
