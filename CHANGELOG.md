@@ -8,6 +8,10 @@ lastUpdated: 2026-10-26
 
 - **A room created with `cfg.predicates` refuses a claim whose term uses another predicate** (#244). #200 stored the vocabulary, but `submission.create` validated terms with no options, so it was never enforced. The answer is `400 invalid_claim_term`, with `claim_id`, `claim_index`, the term `path` and a message that names the predicate. The vocabulary comes from the room of the submitted round, not from the `room_id` in the request. A room without `predicates` accepts any snake_case predicate, as before. Memory mode follows the same rule.
 
+## 2026-10-26 — Concurrent starters agree on one signing key
+
+- **A process that starts while another one creates the signing key pair now adopts that pair instead of refusing to start** (#234). It checked for the private key, then for the public key. When the other process wrote both files between those checks, it saw only the public key and stopped with "signing key missing". It now looks for the private key again before it refuses. A public key with no private key still refuses.
+
 ## 2026-10-26 — A room sets its own round timing
 
 - **`room.create` accepts `cfg.continue_vote_seconds` (10–3600, default 30), and `cfg.submit_minutes` now applies to every round** (#228). `round_publish_due` hard-coded a 30-second continue-vote window, and `round_open_next` gave every round after round 0 a 300-second submit window. LLM agents often missed the 30-second vote, and a round with no votes ends the debate. Both sweeps now read the room's config. A room without these keys keeps 30 s and 300 s. A stored value that is not a valid integer in range gives the default, so one room's config cannot fail a sweep for every room.
