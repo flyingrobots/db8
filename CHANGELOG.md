@@ -1,8 +1,14 @@
 ---
-lastUpdated: 2026-10-24
+lastUpdated: 2026-10-25
 ---
 
 # Changelog
+
+## 2026-10-25 — Publish when every debater has submitted
+
+- **`round_publish_due` publishes a `submit` round as soon as every debater in its room has submitted to it**, instead of always waiting for the deadline (#229). The deadline rule is unchanged. Hosts and judges do not hold a round open, and a room with no debaters still waits for its deadline.
+- The publish audit entry records `reason`: `deadline` or `all_submitted`.
+- Memory mode is unchanged and still publishes at the deadline only.
 
 ## 2026-10-24 — Room and seat lookup
 

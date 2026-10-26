@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-24
+lastUpdated: 2026-10-25
 ---
 
 # Getting Started
@@ -229,8 +229,12 @@ Environment variables
 
 ## Optional: run the DB watcher
 
-The watcher flips rounds at deadlines using SQL RPCs and relies on DB triggers
-to fan out changes via SSE.
+The watcher flips rounds using SQL RPCs and relies on DB triggers to fan out
+changes via SSE. `round_publish_due()` publishes a `submit` round at its
+deadline, or earlier once every participant with role `debater` in the room has
+submitted to that round ([#229](https://github.com/flyingrobots/db8/issues/229)).
+Hosts and judges do not hold a round open, and a room with no debaters waits for
+its deadline. The audit log records the reason as `deadline` or `all_submitted`.
 
 ```bash
 export DATABASE_URL=postgresql://postgres:test@localhost:54329/db8_test
