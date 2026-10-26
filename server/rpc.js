@@ -34,8 +34,10 @@ app.use(express.json());
 app.use(rateLimitStub({ enforce: true }));
 app.use(express.static('public'));
 
-// Global DB Ref to allow swapping (test support)
-const dbRef = { pool: null };
+// Global DB Ref to allow swapping (test support). `configured` records that a
+// database was asked for, so a pool that failed to initialize is reported as a
+// fallback (`note: 'db_fallback'`), not as memory mode by configuration.
+const dbRef = { pool: null, configured: Boolean(config.databaseUrl) };
 
 if (config.databaseUrl) {
   try {
@@ -48,6 +50,8 @@ if (config.databaseUrl) {
 
 export function __setDbPool(pool) {
   dbRef.pool = pool;
+  // A test that clears the pool asks for memory mode by configuration.
+  dbRef.configured = Boolean(pool);
 }
 
 function requireDbInProduction(req, res, next) {
@@ -199,14 +203,15 @@ app.post('/rpc/nonce.issue', requireDbInProduction, async (req, res) => {
       return res.json({ ok: true, nonce: r.rows[0].nonce });
     }
 
-    // Memory mode. Reached only when no database is configured, so this is not
-    // a fallback and is not labelled as one: clients treat `db_fallback` as "your
-    // write was not persisted" (#231).
+    // Memory. Without a configured database this is memory mode, not a
+    // fallback, and is not labelled as one: clients treat `db_fallback` as "your
+    // write was not persisted" (#231). A configured pool that failed to
+    // initialize also lands here, and that is a fallback.
     const nonce = crypto.randomUUID();
     const issueKey = `${round_id}:${author_id}:${nonce}`;
     memIssuedNonces.set(issueKey, { expiresAt: Date.now() + ttl * 1000 });
 
-    return res.json({ ok: true, nonce });
+    return res.json({ ok: true, nonce, note: dbRef.configured ? 'db_fallback' : undefined });
   } catch (err) {
     return res.status(400).json({ ok: false, error: err.message });
   }

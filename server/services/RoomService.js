@@ -154,6 +154,9 @@ export class RoomService {
         // The outgoing round has published; remember it so its submissions
         // stay visible after the room moves on.
         room.publishedRounds = new Set(room.publishedRounds).add(room.round.round_id);
+        // Keep each round's index, so transcript entries from earlier rounds
+        // still say which round they belong to.
+        room.roundIdx = new Map(room.roundIdx).set(room.round.round_id, room.round.idx);
         room.round = {
           round_id: crypto.randomUUID(),
           idx: room.round.idx + 1,
@@ -182,6 +185,10 @@ export class RoomService {
         return {
           submission_id: value.id,
           round_id: value.round_id,
+          round_idx:
+            value.round_id === room.round.round_id
+              ? room.round.idx
+              : room.roundIdx?.get(value.round_id),
           author_id: value.author_id,
           content: value.content,
           canonical_sha256: value.canonical_sha256,
