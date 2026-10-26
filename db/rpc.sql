@@ -1,8 +1,28 @@
 -- db/rpc.sql — SQL RPCs for room lifecycle, idempotent submissions, and round operations
 -- room_create parameters:
 --   participant_count: default 4, allowed range [1..64]
---   submit_minutes:    default 5, allowed range [1..1440]
+--   submit_minutes:    default 5, allowed range [1..1440]; the submit window
+--                      of every round (round_open_next reads it, #228)
+--   continue_vote_seconds: default 30, allowed range [10..3600]; the
+--                      continue-vote window (round_publish_due reads it)
 --   client_nonce:      optional idempotency token; reuse to get the same room_id
+
+-- An integer setting from a room's config, for the round sweeps (#228). An
+-- absent, non-integer or out-of-range value gives the default, so one room's
+-- bad config cannot fail a sweep that runs for every room. room_create refuses
+-- out-of-range values when a room is created.
+CREATE OR REPLACE FUNCTION room_cfg_int(
+  p_cfg jsonb, p_key text, p_default integer, p_min integer, p_max integer
+) RETURNS integer
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT CASE
+    WHEN COALESCE(p_cfg->>p_key, '') !~ '^\s*-?[0-9]{1,9}\s*$' THEN p_default
+    WHEN trim(p_cfg->>p_key)::integer BETWEEN p_min AND p_max THEN trim(p_cfg->>p_key)::integer
+    ELSE p_default
+  END
+$$;
 
 CREATE OR REPLACE FUNCTION room_create(
   p_topic text,
@@ -15,6 +35,7 @@ DECLARE
   v_room_id uuid;
   v_participants integer := COALESCE(NULLIF(p_cfg->>'participant_count', '')::int, 4);
   v_submit_minutes integer := COALESCE(NULLIF(p_cfg->>'submit_minutes', '')::int, 5);
+  v_continue_seconds integer := COALESCE(NULLIF(p_cfg->>'continue_vote_seconds', '')::int, 30);
   v_now bigint := extract(epoch from now())::bigint;
   v_submit_deadline bigint;
   v_client_nonce text := NULLIF(p_client_nonce, '');
@@ -29,9 +50,15 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  -- The continue-vote window of every round (#228); read by round_publish_due.
+  IF v_continue_seconds < 10 OR v_continue_seconds > 3600 THEN
+    RAISE EXCEPTION 'continue_vote_seconds out of range [10..3600]: %', v_continue_seconds
+      USING ERRCODE = '22023';
+  END IF;
+
   v_submit_deadline := v_now + (v_submit_minutes::bigint * 60);
 
-  -- The config is stored as given (#200); it was read for the two values above
+  -- The config is stored as given (#200); it was read for the values above
   -- and then dropped.
   INSERT INTO rooms (title, client_nonce, config)
   VALUES (NULLIF(p_topic, ''), v_client_nonce, COALESCE(p_cfg, '{}'::jsonb))
@@ -282,7 +309,10 @@ BEGIN
     UPDATE rounds r SET
       phase = 'published',
       published_at_unix = now_unix,
-      continue_vote_close_unix = now_unix + 30::bigint
+      -- The room's continue-vote window, 30 s by default (#228).
+      continue_vote_close_unix = now_unix + room_cfg_int(
+        (SELECT rm.config FROM rooms rm WHERE rm.id = r.room_id),
+        'continue_vote_seconds', 30, 10, 3600)::bigint
     WHERE r.phase = 'submit'
       AND (
         (r.submit_deadline_unix > 0 AND r.submit_deadline_unix < now_unix)
@@ -418,7 +448,11 @@ BEGIN
     SELECT t.room_id,
            t.idx + 1,
            'submit',
-           now_unix + 300::bigint
+           -- The room's submit window applies to every round, 5 min by
+           -- default (#228); room_create uses it for round 0.
+           now_unix + 60::bigint * room_cfg_int(
+             (SELECT rm.config FROM rooms rm WHERE rm.id = t.room_id),
+             'submit_minutes', 5, 1, 1440)
     FROM tallied t
     WHERE t.yes > t.no
     ON CONFLICT (room_id, idx) DO NOTHING

@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-25
+lastUpdated: 2026-10-26
 ---
 
 # Local Database Setup (Postgres / Supabase)
@@ -56,13 +56,14 @@ idempotent.
 
 `cfg` is stored as `rooms.config` ([#200](https://github.com/flyingrobots/db8/issues/200)); a replayed nonce returns the existing room and changes nothing: not its title, config, rounds or seats, whatever `cfg` the replay carries ([#249](https://github.com/flyingrobots/db8/issues/249)). Through `POST /rpc/room.create` the accepted keys are:
 
-| Key                     | Meaning                                                              |
-| ----------------------- | -------------------------------------------------------------------- |
-| `participant_count`     | seats to seed, 1–64                                                  |
-| `submit_minutes`        | round 0 submit window, 1–1440                                        |
-| `max_fetches_per_round` | research fetches per round; 0 or absent means no limit               |
-| `attribution_mode`      | `masked` hides authors while a round is in `submit`; `real` does not |
-| `predicates`            | opt-in strict predicate vocabulary (snake_case names)                |
+| Key                     | Meaning                                                                                                                 |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `participant_count`     | seats to seed, 1–64                                                                                                     |
+| `submit_minutes`        | submit window of every round, 1–1440; 5 if absent ([#228](https://github.com/flyingrobots/db8/issues/228))              |
+| `continue_vote_seconds` | continue-vote window after each publish, 10–3600; 30 if absent ([#228](https://github.com/flyingrobots/db8/issues/228)) |
+| `max_fetches_per_round` | research fetches per round; 0 or absent means no limit                                                                  |
+| `attribution_mode`      | `masked` hides authors while a round is in `submit`; `real` does not                                                    |
+| `predicates`            | opt-in strict predicate vocabulary (snake_case names)                                                                   |
 
 Other keys are dropped. `GET /rpc/room.get` returns the stored config in both database and memory mode.
 

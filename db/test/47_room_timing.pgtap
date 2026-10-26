@@ -1,0 +1,62 @@
+BEGIN;
+SELECT plan(8);
+
+-- #228: a room's round timing comes from its config. continue_vote_seconds sets
+-- the continue-vote window and submit_minutes the submit window of every round,
+-- not only round 0. Without them a room keeps 30 s and 300 s.
+-- Assertions are top-level so their results are reported (see #238).
+
+CREATE TEMP TABLE _r ON COMMIT DROP AS
+SELECT room_create('timed', '{"participant_count":2,"submit_minutes":2,"continue_vote_seconds":120}'::jsonb,
+                   'pgtap-228-timed') AS timed,
+       room_create('defaults', '{"participant_count":2}'::jsonb, 'pgtap-228-defaults') AS plain;
+
+-- A stored value room_create would refuse falls back to the default instead of
+-- failing the sweep for every room.
+INSERT INTO rooms (id, title, config) VALUES
+  ('22800000-0000-4000-8000-000000000001', 'malformed', '{"continue_vote_seconds":"soon"}');
+INSERT INTO rounds (id, room_id, idx, phase, submit_deadline_unix) VALUES
+  ('22800000-0000-4000-8000-000000000011', '22800000-0000-4000-8000-000000000001', 0, 'submit', 100);
+
+UPDATE rounds SET submit_deadline_unix = 100
+ WHERE idx = 0 AND room_id IN (SELECT timed FROM _r UNION SELECT plain FROM _r);
+SELECT round_publish_due();
+
+SELECT is((SELECT continue_vote_close_unix - published_at_unix FROM rounds
+            WHERE room_id = (SELECT timed FROM _r) AND idx = 0),
+          120::bigint, 'continue_vote_seconds=120 gives a 120 s continue-vote window');
+SELECT is((SELECT continue_vote_close_unix - published_at_unix FROM rounds
+            WHERE room_id = (SELECT plain FROM _r) AND idx = 0),
+          30::bigint, 'a room without continue_vote_seconds keeps a 30 s window');
+SELECT is((SELECT continue_vote_close_unix - published_at_unix FROM rounds
+            WHERE id = '22800000-0000-4000-8000-000000000011'),
+          30::bigint, 'a malformed stored continue_vote_seconds falls back to 30 s');
+
+-- Both rooms vote to continue; the vote window closes; the next round opens.
+INSERT INTO votes (round_id, voter_id, kind, ballot, client_nonce)
+SELECT r.id, p.id, 'continue', '{"choice":"continue"}'::jsonb, 'pgtap-228-' || r.id
+  FROM rounds r JOIN participants p ON p.room_id = r.room_id AND p.anon_name = 'agent_1'
+ WHERE r.idx = 0 AND r.room_id IN (SELECT timed FROM _r UNION SELECT plain FROM _r);
+UPDATE rounds SET continue_vote_close_unix = 200
+ WHERE idx = 0 AND room_id IN (SELECT timed FROM _r UNION SELECT plain FROM _r);
+SELECT round_open_next();
+
+SELECT is((SELECT submit_deadline_unix FROM rounds WHERE room_id = (SELECT timed FROM _r) AND idx = 1),
+          extract(epoch from now())::bigint + 120,
+          'submit_minutes=2 gives round 1 a 120 s submit window');
+SELECT is((SELECT submit_deadline_unix FROM rounds WHERE room_id = (SELECT plain FROM _r) AND idx = 1),
+          extract(epoch from now())::bigint + 300,
+          'a room without submit_minutes keeps a 300 s window for round 1');
+
+SELECT throws_ok(
+  $$select room_create('Too short', '{"continue_vote_seconds":9}'::jsonb, 'pgtap-228-low')$$,
+  '22023', NULL, 'room_create rejects continue_vote_seconds below 10');
+SELECT throws_ok(
+  $$select room_create('Too long', '{"continue_vote_seconds":3601}'::jsonb, 'pgtap-228-high')$$,
+  '22023', NULL, 'room_create rejects continue_vote_seconds above 3600');
+SELECT lives_ok(
+  $$select room_create('Bounds', '{"continue_vote_seconds":10}'::jsonb, 'pgtap-228-min')$$,
+  'room_create accepts continue_vote_seconds=10');
+
+SELECT * FROM finish();
+ROLLBACK;
