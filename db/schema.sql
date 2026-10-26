@@ -290,6 +290,13 @@ CREATE TABLE IF NOT EXISTS reputation_tag (
   PRIMARY KEY (participant_id, tag)
 );
 
+-- Rounds whose Elo deltas reputation_update_round has applied. A second call for
+-- the same round (a retry after a lost answer, #257) changes nothing.
+CREATE TABLE IF NOT EXISTS reputation_rounds_applied (
+  round_id    uuid        PRIMARY KEY REFERENCES rounds(id) ON DELETE CASCADE,
+  applied_at  timestamptz NOT NULL DEFAULT now()
+);
+
 -- Research Cache (M6)
 CREATE TABLE IF NOT EXISTS research_cache (
   url_hash     char(64)    PRIMARY KEY CHECK (url_hash ~ '^[0-9a-f]{64}$'),

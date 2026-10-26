@@ -16,6 +16,7 @@ alter table if exists final_votes enable row level security;
 alter table if exists scores enable row level security;
 alter table if exists reputation enable row level security;
 alter table if exists reputation_tag enable row level security;
+alter table if exists reputation_rounds_applied enable row level security;
 alter table if exists research_cache enable row level security;
 alter table if exists research_usage enable row level security;
 
@@ -223,6 +224,14 @@ create policy reputation_tag_read_policy on reputation_tag for select using (tru
 
 drop policy if exists reputation_tag_no_write_policy on reputation_tag;
 create policy reputation_tag_no_write_policy on reputation_tag
+for all to public
+using (false)
+with check (false);
+
+-- Reputation rounds applied: written only by reputation_update_round (SECURITY
+-- DEFINER); no direct access.
+drop policy if exists reputation_rounds_applied_no_access_policy on reputation_rounds_applied;
+create policy reputation_rounds_applied_no_access_policy on reputation_rounds_applied
 for all to public
 using (false)
 with check (false);
