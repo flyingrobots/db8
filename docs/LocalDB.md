@@ -54,7 +54,7 @@ seeds a room, round 0, and a roster of anonymous participants. Defaults:
 `participant_count=4`, `submit_minutes=5`; pass a `nonce` to make the call
 idempotent.
 
-`cfg` is stored as `rooms.config` ([#200](https://github.com/flyingrobots/db8/issues/200)); a replayed nonce keeps the first creation's config. Through `POST /rpc/room.create` the accepted keys are:
+`cfg` is stored as `rooms.config` ([#200](https://github.com/flyingrobots/db8/issues/200)); a replayed nonce returns the existing room and changes nothing: not its title, config, rounds or seats, whatever `cfg` the replay carries ([#249](https://github.com/flyingrobots/db8/issues/249)). Through `POST /rpc/room.create` the accepted keys are:
 
 | Key                     | Meaning                                                              |
 | ----------------------- | -------------------------------------------------------------------- |
@@ -103,7 +103,7 @@ docker exec -u root db8-test-db bash -c 'apt-get update && apt-get install -y po
 PGURL=postgresql://postgres:test@localhost:54329/db8_test ./db/test/run.sh
 ```
 
-`run.sh` exits non-zero on a failing assertion that is not marked TODO, on a plan mismatch, or on a SQL error; psql alone exits 0 for all of these. Assertions inside `DO` blocks are collected in a `_tap` temp table and reported at top level, because pgTAP discards the TAP line of an assertion made inside `DO` ([#238](https://github.com/flyingrobots/db8/issues/238)). Known failures are TODO with their issue: [#208](https://github.com/flyingrobots/db8/issues/208) (RLS) and [#249](https://github.com/flyingrobots/db8/issues/249) (room_create replay).
+`run.sh` exits non-zero on a failing assertion that is not marked TODO, on a plan mismatch, or on a SQL error; psql alone exits 0 for all of these. Assertions inside `DO` blocks are collected in a `_tap` temp table and reported at top level, because pgTAP discards the TAP line of an assertion made inside `DO` ([#238](https://github.com/flyingrobots/db8/issues/238)). Known failures are TODO with their issue: [#208](https://github.com/flyingrobots/db8/issues/208) (RLS).
 
 ## Run Node Tests with DB Backed Path
 

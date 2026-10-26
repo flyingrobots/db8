@@ -32,13 +32,19 @@ BEGIN
   v_submit_deadline := v_now + (v_submit_minutes::bigint * 60);
 
   -- The config is stored as given (#200); it was read for the two values above
-  -- and then dropped. A replayed nonce keeps the first creation's config, as it
-  -- keeps the first title.
+  -- and then dropped.
   INSERT INTO rooms (title, client_nonce, config)
   VALUES (NULLIF(p_topic, ''), v_client_nonce, COALESCE(p_cfg, '{}'::jsonb))
-  ON CONFLICT (client_nonce)
-    DO UPDATE SET title = COALESCE(rooms.title, EXCLUDED.title)
+  ON CONFLICT (client_nonce) DO NOTHING
   RETURNING id INTO v_room_id;
+
+  -- A replayed nonce returns the existing room and changes nothing: not its
+  -- title, config, rounds or seats (#249). Seeding again here added seats when
+  -- the replay asked for more than the first creation.
+  IF v_room_id IS NULL THEN
+    SELECT id INTO v_room_id FROM rooms WHERE client_nonce = v_client_nonce;
+    RETURN v_room_id;
+  END IF;
 
   INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix)
   VALUES (v_room_id, 0, 'submit', v_submit_deadline)

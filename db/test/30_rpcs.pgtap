@@ -60,11 +60,7 @@ BEGIN
   INSERT INTO _tap(passed, descr) VALUES ((new_room2 <> new_room), 'room_create creates new room for new nonce');
 END$$;
 
-SELECT ok(passed, descr) FROM _tap WHERE descr NOT IN ('room_create reuse does not duplicate participants', 'room_create reuse preserves role counts') ORDER BY seq;
--- #249: a replay with a larger participant_count seeds extra seats.
-SELECT todo_start('#249: room_create replay seeds extra seats');
-SELECT ok(passed, descr) FROM _tap WHERE descr IN ('room_create reuse does not duplicate participants', 'room_create reuse preserves role counts') ORDER BY seq;
-SELECT todo_end();
+SELECT ok(passed, descr) FROM _tap ORDER BY seq;
 DELETE FROM _tap;
 
 SELECT throws_ok(
