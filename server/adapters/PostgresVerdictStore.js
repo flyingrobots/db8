@@ -34,11 +34,11 @@ export class PostgresVerdictStore {
    * SQLSTATE. A connection that never got an answer has none.
    * @throws {DatabaseUnavailableError} when the database could not be reached
    */
-  async #query(sql, params) {
+  async #query(sql, params, opts) {
     try {
       return await this.pool.query(sql, params);
     } catch (err) {
-      const failure = databaseFailure(err);
+      const failure = databaseFailure(err, opts);
       if (failure !== err)
         console.error('[PostgresVerdictStore] database unreachable:', err.message);
       throw failure;
@@ -68,15 +68,18 @@ export class PostgresVerdictStore {
   }
 
   async summary(roundId) {
-    const r = await this.#query('SELECT * FROM verify_summary($1::uuid)', [roundId]);
+    const r = await this.#query('SELECT * FROM verify_summary($1::uuid)', [roundId], {
+      wrote: false
+    });
     return r.rows;
   }
 
   async claimTerm(submissionId, claimId) {
-    const r = await this.#query('SELECT submission_claim_term($1::uuid,$2::text) AS term', [
-      submissionId,
-      claimId
-    ]);
+    const r = await this.#query(
+      'SELECT submission_claim_term($1::uuid,$2::text) AS term',
+      [submissionId, claimId],
+      { wrote: false }
+    );
     return r.rows[0]?.term ?? undefined;
   }
 }

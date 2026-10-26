@@ -4,6 +4,7 @@ import pg from 'pg';
 import request from 'supertest';
 import app, { __setDbPool } from '../rpc.js';
 import { databaseFailure, DatabaseUnavailableError } from '../database-unavailable.js';
+import { PostgresVerdictStore } from '../adapters/PostgresVerdictStore.js';
 
 // #257: with a database configured, a write the database did not take was
 // kept in memory and answered 200 (`note: 'db_fallback'`). Memory is lost on
@@ -224,6 +225,14 @@ describe('databaseFailure', () => {
         code: '57014'
       })
     ],
+    [
+      'database does not exist',
+      'not_stored',
+      Object.assign(new Error('database "db8" does not exist'), {
+        severity: 'FATAL',
+        code: '3D000'
+      })
+    ],
     ['connection dropped', 'unknown', dropped()],
     [
       'admin shutdown',
@@ -235,6 +244,21 @@ describe('databaseFailure', () => {
     expect(out).toBeInstanceOf(DatabaseUnavailableError);
     expect(out.outcome).toBe(outcome);
     expect(out.cause).toBe(err);
+  });
+
+  it('verdict reads that fail are never unknown', async () => {
+    const store = new PostgresVerdictStore({ dbRef: { pool: failingPool(dropped) } });
+    await expect(store.summary(uuid())).rejects.toMatchObject({ outcome: 'not_stored' });
+    await expect(store.claimTerm(uuid(), 'c1')).rejects.toMatchObject({ outcome: 'not_stored' });
+    await expect(
+      store.submitVerdict({
+        round_id: uuid(),
+        reporter_id: uuid(),
+        submission_id: uuid(),
+        verdict: 'true',
+        client_nonce: nonce()
+      })
+    ).rejects.toMatchObject({ outcome: 'unknown' });
   });
 
   it('a failed lookup that writes nothing is never unknown', () => {

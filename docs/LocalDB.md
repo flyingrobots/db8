@@ -155,12 +155,17 @@ With `DATABASE_URL` set, Postgres is the only store. If a write cannot reach it,
 ```
 
 - `outcome: "not_stored"`: the statement never reached the database (connection refused, connect timeout, authentication failure, too many connections, or a pool that did not initialize). A new attempt may start afresh.
-- `outcome: "unknown"`: the connection failed after the statement was sent, so it may have committed. Retry with the same `client_nonce`: the write RPCs treat a repeated nonce idempotently, so the retry cannot store a second copy.
+- `outcome: "unknown"`: the connection failed after the statement was sent, so it may have committed. Whether a retry is safe depends on the endpoint:
 
-Two writes have no client nonce, and are safe to retry for other reasons:
-
-- `research.fetch` runs its quota increment and its cache write in one transaction, so a failure before COMMIT spends no quota. Only a failed COMMIT gives `unknown`, and a retry then can spend one more fetch.
-- `reputation.update` applies each round once (`reputation_rounds_applied`), so a retry after `unknown` changes nothing.
+| Endpoint                                              | Retry after `unknown`                                                                                                                                             |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `submission.create`, `vote.continue`, `verify.submit` | Safe with the same `client_nonce`.                                                                                                                                |
+| `room.create`, `score.submit`                         | Safe only when the first request sent a `client_nonce` and the retry sends the same one. Without one, a retry can create a second row.                            |
+| `vote.final`, `submission.flag`                       | Safe: one row per voter per round, and one flag per reporter per submission.                                                                                      |
+| `participant.fingerprint.set`                         | Safe: it sets a value.                                                                                                                                            |
+| `reputation.update`                                   | Safe: each round is applied once (`reputation_rounds_applied`). A round with fewer than two scored debaters is refused with `round_not_scored` and is not marked. |
+| `nonce.issue`                                         | Safe: a retry issues another nonce, and an unused nonce expires.                                                                                                  |
+| `research.fetch`                                      | Not fully: the quota increment and the cache write run in one transaction, so only a failed COMMIT is `unknown`. A retry then can spend one more fetch.           |
 
 An error the database answered with (a rule an RPC enforces, such as `submission_closed`) keeps its own status. Before #257 the API kept the write in memory and answered `200` with `note: "db_fallback"`; that note no longer exists.
 

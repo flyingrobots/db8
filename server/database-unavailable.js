@@ -8,8 +8,9 @@
  * - `not_stored`: the statement never reached the database, so nothing was
  *   written and a new attempt may start afresh.
  * - `unknown`: the statement may have committed before the connection failed.
- *   The client must retry with the same client nonce, which the write RPCs
- *   treat idempotently, so the retry cannot store a second copy.
+ *   Whether a retry is safe depends on the endpoint; docs/LocalDB.md ("When
+ *   the database fails") lists each one. Writes keyed by a client nonce are
+ *   safe to retry with the same nonce.
  */
 export class DatabaseUnavailableError extends Error {
   constructor(outcome, cause) {
@@ -31,10 +32,11 @@ const CONNECT_MESSAGES = [
   /timeout exceeded when trying to connect/i,
   /cannot use a pool after calling end/i
 ];
-// SQLSTATEs after which nothing was written: invalid authorization (28), too
-// many connections (53300), cannot connect now (57P03), and query canceled
-// (57014: a statement timeout or a cancel request rolls the statement back).
-const CONNECT_SQLSTATE = /^(28...|53300|57P03|57014)$/;
+// SQLSTATEs after which nothing was written: invalid authorization (28), the
+// database does not exist (3D000), too many connections (53300), cannot
+// connect now (57P03), and query canceled (57014: a statement timeout or a
+// cancel request rolls the statement back).
+const CONNECT_SQLSTATE = /^(28...|3D000|53300|57P03|57014)$/;
 // SQLSTATEs that mean the server or the connection failed, not that the
 // database refused the statement: connection exception (08), insufficient
 // resources (53), operator intervention (57P), system error (58).
