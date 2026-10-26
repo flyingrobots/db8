@@ -14,7 +14,11 @@ const describeDb = process.env.DB8_TEST_PG ? describe : describe.skip;
 
 describeDb('round_publish_due publishes when every debater has submitted', () => {
   let pool;
-  const id = (n) => `22900000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  // A fresh id prefix per run. Audit rows deliberately outlive the rooms they
+  // name (no foreign key), so fixed ids would find an earlier run's publish
+  // records when the suite runs twice against one database.
+  const run = crypto.randomUUID().slice(0, 8);
+  const id = (n) => `${run}-0000-4000-8000-${String(n).padStart(12, '0')}`;
   const far = () => Math.floor(Date.now() / 1000) + 3600;
 
   // Room n: debaters id(n*10+1..+4), a judge id(n*10+9), round id(n*10).
