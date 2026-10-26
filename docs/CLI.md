@@ -39,6 +39,7 @@ lastUpdated: 2026-10-26
 ## Global Flags
 
 - `--room <uuid>`: Override room
+- `--timeout <ms>`: Limit for each API request. When it passes, the command prints `request to … timed out after <ms> ms` and exits `7`. Without it, requests have no limit. `room watch` is a long-lived stream and does not use it ([#235](https://github.com/flyingrobots/db8/issues/235)).
 - `--participant <uuid>`: Override participant
 - `--json`: Machine-readable JSON output
 - `--quiet`: Suppress non-error output
