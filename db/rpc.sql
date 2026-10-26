@@ -84,31 +84,47 @@ CREATE OR REPLACE FUNCTION submission_upsert(
 ) RETURNS uuid
 LANGUAGE plpgsql
 AS $$
-DECLARE 
+DECLARE
   v_id uuid;
-  v_exists boolean;
+  v_prev record;
+  v_version integer;
 BEGIN
-  SELECT EXISTS(
-    SELECT 1 FROM submissions 
-    WHERE round_id = p_round_id AND author_id = p_author_id AND client_nonce = p_client_nonce
-  ) INTO v_exists;
+  -- One submission per participant per round (#237). A resubmission replaces
+  -- the document and bumps the version; replaying the same nonce with the same
+  -- document returns the same id and changes nothing.
+  SELECT id, canonical_sha256, client_nonce, version INTO v_prev
+    FROM submissions
+   WHERE round_id = p_round_id AND author_id = p_author_id;
+
+  IF FOUND AND v_prev.client_nonce = p_client_nonce
+     AND v_prev.canonical_sha256 = p_canonical_sha256 THEN
+    RETURN v_prev.id;
+  END IF;
 
   INSERT INTO submissions (round_id, author_id, content, claims, citations, status,
                            submitted_at, canonical_sha256, client_nonce)
   VALUES (p_round_id, p_author_id, p_content, p_claims, p_citations,
           'submitted', now(), p_canonical_sha256, p_client_nonce)
-  ON CONFLICT (round_id, author_id, client_nonce)
-  DO UPDATE SET canonical_sha256 = EXCLUDED.canonical_sha256
-  RETURNING id INTO v_id;
+  ON CONFLICT (round_id, author_id)
+  DO UPDATE SET content = EXCLUDED.content,
+                claims = EXCLUDED.claims,
+                citations = EXCLUDED.citations,
+                canonical_sha256 = EXCLUDED.canonical_sha256,
+                client_nonce = EXCLUDED.client_nonce,
+                submitted_at = now(),
+                version = submissions.version + 1
+  RETURNING id, version INTO v_id, v_version;
 
   PERFORM admin_audit_log_write(
-    CASE WHEN v_exists THEN 'update' ELSE 'create' END,
+    CASE WHEN v_prev.id IS NULL THEN 'create' ELSE 'update' END,
     'submission',
     v_id,
     p_author_id,
     NULL,
     jsonb_build_object('client_nonce', p_client_nonce),
-    jsonb_build_object('canonical_sha256', p_canonical_sha256)
+    jsonb_build_object('canonical_sha256', p_canonical_sha256, 'version', v_version)
+      || CASE WHEN v_prev.id IS NULL THEN '{}'::jsonb
+              ELSE jsonb_build_object('previous_sha256', v_prev.canonical_sha256) END
   );
 
   RETURN v_id;

@@ -83,8 +83,40 @@ CREATE TABLE IF NOT EXISTS submissions (
   signer_fingerprint  text,
   jwt_sub             text,
   client_nonce        text        NOT NULL,
-  UNIQUE (round_id, author_id, client_nonce)
+  -- Bumped each time a resubmission replaces the document.
+  version             integer     NOT NULL DEFAULT 1,
+  -- One submission per participant per round (#237). With the nonce in the key,
+  -- every resubmission was a new row, published and journaled beside the first.
+  UNIQUE (round_id, author_id)
 );
+
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
+
+-- Upgrade path for databases carrying the nonce in the key: keep each author's
+-- newest submission per round, as for votes and final_votes. Flags and verdicts
+-- on the dropped drafts go with them (ON DELETE CASCADE).
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'submissions'::regclass
+       AND contype = 'u'
+       AND pg_get_constraintdef(oid) = 'UNIQUE (round_id, author_id, client_nonce)'
+  ) THEN
+    LOCK TABLE submissions IN ACCESS EXCLUSIVE MODE;
+    DELETE FROM submissions s
+     WHERE EXISTS (
+       SELECT 1 FROM submissions newer
+        WHERE newer.round_id = s.round_id
+          AND newer.author_id = s.author_id
+          AND (newer.submitted_at, newer.id) > (s.submitted_at, s.id)
+     );
+    ALTER TABLE submissions
+      DROP CONSTRAINT submissions_round_id_author_id_client_nonce_key;
+    ALTER TABLE submissions
+      ADD CONSTRAINT submissions_round_id_author_id_key UNIQUE (round_id, author_id);
+  END IF;
+END $$;
 
 -- Votes: idempotent by (round_id, voter_id, kind, client_nonce)
 CREATE TABLE IF NOT EXISTS votes (

@@ -57,7 +57,9 @@ export class SubmissionService {
       throw new Error('deadline_passed');
     }
 
-    const key = `${input.room_id}:${input.round_id}:${input.author_id}:${input.client_nonce}`;
+    // One submission per participant per round, as in the database (#237): a
+    // resubmission replaces the stored one under the same id.
+    const key = `${input.room_id}:${input.round_id}:${input.author_id}`;
 
     if (this.db) {
       try {
@@ -99,23 +101,26 @@ export class SubmissionService {
   }
 
   _createInMemory(key, input, canonical_sha256, dbError = null) {
-    let submission_id;
-    if (this.memSubmissions.has(key)) {
-      submission_id = this.memSubmissions.get(key).id;
-    } else {
-      submission_id = crypto.randomUUID();
-      this.memSubmissions.set(key, {
-        id: submission_id,
-        canonical_sha256,
-        content: input.content,
-        author_id: input.author_id,
-        room_id: input.room_id,
-        round_id: input.round_id
-      });
-      // Claims are kept so the memory path can resolve a verdict's claim_path
-      // the same way the database path does.
-      this.memSubmissionIndex.set(submission_id, { room_id: input.room_id, claims: input.claims });
-    }
+    const previous = this.memSubmissions.get(key);
+    const submission_id = previous?.id ?? crypto.randomUUID();
+    this.memSubmissions.set(key, {
+      id: submission_id,
+      canonical_sha256,
+      content: input.content,
+      author_id: input.author_id,
+      room_id: input.room_id,
+      round_id: input.round_id,
+      client_nonce: input.client_nonce,
+      version:
+        previous &&
+        (previous.client_nonce !== input.client_nonce ||
+          previous.canonical_sha256 !== canonical_sha256)
+          ? previous.version + 1
+          : (previous?.version ?? 1)
+    });
+    // Claims are kept so the memory path can resolve a verdict's claim_path
+    // the same way the database path does.
+    this.memSubmissionIndex.set(submission_id, { room_id: input.room_id, claims: input.claims });
 
     return {
       submission_id,
