@@ -36,15 +36,15 @@ SELECT ok(
   'votes table exists'
 );
 
--- votes idempotency unique on (round_id, voter_id, kind, client_nonce)
+-- votes: one ballot per voter per round and kind (#227); the nonce is not in the key
 SELECT ok(
   EXISTS (
     SELECT 1 FROM pg_indexes
     WHERE schemaname = 'public' AND tablename = 'votes'
       AND indexdef ILIKE '%UNIQUE%'
-      AND indexdef ILIKE '%(round_id, voter_id, kind, client_nonce)%'
+      AND indexdef ILIKE '%(round_id, voter_id, kind)%'
   ),
-  'votes unique (round_id, voter_id, kind, client_nonce) exists'
+  'votes unique (round_id, voter_id, kind) exists'
 );
 
 -- basic insert round-trip into submissions should succeed

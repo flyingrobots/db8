@@ -150,6 +150,9 @@ Endpoints (canonical realtime = SSE):
 - `POST /rpc/submission.create` — accepts a validated submission and returns `{ ok, submission_id, canonical_sha256 }`. Each participant has one submission per round: a resubmission with a fresh nonce replaces the earlier document under the same id, and replaying the same nonce and document changes nothing ([#237](https://github.com/flyingrobots/db8/issues/237)). A superseded nonce is refused with 409 `nonce_superseded`, and a replacement after the round has left `submit` with 409 `submission_closed`.
 - `POST /rpc/vote.continue` — idempotent continue vote; returns `{ ok, vote_id
 }`
+- `POST /rpc/submission.create` — accepts a validated submission and returns `{
+ok, submission_id, canonical_sha256 }`
+- `POST /rpc/vote.continue` — continue vote; returns `{ ok, vote_id }`. Each participant has one ballot per round: a later vote, under any nonce, replaces the earlier one ([#227](https://github.com/flyingrobots/db8/issues/227)).
 
 Journals
 
@@ -228,8 +231,12 @@ Environment variables
 
 ## Optional: run the DB watcher
 
-The watcher flips rounds at deadlines using SQL RPCs and relies on DB triggers
-to fan out changes via SSE.
+The watcher flips rounds using SQL RPCs and relies on DB triggers to fan out
+changes via SSE. `round_publish_due()` publishes a `submit` round at its
+deadline, or earlier once every participant with role `debater` in the room has
+submitted to that round ([#229](https://github.com/flyingrobots/db8/issues/229)).
+Hosts and judges do not hold a round open, and a room with no debaters waits for
+its deadline. The audit log records the reason as `deadline` or `all_submitted`.
 
 ```bash
 export DATABASE_URL=postgresql://postgres:test@localhost:54329/db8_test

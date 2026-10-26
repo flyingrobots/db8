@@ -13,6 +13,18 @@ lastUpdated: 2026-10-25
 - Upgrading a database: in rounds still in `submit`, older drafts are dropped and the newest kept. In rounds that have published, every row is kept (it is in a signed journal) and older duplicates are marked `legacy_duplicate`. One-per-author is a partial unique index over the unmarked rows.
 - Memory mode follows the same rule, including `nonce_superseded`; it does not check the round phase.
 
+## 2026-10-25 — Publish when every debater has submitted
+
+- **`round_publish_due` publishes a `submit` round as soon as every debater in its room has submitted to it**, instead of always waiting for the deadline (#229). The deadline rule is unchanged. Hosts and judges do not hold a round open, and a room with no debaters still waits for its deadline.
+- The publish audit entry records `reason`: `deadline` or `all_submitted`.
+- Memory mode is unchanged and still publishes at the deadline only.
+
+## 2026-10-25 — One continue vote per participant
+
+- **A participant's continue vote counts once per round.** `votes` was unique on `(round_id, voter_id, kind, client_nonce)`, so a voter who sent ballots under fresh nonces was counted once per nonce, and one participant could decide whether the debate continued (#227). The key is now `(round_id, voter_id, kind)`; `vote_submit` replaces the earlier ballot, and replaying a nonce still returns the same id.
+- Upgrading a database that already holds duplicate ballots keeps each voter's newest ballot, then swaps the constraint, in the same way as `final_votes`.
+- Memory mode follows the same rule: a later ballot replaces the earlier one in the tally.
+
 ## 2026-10-24 — Room and seat lookup
 
 - **`GET /rpc/room.get?room_id=<uuid>`** returns a room's topic, status, config and seats (`id`, `anon_name`, `role`), ordered by seat number so `agent_2` precedes `agent_10`. Before this, `room.create` returned only `room_id`, `/state` had no topic or roster, and a participant could learn their id only from Postgres (#230).
