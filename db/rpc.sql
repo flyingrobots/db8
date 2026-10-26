@@ -58,7 +58,7 @@ BEGIN
 
   v_submit_deadline := v_now + (v_submit_minutes::bigint * 60);
 
-  -- The config is stored as given (#200); it was read for the two values above
+  -- The config is stored as given (#200); it was read for the values above
   -- and then dropped.
   INSERT INTO rooms (title, client_nonce, config)
   VALUES (NULLIF(p_topic, ''), v_client_nonce, COALESCE(p_cfg, '{}'::jsonb))
