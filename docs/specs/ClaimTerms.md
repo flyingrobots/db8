@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-08-11
+lastUpdated: 2026-10-26
 tags: [spec]
 milestone: 'M8: Structured Claims'
 ---
@@ -91,7 +91,7 @@ The default is open on purpose. Free-form predicates across independent authors 
 
 So alignment is a **read-time** concern. `predicatesOf(term)` reports what a term actually used, and reconciliation — synonym maps, clustering — happens over recorded claims rather than by refusing them at the door.
 
-`validateTerm(term, { predicates })` implements an opt-in **strict mode** for rooms that want a closed vocabulary. When strict mode is on the vocabulary is declared up front, at room creation, and an undeclared predicate is rejected at submit time with the offending name in the error. Bootstrapping a vocabulary from round 1 is not supported: it carries the same bias as pre-declaring it, minus the deliberation.
+`validateTerm(term, { predicates })` implements an opt-in **strict mode** for rooms that want a closed vocabulary. When strict mode is on the vocabulary is declared up front, at room creation, and an undeclared predicate is rejected at submit time with the offending name in the error. A room turns it on with `cfg.predicates` on `POST /rpc/room.create`; `POST /rpc/submission.create` then answers `400 invalid_claim_term`, with the claim id, the term path and the undeclared predicate in `details` ([#244](https://github.com/flyingrobots/db8/issues/244)). The vocabulary is read from the room of the submitted round. Bootstrapping a vocabulary from round 1 is not supported: it carries the same bias as pre-declaring it, minus the deliberation.
 
 ## Paths and verdicts
 

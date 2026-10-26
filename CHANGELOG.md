@@ -4,6 +4,10 @@ lastUpdated: 2026-10-26
 
 # Changelog
 
+## 2026-10-26 — A room's predicate vocabulary is enforced
+
+- **A room created with `cfg.predicates` refuses a claim whose term uses another predicate** (#244). #200 stored the vocabulary, but `submission.create` validated terms with no options, so it was never enforced. The answer is `400 invalid_claim_term`, with `claim_id`, `claim_index`, the term `path` and a message that names the predicate. The vocabulary comes from the room of the submitted round, not from the `room_id` in the request. A room without `predicates` accepts any snake_case predicate, as before. Memory mode follows the same rule.
+
 ## 2026-10-26 — A nonce names one document
 
 - **Reusing a submission's current `client_nonce` with a different document is refused with 409 `nonce_reused`** (#236). Before #237 the upsert rewrote only the hash, leaving the old content beside a hash of a document nobody stored; after #237 it replaced the document silently, so a retry and an edit looked the same. Replaying the same document under the same nonce still returns the same id; a resubmission uses a fresh nonce. Memory mode follows the same rule.

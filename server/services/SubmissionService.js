@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import canonicalizer from '../canonicalizer.js';
 import { sha256Hex } from '../utils.js';
+import { validateTerm } from '../claims/terms.js';
 
 /**
  * SubmissionService handles the business logic for debate submissions,
@@ -39,6 +40,8 @@ export class SubmissionService {
         throw new Error('invalid_nonce');
       }
     }
+
+    await this._enforceVocabulary(input);
 
     const canon = canonicalizer({
       room_id: input.room_id,
@@ -112,6 +115,48 @@ export class SubmissionService {
       canonical_sha256,
       this.dbRef.configured ? 'database_unavailable' : null
     );
+  }
+
+  // A room created with cfg.predicates declares its vocabulary; a claim whose
+  // term uses a predicate outside it is refused (#244). The vocabulary is read
+  // from the round's room, not from the room_id the request names.
+  async _enforceVocabulary(input) {
+    const predicates = await this._roomPredicates(input);
+    if (!Array.isArray(predicates)) return;
+    const details = [];
+    for (const [index, claim] of (input.claims ?? []).entries()) {
+      const result = validateTerm(claim.term, { predicates });
+      for (const error of result.errors) {
+        details.push({ claim_id: claim.id ?? null, claim_index: index, ...error });
+      }
+    }
+    if (details.length > 0) {
+      throw Object.assign(new Error('invalid_claim_term'), { details });
+    }
+  }
+
+  async _roomPredicates(input) {
+    if (this.db) {
+      try {
+        const r = await this.db.query(
+          `select rm.config->'predicates' as predicates
+             from rounds rd join rooms rm on rm.id = rd.room_id
+            where rd.id = $1`,
+          [input.round_id]
+        );
+        if (r.rows.length > 0) return r.rows[0].predicates;
+      } catch (e) {
+        // The submission falls back to memory below when the database is
+        // down, so the vocabulary does too.
+        console.error('[SubmissionService] DB error reading room config:', e?.message || e);
+      }
+    }
+    for (const room of this.memRooms.values()) {
+      if (room?.round?.round_id === input.round_id || room?.publishedRounds?.has(input.round_id)) {
+        return room.config?.predicates;
+      }
+    }
+    return this.memRooms.get(input.room_id)?.config?.predicates;
   }
 
   // The memory room's own view of the round: a round it has moved past, or the

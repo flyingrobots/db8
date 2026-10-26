@@ -43,6 +43,12 @@ export function createSubmissionRouter({ submissionService, requireDbInProductio
       const result = await submissionService.create(input, { forceDlq: req.body._force_dlq });
       return res.json({ ok: true, ...result });
     } catch (err) {
+      // A predicate outside the room's declared vocabulary (#244), reported in
+      // the same shape as any other invalid term.
+      if (err.message === 'invalid_claim_term')
+        return res
+          .status(400)
+          .json({ ok: false, error: 'invalid_claim_term', details: err.details ?? [] });
       if (err.message === 'forced_failure_queued')
         return res.status(500).json({ ok: false, error: err.message });
       if (err.message === 'deadline_passed' || err.message === 'invalid_nonce')
