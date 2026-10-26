@@ -91,23 +91,19 @@ Repeating the call with the same nonce reuses the existing room.
 We include pgTAP files that assert the DB invariants (tables, uniques, RPC
 existence, idempotency). These are optional and default to off in CI.
 
-1. Ensure the `pgtap` extension is installed in your DB:
+1. Install the pgTAP package on the Postgres server. The test image does not ship it:
 
 ```text
-# Inside the container or your Postgres host; adjust version as needed
-# Example with Debian-based Postgres 16 image:
-# docker exec -it <container> bash -lc "apt-get update && apt-get install -y
-postgresql-16-pgtap"
-
-psql postgresql://postgres:test@localhost:54329/db8_test \
-  -c 'CREATE EXTENSION IF NOT EXISTS pgtap;'
+docker exec -u root db8-test-db bash -c 'apt-get update && apt-get install -y postgresql-16-pgtap'
 ```
 
-1. Run all pgTAP files:
+1. Run all pgTAP files. `run.sh` creates the extension if needed:
 
 ```text
 PGURL=postgresql://postgres:test@localhost:54329/db8_test ./db/test/run.sh
 ```
+
+`run.sh` exits non-zero on a failing assertion that is not marked TODO, on a plan mismatch, or on a SQL error; psql alone exits 0 for all of these. Assertions inside `DO` blocks are collected in a `_tap` temp table and reported at top level, because pgTAP discards the TAP line of an assertion made inside `DO` ([#238](https://github.com/flyingrobots/db8/issues/238)). Known failures are TODO with their issue: [#208](https://github.com/flyingrobots/db8/issues/208) (RLS) and [#249](https://github.com/flyingrobots/db8/issues/249) (room_create replay).
 
 ## Run Node Tests with DB Backed Path
 
@@ -231,8 +227,7 @@ DB8_API_URL=<http://localhost:3000> db8 room watch  --room
 
 ## Notes
 
-- CI applies `db/schema.sql` and `db/rpc.sql`. pgTAP runs only when enabled (set
-  RUN_PGTAP=1 in workflow dispatch or run `db/test/run.sh` locally).
+- CI applies `db/schema.sql` and `db/rpc.sql`. pgTAP runs only when enabled: run the `ci` workflow by hand with `run_pgtap=1`, or set the repository variable `RUN_PGTAP=1`. CI installs pgTAP into the Postgres service first.
 - The server falls back to in-memory idempotent storage if `DATABASE_URL` is not
   set.
 - Configuration uses `SecretSource` + `ConfigBuilder`; only the EnvSecretSource

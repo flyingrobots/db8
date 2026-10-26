@@ -4,6 +4,14 @@ lastUpdated: 2026-10-25
 
 # Changelog
 
+## 2026-10-25 — The pgTAP suite tells the truth
+
+- **`db/test/run.sh` fails on a failing assertion, a plan mismatch or a SQL error** (#238). psql exits 0 for all three, so the suite reported success while `30_rpcs` failed three tests and three files had wrong plans.
+- Assertions made inside `DO` blocks (`10`, `20`, `30`, `44`) are now reported: pgTAP discards their TAP lines, so a failure there showed only as a plan mismatch. Surfacing them found a wrong test (finalization is `round_open_next`'s job, not `round_publish_due`'s) and a real bug, #249.
+- `throws_ok` in `30_rpcs` uses the four-argument form; the three-argument form compared each description with the error message. Plans are corrected.
+- Known failures are TODO with their issues: #208 (RLS) and #249.
+- CI can run the suite: a `workflow_dispatch` input `run_pgtap`, and a step that installs pgTAP into the Postgres service.
+
 ## 2026-10-25 — Room config is stored
 
 - **`room_create` stores its `cfg` in `rooms.config`** (#200). It read `participant_count` and `submit_minutes` and then dropped the rest, so every room's config was `{}`. Research quotas (`max_fetches_per_round`) were therefore never enforced, and `attribution_mode` could not be switched on.
