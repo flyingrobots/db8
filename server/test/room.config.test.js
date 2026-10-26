@@ -2,7 +2,6 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import crypto from 'node:crypto';
 import pg from 'pg';
 import request from 'supertest';
-import app, { __setDbPool } from '../rpc.js';
 
 // #200: room_create read p_cfg for participant_count and submit_minutes but
 // never wrote it, so every room's config was '{}' and everything that reads
@@ -14,6 +13,12 @@ const dbUrl =
   process.env.DATABASE_URL ||
   'postgresql://postgres:test@localhost:54329/db8_test';
 const describeDb = process.env.DB8_TEST_PG ? describe : describe.skip;
+
+// Point the app at the test database before importing it. Some routers (the
+// research router among them) capture the pool at import, so swapping it later
+// with __setDbPool would leave them on another database.
+if (process.env.DB8_TEST_PG) process.env.DATABASE_URL = dbUrl;
+const { default: app, __setDbPool } = await import('../rpc.js');
 const nonce = () => `cfg-${crypto.randomUUID()}`;
 
 const cfg = {
