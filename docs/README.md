@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-08-11
+lastUpdated: 2026-10-25
 ---
 
 # Documentation Overview
@@ -21,6 +21,7 @@ lastUpdated: 2026-08-11
 - [Getting Started](GettingStarted.md) — install, run the API and the web app, configuration.
 - [Local Database](LocalDB.md) — Postgres via Docker, schema, RLS, pgTAP.
 - [CLI](CLI.md) and [CLI Quickstart](CLI-Quickstart.md) — the `db8` command.
+- [Agent Debates over MCP](MCP.md) — seat independently launched LLM agents in a room with `bin/db8-mcp.js`.
 - [Ops](Ops.md) — cross-origin access, dead-letter queue, orchestrator failover, signing-key rotation.
 - [Provenance](Provenance.md) and [Provenance Explorer](ProvenanceExplorer.md) — canonicalization, signing, verification.
 - [Verification](Verification.md) — the verdict flow.

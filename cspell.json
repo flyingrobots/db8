@@ -165,6 +165,7 @@
     "cutover",
     "recanonicalizes",
     "fixednonce",
+    "modelcontextprotocol",
     "constraintdef"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]

@@ -4,10 +4,11 @@ import crypto from 'node:crypto';
  * VoteService handles continue and final approval voting.
  */
 export class VoteService {
-  constructor({ dbRef, memVotes, memVoteTotals }) {
+  constructor({ dbRef, memVotes, memVoteTotals, memFinalVotes = new Map() }) {
     this.dbRef = dbRef;
     this.memVotes = memVotes;
     this.memVoteTotals = memVoteTotals;
+    this.memFinalVotes = memFinalVotes;
   }
 
   get pool() {
@@ -18,6 +19,10 @@ export class VoteService {
     // Keyed on the voter, not the nonce, like the database (#227): a later
     // ballot replaces the earlier one in the tally instead of adding to it.
     const key = `${round_id}:${voter_id}:continue`;
+    // `db_fallback` means "a configured database failed and this vote lives only
+    // in memory". Memory mode by configuration is not a fallback, and clients
+    // such as the MCP agent server treat the note as a failed write (#231).
+    let note = this.dbRef.configured ? 'db_fallback' : undefined;
     if (this.pool) {
       try {
         const r = await this.pool.query(
@@ -26,8 +31,13 @@ export class VoteService {
         );
         if (r.rows[0]?.id) return { vote_id: r.rows[0].id };
       } catch (err) {
+        // A rule vote_submit enforced (wrong phase, closed window) is not an
+        // outage. Counting the ballot in memory anyway answered 200 to a vote
+        // the database had refused. Same discrimination as castFinalVote.
+        if (err?.severity) throw err;
         console.error('[VoteService] DB error, falling back to memory:', err.message);
       }
+      note = 'db_fallback';
     }
 
     // The ballots live inside the tally they were counted in. rpc.js bounds
@@ -40,6 +50,9 @@ export class VoteService {
       Object.defineProperty(t, 'ballots', { value: new Map(), enumerable: false });
     }
     const previous = t.ballots.get(key);
+    // The same choice again changes nothing; a different one revises the
+    // ballot, as vote_submit does.
+    if (previous && previous.choice === choice) return { vote_id: previous.id, note };
     if (previous) {
       if (previous.choice === 'continue') t.yes -= 1;
       else t.no -= 1;
@@ -50,7 +63,7 @@ export class VoteService {
     else t.no += 1;
     this.memVoteTotals.set(room_id, t);
 
-    return { vote_id, note: 'db_fallback' };
+    return { vote_id, note };
   }
 
   async castFinalVote({ round_id, voter_id, approval, ranking, client_nonce }) {
@@ -73,7 +86,21 @@ export class VoteService {
         if (err?.severity) throw err;
         console.error('[VoteService] database unreachable (final_vote):', err.message);
       }
+      return { ...this._finalInMemory(round_id, voter_id, approval, ranking), note: 'db_fallback' };
     }
-    return { vote_id: crypto.randomUUID(), note: 'db_fallback' };
+    return {
+      ...this._finalInMemory(round_id, voter_id, approval, ranking),
+      note: this.dbRef.configured ? 'db_fallback' : undefined
+    };
+  }
+
+  // One ballot per voter per round, revised in place, as final_votes is keyed.
+  // Acknowledging a final vote without keeping it told the caller a discarded
+  // ballot had counted.
+  _finalInMemory(round_id, voter_id, approval, ranking) {
+    const key = `${round_id}:${voter_id}`;
+    const vote_id = this.memFinalVotes.get(key)?.id ?? crypto.randomUUID();
+    this.memFinalVotes.set(key, { id: vote_id, round_id, approval, ranking: ranking || [] });
+    return { vote_id };
   }
 }
