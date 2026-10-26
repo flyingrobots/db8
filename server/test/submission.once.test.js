@@ -419,7 +419,7 @@ describe('one submission per participant per round (memory)', () => {
     const seats = (await request(app).get(`/rpc/room.get?room_id=${room_id}`)).body.participants;
     const round_id = (await request(app).get(`/state?room_id=${room_id}`)).body.round.round_id;
     const ids = { room_id, round_id, author_id: seats[0].id };
-    await request(app)
+    const first = await request(app)
       .post('/rpc/submission.create')
       .send(doc(ids, 'Before', 'mem-frz-1'))
       .expect(200);
@@ -432,6 +432,13 @@ describe('one submission per participant per round (memory)', () => {
         .send(doc(ids, 'After', 'mem-frz-2'))
         .expect(409);
       expect(late.body.error).toBe('submission_closed');
+      // An identical retry of the stored document is not a replacement: it is
+      // answered with the same id, as submission_upsert answers it.
+      const replay = await request(app)
+        .post('/rpc/submission.create')
+        .send(doc(ids, 'Before', 'mem-frz-1'))
+        .expect(200);
+      expect(replay.body.submission_id).toBe(first.body.submission_id);
       const state = (await request(app).get(`/state?room_id=${room_id}`)).body;
       expect(state.round.transcript.map((t) => t.content)).toEqual(['Before']);
     } finally {

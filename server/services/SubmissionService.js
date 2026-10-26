@@ -138,6 +138,21 @@ export class SubmissionService {
     ) {
       throw new Error('nonce_superseded');
     }
+    // Replaying the stored nonce with the stored document changes nothing, so
+    // it is answered with the same id even after the round closes, as
+    // submission_upsert answers it before any closure check.
+    if (
+      previous &&
+      previous.client_nonce === input.client_nonce &&
+      previous.canonical_sha256 === canonical_sha256
+    ) {
+      return {
+        submission_id: previous.id,
+        canonical_sha256,
+        note: dbError ? 'db_fallback' : undefined,
+        db_error: dbError || undefined
+      };
+    }
     if (previous && this._memoryRoundClosed(input.room_id, input.round_id)) {
       // As submission_upsert does: once the round has closed, the document is
       // frozen, because flags and verdicts stay attached to its id.
