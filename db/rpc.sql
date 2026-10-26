@@ -115,6 +115,13 @@ BEGIN
     IF v_prev.client_nonce = p_client_nonce AND v_prev.canonical_sha256 = p_canonical_sha256 THEN
       RETURN v_prev.id;
     END IF;
+    -- The same nonce with a different document (#236). A nonce names one
+    -- document; a resubmission takes a fresh nonce. Rewriting what this nonce
+    -- named would make a retry and an edit indistinguishable.
+    IF v_prev.client_nonce = p_client_nonce THEN
+      RAISE EXCEPTION 'nonce_reused' USING ERRCODE = '22023',
+        DETAIL = 'this nonce already names a different document; resubmit with a fresh nonce';
+    END IF;
     -- A nonce this submission was stored under before was superseded by a
     -- resubmission. Replaying it would silently undo the newer document.
     IF EXISTS (

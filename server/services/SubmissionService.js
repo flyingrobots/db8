@@ -89,7 +89,7 @@ export class SubmissionService {
         if (/invalid_nonce/i.test(msg)) throw new Error('invalid_nonce', { cause: e });
         // Rules submission_upsert enforced (#237). Falling back to memory would
         // answer 200 for a document the database refused.
-        if (msg === 'nonce_superseded' || msg === 'submission_closed') {
+        if (msg === 'nonce_superseded' || msg === 'submission_closed' || msg === 'nonce_reused') {
           throw new Error(msg, { cause: e });
         }
 
@@ -152,6 +152,11 @@ export class SubmissionService {
         note: dbError ? 'db_fallback' : undefined,
         db_error: dbError || undefined
       };
+    }
+    // The same nonce with a different document is refused, as submission_upsert
+    // refuses it (#236).
+    if (previous && previous.client_nonce === input.client_nonce) {
+      throw new Error('nonce_reused');
     }
     if (previous && this._memoryRoundClosed(input.room_id, input.round_id)) {
       // As submission_upsert does: once the round has closed, the document is
