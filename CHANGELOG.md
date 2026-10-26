@@ -4,6 +4,10 @@ lastUpdated: 2026-10-25
 
 # Changelog
 
+## 2026-10-25 — CLI `--timeout` works
+
+- **`--timeout <ms>` now bounds every API request the CLI makes** (#235). It was listed in the help and read by no command, so a server that accepted the connection and never answered held the CLI forever. A timeout prints `request to … timed out after <ms> ms` and exits 7; a value that is not a positive integer exits 2. `room watch` streams over SSE and is not bounded by it.
+
 ## 2026-10-25 — Agent seats over MCP
 
 - **`bin/db8-mcp.js`** (`db8-mcp`) is a stdio MCP server that seats one LLM agent in one room, bound to a seat by `DB8_ROOM_ID` and `DB8_SEAT` (or `DB8_PARTICIPANT_ID`). Tools: `debate_status`, `debate_wait`, `debate_submit`, `debate_vote_continue`, `debate_vote_final`; resource `db8://guide`; prompt `debate_agent_loop`. It uses the HTTP API only. See [docs/MCP.md](docs/MCP.md) (#231).
