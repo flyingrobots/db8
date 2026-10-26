@@ -34,14 +34,16 @@ export class SubmissionService {
       throw new Error('forced_failure_queued');
     }
 
+    // Before the nonce is consumed, so a refused claim can be corrected and
+    // retried under the same issued nonce.
+    const lookupError = await this._enforceVocabulary(input);
+
     // Optional server nonce enforcement when enabled
     if (!this.db && this.config.enforceServerNonces) {
       if (!this.validateAndConsumeNonceMemory(input)) {
         throw new Error('invalid_nonce');
       }
     }
-
-    await this._enforceVocabulary(input);
 
     const canon = canonicalizer({
       room_id: input.room_id,
@@ -65,6 +67,16 @@ export class SubmissionService {
     // One submission per participant per round, as in the database (#237): a
     // resubmission replaces the stored one under the same id.
     const key = `${input.room_id}:${input.round_id}:${input.author_id}`;
+
+    // The database could not say which vocabulary the room declared. Storing
+    // there would persist a claim nobody checked, so this is a fallback.
+    if (this.db && lookupError) {
+      console.error('[SubmissionService] DB error, falling back to memory:', lookupError);
+      if (this.config.enforceServerNonces && !this.validateAndConsumeNonceMemory(input)) {
+        throw new Error('invalid_nonce');
+      }
+      return this._createInMemory(key, input, canonical_sha256, lookupError);
+    }
 
     if (this.db) {
       try {
@@ -119,10 +131,11 @@ export class SubmissionService {
 
   // A room created with cfg.predicates declares its vocabulary; a claim whose
   // term uses a predicate outside it is refused (#244). The vocabulary is read
-  // from the round's room, not from the room_id the request names.
+  // from the round's room, not from the room_id the request names. Returns the
+  // database error when the lookup failed and the memory room was used instead.
   async _enforceVocabulary(input) {
-    const predicates = await this._roomPredicates(input);
-    if (!Array.isArray(predicates)) return;
+    const { predicates, lookupError } = await this._roomPredicates(input);
+    if (!Array.isArray(predicates)) return lookupError;
     const details = [];
     for (const [index, claim] of (input.claims ?? []).entries()) {
       const result = validateTerm(claim.term, { predicates });
@@ -133,9 +146,11 @@ export class SubmissionService {
     if (details.length > 0) {
       throw Object.assign(new Error('invalid_claim_term'), { details });
     }
+    return lookupError;
   }
 
   async _roomPredicates(input) {
+    let lookupError = null;
     if (this.db) {
       try {
         const r = await this.db.query(
@@ -144,19 +159,19 @@ export class SubmissionService {
             where rd.id = $1`,
           [input.round_id]
         );
-        if (r.rows.length > 0) return r.rows[0].predicates;
+        if (r.rows.length > 0) return { predicates: r.rows[0].predicates, lookupError };
       } catch (e) {
-        // The submission falls back to memory below when the database is
-        // down, so the vocabulary does too.
-        console.error('[SubmissionService] DB error reading room config:', e?.message || e);
+        // The caller then stores in memory, so the memory room's vocabulary
+        // applies, as it would to any other memory fallback.
+        lookupError = e?.message || String(e) || 'db_error';
       }
     }
     for (const room of this.memRooms.values()) {
       if (room?.round?.round_id === input.round_id || room?.publishedRounds?.has(input.round_id)) {
-        return room.config?.predicates;
+        return { predicates: room.config?.predicates, lookupError };
       }
     }
-    return this.memRooms.get(input.room_id)?.config?.predicates;
+    return { predicates: this.memRooms.get(input.room_id)?.config?.predicates, lookupError };
   }
 
   // The memory room's own view of the round: a round it has moved past, or the

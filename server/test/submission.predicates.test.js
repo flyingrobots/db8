@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import crypto from 'node:crypto';
 import pg from 'pg';
 import request from 'supertest';
@@ -14,6 +14,7 @@ const dbUrl =
 const describeDb = process.env.DB8_TEST_PG ? describe : describe.skip;
 if (process.env.DB8_TEST_PG) process.env.DATABASE_URL = dbUrl;
 const { default: app, __setDbPool } = await import('../rpc.js');
+const { SubmissionService } = await import('../services/SubmissionService.js');
 
 const claimWith = (predicate) => [
   {
@@ -145,5 +146,59 @@ describeDb('a declared predicate vocabulary is enforced (database)', () => {
 
   it('a room without predicates accepts any snake_case predicate', async () => {
     expect((await submit(doc(open, 'causes'))).status).toBe(200);
+  });
+});
+
+describe('SubmissionService checks the vocabulary before it commits to a path', () => {
+  const ids = {
+    room_id: '24400000-0000-4000-8000-000000000001',
+    round_id: '24400000-0000-4000-8000-000000000002',
+    author_id: '24400000-0000-4000-8000-000000000003'
+  };
+  const input = (predicate) => ({ ...doc(ids, predicate), claims: claimWith(predicate) });
+  const strictRoom = () =>
+    new Map([
+      [
+        ids.room_id,
+        {
+          config: { predicates: ['reduces'] },
+          round: { round_id: ids.round_id, idx: 0, phase: 'submit', submit_deadline_unix: 0 }
+        }
+      ]
+    ]);
+  const service = (overrides) =>
+    new SubmissionService({
+      dbRef: { pool: null, configured: false },
+      config: { enforceServerNonces: false },
+      memSubmissions: new Map(),
+      memSubmissionIndex: new Map(),
+      validateAndConsumeNonceMemory: () => true,
+      memRooms: strictRoom(),
+      ...overrides
+    });
+
+  it('a refused claim does not consume an issued memory nonce', async () => {
+    const consume = vi.fn(() => true);
+    const svc = service({
+      config: { enforceServerNonces: true },
+      validateAndConsumeNonceMemory: consume
+    });
+    await expect(svc.create(input('causes'))).rejects.toThrow('invalid_claim_term');
+    expect(consume).not.toHaveBeenCalled();
+  });
+
+  it('a failed vocabulary lookup does not let the database store an unchecked claim', async () => {
+    const queries = [];
+    const pool = {
+      async query(sql) {
+        queries.push(sql);
+        if (sql.includes('config')) throw new Error('connection reset');
+        return { rows: [{ id: crypto.randomUUID() }] };
+      }
+    };
+    const svc = service({ dbRef: { pool, configured: true }, memRooms: new Map() });
+    const result = await svc.create(input('causes'));
+    expect(queries.some((q) => q.includes('submission_upsert'))).toBe(false);
+    expect(result.note).toBe('db_fallback');
   });
 });
