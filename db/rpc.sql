@@ -1102,6 +1102,12 @@ BEGIN
     RETURN;
   END IF;
 
+  -- Elo compares debaters, so a round needs at least two scored ones. Refused
+  -- before the round is marked, so a call after scoring still applies it.
+  IF (SELECT count(*) FROM view_score_aggregates WHERE round_id = p_round_id) < 2 THEN
+    RAISE EXCEPTION 'round_not_scored' USING ERRCODE = '22023';
+  END IF;
+
   -- Apply each round once (#257). A retry after a lost answer, or a second
   -- caller, would otherwise add the same deltas again. A concurrent caller
   -- waits on this row and then does nothing.
