@@ -1,8 +1,12 @@
 ---
-lastUpdated: 2026-10-25
+lastUpdated: 2026-10-26
 ---
 
 # Changelog
+
+## 2026-10-26 — A nonce names one document
+
+- **Reusing a submission's current `client_nonce` with a different document is refused with 409 `nonce_reused`** (#236). Before #237 the upsert rewrote only the hash, leaving the old content beside a hash of a document nobody stored; after #237 it replaced the document silently, so a retry and an edit looked the same. Replaying the same document under the same nonce still returns the same id; a resubmission uses a fresh nonce. Memory mode follows the same rule.
 
 ## 2026-10-25 — One submission per participant per round
 

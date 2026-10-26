@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(31);
+SELECT plan(32);
 
 -- Assertions made inside DO blocks are collected here and reported at top
 -- level after each block. An assertion PERFORMed inside DO counts towards the
@@ -158,6 +158,15 @@ END$$;
 
 SELECT ok(passed, descr) FROM _tap ORDER BY seq;
 DELETE FROM _tap;
+
+-- #236: the current nonce with a different document is refused.
+SELECT throws_ok(
+  $$select submission_upsert('00000000-0000-0000-0000-0000000000aa', '00000000-0000-0000-0000-0000000000bb',
+      'a different document', '[]'::jsonb, '[]'::jsonb, repeat('1', 64), 'nonce-sub-2')$$,
+  '22023',
+  'nonce_reused',
+  'submission_upsert refuses a different document under the current nonce'
+);
 
 -- RPC existence: vote_submit(round_id, voter_id, kind, ballot, client_nonce)
 SELECT has_function('public','vote_submit', ARRAY['uuid','uuid','text','jsonb','text']);
