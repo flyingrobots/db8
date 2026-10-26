@@ -130,6 +130,9 @@ suite('Postgres-backed RPC integration', () => {
     const transcriptEntry = await entryFor();
     expect(transcriptEntry).toBeTruthy();
     expect(transcriptEntry?.canonical_sha256).toEqual(expectedHash);
+    // Each entry names its round, so a client can group turns by round (#231).
+    expect(transcriptEntry?.round_id).toEqual(body.round_id);
+    expect(Number.isInteger(transcriptEntry?.round_idx)).toBe(true);
   });
 
   it('persists continue votes through vote_submit', async () => {
