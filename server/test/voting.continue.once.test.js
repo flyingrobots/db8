@@ -216,4 +216,41 @@ describe('continue votes count once per voter (memory)', () => {
     });
     expect(totals.get(ids.room_id)).toEqual({ yes: 1, no: 1 });
   });
+  it('a revision after the tally was evicted cannot drive a count negative', async () => {
+    // rpc.js keeps ballots and tallies in separately bounded caches. If the tally
+    // was evicted while the ballot survived, revising subtracted from a fresh
+    // zero tally and produced { yes: -1, no: 1 }.
+    const totals = new Map();
+    const svc = new VoteService({
+      dbRef: { pool: null },
+      memVotes: new Map(),
+      memVoteTotals: totals
+    });
+    await svc.castContinueVote({
+      ...ids,
+      voter_id: voter,
+      choice: 'continue',
+      client_nonce: 'ev-1'
+    });
+    totals.delete(ids.room_id); // the tally's LRU evicted it
+    await svc.castContinueVote({ ...ids, voter_id: voter, choice: 'end', client_nonce: 'ev-2' });
+    const t = totals.get(ids.room_id);
+    expect({ yes: t.yes, no: t.no }).toEqual({ yes: 0, no: 1 });
+  });
+
+  it('the tally serializes as yes and no only', async () => {
+    const totals = new Map();
+    const svc = new VoteService({
+      dbRef: { pool: null },
+      memVotes: new Map(),
+      memVoteTotals: totals
+    });
+    await svc.castContinueVote({
+      ...ids,
+      voter_id: voter,
+      choice: 'continue',
+      client_nonce: 'ser-1'
+    });
+    expect(JSON.parse(JSON.stringify(totals.get(ids.room_id)))).toEqual({ yes: 1, no: 0 });
+  });
 });

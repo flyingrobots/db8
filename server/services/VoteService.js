@@ -30,14 +30,22 @@ export class VoteService {
       }
     }
 
+    // The ballots live inside the tally they were counted in. rpc.js bounds
+    // ballots and tallies in separate caches; kept apart, a tally evicted while
+    // its ballot survived made a revision subtract from a fresh zero tally and
+    // drive a count negative. Together they are evicted together. The field is
+    // non-enumerable, so /state still serializes the tally as { yes, no }.
     const t = this.memVoteTotals.get(room_id) || { yes: 0, no: 0 };
-    const previous = this.memVotes.get(key);
+    if (!(t.ballots instanceof Map)) {
+      Object.defineProperty(t, 'ballots', { value: new Map(), enumerable: false });
+    }
+    const previous = t.ballots.get(key);
     if (previous) {
       if (previous.choice === 'continue') t.yes -= 1;
       else t.no -= 1;
     }
     const vote_id = previous?.id ?? crypto.randomUUID();
-    this.memVotes.set(key, { id: vote_id, choice });
+    t.ballots.set(key, { id: vote_id, choice });
     if (choice === 'continue') t.yes += 1;
     else t.no += 1;
     this.memVoteTotals.set(room_id, t);
