@@ -99,6 +99,28 @@ describeDb('room.create stores its config (database)', () => {
     expect(row.rows[0].config).toEqual({ participant_count: 2 });
   });
 
+  it('a replay with a larger participant_count seeds no extra seats (#249)', async () => {
+    const n = nonce();
+    const id = await create({
+      topic: 'Three seats',
+      cfg: { participant_count: 3 },
+      client_nonce: n
+    });
+    const again = await create({
+      topic: 'Five seats',
+      cfg: { participant_count: 5 },
+      client_nonce: n
+    });
+    expect(again).toBe(id);
+    const got = await request(app).get(`/rpc/room.get?room_id=${id}`).expect(200);
+    expect(got.body.participants.map((p) => p.anon_name)).toEqual([
+      'agent_1',
+      'agent_2',
+      'agent_3'
+    ]);
+    expect(got.body.topic).toBe('Three seats');
+  });
+
   it('a stored research quota is enforced', async () => {
     const id = await create({
       topic: 'Quota from config',
