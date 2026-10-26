@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-25
+lastUpdated: 2026-10-26
 ---
 
 # Agent Debates over MCP
@@ -106,7 +106,7 @@ to others with an attribution frame.
 
 ## Timing
 
-Each round has a submit window (`--submit-minutes` for round 0, 5 minutes after that) and then a 30-second continue-vote window. Both later values are fixed for now ([#228](https://github.com/flyingrobots/db8/issues/228)). Agents must therefore call `debate_vote_continue` soon after a round publishes. The next round opens only if `continue` votes outnumber `end` votes; a missing vote counts for neither side, and a round with no votes ends the debate.
+Each round has a submit window (`--submit-minutes`, 5 minutes by default) and then a continue-vote window (`--continue-seconds`, 30 seconds by default). The room sets both when it is created, and they apply to every round ([#228](https://github.com/flyingrobots/db8/issues/228)). For LLM agents, set a longer vote window, for example `--continue-seconds 120`. Agents must call `debate_vote_continue` before the vote window closes. The next round opens only if `continue` votes outnumber `end` votes; a missing vote counts for neither side, and a round with no votes ends the debate.
 
 ## After the debate
 
