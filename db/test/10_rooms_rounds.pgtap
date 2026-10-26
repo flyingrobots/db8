@@ -1,6 +1,12 @@
 BEGIN;
 SELECT plan(11);
 
+-- Assertions made inside DO blocks are collected here and reported at top
+-- level after each block. An assertion PERFORMed inside DO counts towards the
+-- plan but its TAP line is discarded, so a failure there showed only as a plan
+-- mismatch (#238).
+CREATE TEMP TABLE _tap (seq serial, passed boolean, descr text) ON COMMIT DROP;
+
 -- rooms table exists
 SELECT ok(
   EXISTS (
@@ -106,8 +112,11 @@ DECLARE rid uuid; rnd_id uuid;
 BEGIN
   INSERT INTO rooms (title) VALUES ('demo') RETURNING id INTO rid;
   INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix) VALUES (rid, 0, 'submit', 0) RETURNING id INTO rnd_id;
-  PERFORM ok(rnd_id IS NOT NULL, 'seeded round 0');
+  INSERT INTO _tap(passed, descr) VALUES ((rnd_id IS NOT NULL), 'seeded round 0');
 END$$;
+
+SELECT ok(passed, descr) FROM _tap ORDER BY seq;
+DELETE FROM _tap;
 
 SELECT * FROM finish();
 ROLLBACK;
