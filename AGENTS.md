@@ -260,8 +260,8 @@ Operational notes (for future‑you)
 - Runtime configuration
   - Node 22+ enforced (`.nvmrc`, engines, CI). No TypeScript.
   - Zod at edges.
-  - `DATABASE_URL` optional. If set, endpoints try DB persistence with in‑memory
-    idempotent fallback.
+  - `DATABASE_URL` optional. If set, Postgres is the only store and a database
+    failure is `503 database_unavailable` (#257). If unset, memory mode.
   - pgTAP scaffolded; gated via workflow_dispatch or `RUN_PGTAP=1`.
 
 - Project workflow

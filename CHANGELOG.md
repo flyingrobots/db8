@@ -4,6 +4,15 @@ lastUpdated: 2026-10-26
 
 # Changelog
 
+## 2026-10-26 — A database failure is reported, not hidden in memory
+
+- **With `DATABASE_URL` set, a write the database did not take now answers `503 database_unavailable` and keeps nothing** (#257). Before, the server kept the write in memory and answered `200` with `note: 'db_fallback'`. Memory is lost on restart and other server processes never see it. This covered `nonce.issue`, `submission.create`, `submission.flag`, `vote.continue`, `vote.final`, `room.create`, `score.submit`, `verify.submit`, `research.fetch`, `reputation.update` and `participant.fingerprint.set`. The last two did not even label their fallback: a fingerprint binding was kept only in memory, and a reputation update reported success.
+- **The `503` body says what the client may assume.** `outcome: 'not_stored'`: the statement never reached the database. `outcome: 'unknown'`: it may have committed, so retry with the same `client_nonce`. Errors the database answered with keep their own status.
+- **A configured pool that did not initialize is an outage too**, not memory mode.
+- **The MCP agent server keeps its submission nonce on a `503` with `outcome: 'unknown'`**, so a retry cannot store a second turn.
+- **Memory mode (no `DATABASE_URL`) is unchanged**, except that its answers no longer carry `note: 'db_fallback'`.
+- **Tests that need Postgres now fail without it.** Several suites ran with `DATABASE_URL` set but no database, and passed through the fallback. Run them with the Docker suite (`npm test`).
+
 ## 2026-10-26 — A room's predicate vocabulary is enforced
 
 - **A room created with `cfg.predicates` refuses a claim whose term uses another predicate** (#244). #200 stored the vocabulary, but `submission.create` validated terms with no options, so it was never enforced. The answer is `400 invalid_claim_term`, with `claim_id`, `claim_index`, the term `path` and a message that names the predicate. The vocabulary comes from the room of the submitted round, not from the `room_id` in the request. A room without `predicates` accepts any snake_case predicate, as before. Memory mode follows the same rule.

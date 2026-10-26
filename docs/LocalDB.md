@@ -146,6 +146,19 @@ node server/rpc.js
 curl <http://localhost:3000/health>
 ```
 
+### When the database fails
+
+With `DATABASE_URL` set, Postgres is the only store. If a write cannot reach it, the API answers `503` and keeps nothing in memory ([#257](https://github.com/flyingrobots/db8/issues/257)):
+
+```json
+{ "ok": false, "error": "database_unavailable", "outcome": "not_stored" }
+```
+
+- `outcome: "not_stored"`: the statement never reached the database (connection refused, connect timeout, authentication failure, too many connections, or a pool that did not initialize). A new attempt may start afresh.
+- `outcome: "unknown"`: the connection failed after the statement was sent, so it may have committed. Retry with the same `client_nonce`: the write RPCs treat a repeated nonce idempotently, so the retry cannot store a second copy.
+
+An error the database answered with (a rule an RPC enforces, such as `submission_closed`) keeps its own status. Before #257 the API kept the write in memory and answered `200` with `note: "db_fallback"`; that note no longer exists.
+
 ### Environment Flags (M2)
 
 These flags gate new M2 capabilities and are read by the server and CLI.
@@ -157,8 +170,8 @@ These flags gate new M2 capabilities and are read by the server and CLI.
   - When set, the API enforces single-use server-issued nonces for submissions.
   - Issue a nonce via `POST /rpc/nonce.issue` and include it as `client_nonce` in
     `POST /rpc/submission.create`.
-  - Behavior is atomic on the DB path and safely falls back to memory when the
-    DB rejects nonces due to missing rows in dev.
+  - Behavior is atomic on the DB path. Memory mode (no `DATABASE_URL`) keeps
+    issued nonces in memory.
 - `SIGNING_PRIVATE_KEY` / `SIGNING_PUBLIC_KEY`
   - PEM-encoded Ed25519 keypair used to sign journals.
   - If unset, the server generates an in-memory dev keypair at startup (for dev
@@ -229,7 +242,6 @@ DB8_API_URL=<http://localhost:3000> db8 room watch  --room
 ## Notes
 
 - CI applies `db/schema.sql` and `db/rpc.sql`. pgTAP runs only when enabled: run the `ci` workflow by hand with `run_pgtap=1`, or set the repository variable `RUN_PGTAP=1`. CI installs pgTAP into the Postgres service and runs the suite against a freshly prepared `db8_pgtap_test`, not the `db8_test` database the Vitest passes have just filled with fixtures. Run it locally against a fresh database for the same reason.
-- The server falls back to in-memory idempotent storage if `DATABASE_URL` is not
-  set.
+- Without `DATABASE_URL`, the server runs in memory mode: idempotent, but nothing survives a restart. With it, a database failure is a `503` (see [When the database fails](#when-the-database-fails)).
 - Configuration uses `SecretSource` + `ConfigBuilder`; only the EnvSecretSource
   module reads environment variables.

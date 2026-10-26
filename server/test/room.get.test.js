@@ -179,14 +179,12 @@ describe('room.get when the database is unreachable', () => {
     expect(res.body).toEqual({ ok: false, error: 'database_unavailable' });
   });
 
-  it('still answers for a room that memory mode created during the outage', async () => {
+  it('does not create a room in memory during the outage (#257)', async () => {
     const service = serviceWith(failingPool);
-    const { room_id } = await service.createRoom({
-      topic: 'Made during outage',
-      client_nonce: nonce()
-    });
-    const room = await service.getRoom(room_id);
-    expect(room.topic).toBe('Made during outage');
+    await expect(
+      service.createRoom({ topic: 'Made during outage', client_nonce: nonce() })
+    ).rejects.toThrow('database_unavailable');
+    expect(service.memRooms.size).toBe(0);
   });
 });
 
@@ -220,20 +218,5 @@ describe('room.get database reads', () => {
         expect(table).toMatch(/_view$/);
       }
     }
-  });
-
-  it('still finds a room created in memory during an outage after the database recovers', async () => {
-    let down = true;
-    const pool = {
-      query: async () => {
-        if (down) throw new Error('connect ECONNREFUSED 127.0.0.1:54329');
-        return { rows: [] };
-      }
-    };
-    const service = serviceWith(pool);
-    const { room_id } = await service.createRoom({ topic: 'Outage room', client_nonce: nonce() });
-    down = false;
-    const room = await service.getRoom(room_id);
-    expect(room?.topic).toBe('Outage room');
   });
 });

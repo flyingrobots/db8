@@ -38,10 +38,13 @@ export function configFromEnv(env = process.env) {
 // A failure the agent can act on. Tool handlers turn it into an MCP tool error
 // instead of a protocol error, so the model reads the message.
 class ToolError extends Error {
-  constructor(message, { status, retryAt } = {}) {
+  constructor(message, { status, retryAt, outcome } = {}) {
     super(message);
     this.status = status;
     this.retryAt = retryAt;
+    // `unknown` when the API could not tell whether the write was stored
+    // (503 database_unavailable after the statement was sent, #257).
+    this.outcome = outcome;
   }
 }
 
@@ -66,6 +69,9 @@ function guarded(fn) {
 // Unpack it into "path: message" lines a model can map back to its input.
 function describeApiError(body, status) {
   const error = body?.error ?? `HTTP ${status}`;
+  if (error === 'database_unavailable' && body?.outcome === 'not_stored') {
+    return 'database_unavailable: the db8 server could not reach its database, and nothing was stored. Tell the debate host.';
+  }
   if (Array.isArray(body?.details) && body.details.length > 0) {
     const lines = body.details.map(
       (d) => `- claim ${d.claim_id ?? `#${d.claim_index}`} at ${d.path}: ${d.message}`
@@ -149,12 +155,13 @@ export function createAgentServer({
       const reset = Number(res.headers.get('x-ratelimit-reset'));
       throw new ToolError(describeApiError(json, res.status), {
         status: res.status,
-        retryAt: Number.isFinite(reset) && reset > 0 ? reset * 1000 : undefined
+        retryAt: Number.isFinite(reset) && reset > 0 ? reset * 1000 : undefined,
+        outcome: json.outcome
       });
     }
-    // The API answers 200 when it kept a write only in memory because its
-    // database failed. That write is not durable and other seats may never see
-    // it, so it is not a success.
+    // An API older than #257 answers 200 when it kept a write only in memory
+    // because its database failed. That write is not durable and other seats
+    // may never see it, so it is not a success.
     if (json.note === 'db_fallback') {
       throw new ToolError(
         'db_fallback: the db8 server could not reach its database and did not persist this request. ' +
@@ -446,8 +453,9 @@ export function createAgentServer({
       } catch (err) {
         // An HTTP error answer is a definite rejection: nothing was stored, and
         // a later attempt may start afresh. Anything else (no answer, a timeout,
-        // or db_fallback) leaves the outcome unknown, so the nonce is kept.
-        const rejected = err instanceof ToolError && err.status >= 400;
+        // db_fallback, or a 503 whose outcome is unknown) leaves the outcome
+        // unknown, so the nonce is kept.
+        const rejected = err instanceof ToolError && err.status >= 400 && err.outcome !== 'unknown';
         if (rejected && reused && /invalid_nonce/.test(err.message)) {
           // The reused nonce was already consumed, so the first attempt most
           // likely reached the database. Do not risk a duplicate.

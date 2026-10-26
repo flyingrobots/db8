@@ -1,3 +1,5 @@
+import { databaseFailure } from '../database-unavailable.js';
+
 /**
  * VerdictStore backed by Postgres.
  *
@@ -30,18 +32,16 @@ export class PostgresVerdictStore {
    *
    * Postgres sets `severity` on anything it replied with, whatever the
    * SQLSTATE. A connection that never got an answer has none.
-   * @throws {Error} database_unavailable when the database could not be reached
+   * @throws {DatabaseUnavailableError} when the database could not be reached
    */
   async #query(sql, params) {
     try {
       return await this.pool.query(sql, params);
     } catch (err) {
-      if (err?.severity) throw err;
-
-      console.error('[PostgresVerdictStore] database unreachable:', err.message);
-      const wrapped = new Error('database_unavailable');
-      wrapped.cause = err;
-      throw wrapped;
+      const failure = databaseFailure(err);
+      if (failure !== err)
+        console.error('[PostgresVerdictStore] database unreachable:', err.message);
+      throw failure;
     }
   }
 

@@ -14,6 +14,11 @@ import { VoteService } from './services/VoteService.js';
 import { ScoringService } from './services/ScoringService.js';
 import { cors } from './cors.js';
 import { VerificationService } from './services/VerificationService.js';
+import {
+  DatabaseUnavailableError,
+  queryOrUnavailable,
+  sendIfDatabaseUnavailable
+} from './database-unavailable.js';
 import { createVerdictStore } from './adapters/ConfiguredVerdictStore.js';
 
 // Routers
@@ -35,8 +40,8 @@ app.use(rateLimitStub({ enforce: true }));
 app.use(express.static('public'));
 
 // Global DB Ref to allow swapping (test support). `configured` records that a
-// database was asked for, so a pool that failed to initialize is reported as a
-// fallback (`note: 'db_fallback'`), not as memory mode by configuration.
+// database was asked for, so a pool that failed to initialize is an outage
+// (503 database_unavailable), not memory mode by configuration (#257).
 const dbRef = { pool: null, configured: Boolean(config.databaseUrl) };
 
 if (config.databaseUrl) {
@@ -48,13 +53,19 @@ if (config.databaseUrl) {
   }
 }
 
-export function __setDbPool(pool) {
+export function __setDbPool(pool, { configured = Boolean(pool) } = {}) {
   dbRef.pool = pool;
-  // A test that clears the pool asks for memory mode by configuration.
-  dbRef.configured = Boolean(pool);
+  // A test that clears the pool asks for memory mode by configuration, unless
+  // it says the database was configured and its pool failed to initialize.
+  dbRef.configured = configured;
 }
 
 function requireDbInProduction(req, res, next) {
+  // A database was configured and its pool did not initialize: nothing can be
+  // stored, and memory is not a substitute (#257).
+  if (dbRef.configured && !dbRef.pool) {
+    return sendIfDatabaseUnavailable(res, new DatabaseUnavailableError('not_stored'));
+  }
   if (!dbRef.pool && process.env.NODE_ENV === 'production') {
     return res
       .status(503)
@@ -67,7 +78,7 @@ function requireDbInProduction(req, res, next) {
   next();
 }
 
-// Global state for in-memory fallbacks
+// Global state for memory mode (no database configured)
 const memSubmissions = new LRUMap(1000);
 const memSubmissionIndex = new LRUMap(1000);
 const memFlags = new LRUMap(1000);
@@ -200,23 +211,23 @@ app.post('/rpc/nonce.issue', requireDbInProduction, async (req, res) => {
     if (!round_id || !author_id)
       return res.status(400).json({ ok: false, error: 'missing_fields' });
     if (dbRef.pool) {
-      const r = await dbRef.pool.query(
+      const r = await queryOrUnavailable(
+        dbRef.pool,
         'select submission_nonce_issue($1::uuid,$2::uuid,$3::int) as nonce',
         [round_id, author_id, ttl]
       );
       return res.json({ ok: true, nonce: r.rows[0].nonce });
     }
 
-    // Memory. Without a configured database this is memory mode, not a
-    // fallback, and is not labelled as one: clients treat `db_fallback` as "your
-    // write was not persisted" (#231). A configured pool that failed to
-    // initialize also lands here, and that is a fallback.
+    // Memory mode: no database is configured (requireDbInProduction refuses a
+    // configured one whose pool is missing).
     const nonce = crypto.randomUUID();
     const issueKey = `${round_id}:${author_id}:${nonce}`;
     memIssuedNonces.set(issueKey, { expiresAt: Date.now() + ttl * 1000 });
 
-    return res.json({ ok: true, nonce, note: dbRef.configured ? 'db_fallback' : undefined });
+    return res.json({ ok: true, nonce });
   } catch (err) {
+    if (sendIfDatabaseUnavailable(res, err)) return;
     return res.status(400).json({ ok: false, error: err.message });
   }
 });

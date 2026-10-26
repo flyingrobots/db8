@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-08
+lastUpdated: 2026-10-26
 ---
 
 # Verification
@@ -14,7 +14,7 @@ This milestone (M3) adds per-claim and per-submission verification verdicts. Jud
   - `verify_submit(round_id, reporter_id, submission_id, claim_id, verdict, rationale, client_nonce) → uuid`
   - `verify_summary(round_id) → rows (per-claim/per-submission tallies)`
 - Server endpoints:
-  - `POST /rpc/verify.submit` — DB first, in-memory fallback
+  - `POST /rpc/verify.submit` — Postgres when configured (a database failure is `503 database_unavailable`), memory mode otherwise
   - `GET /verify/summary?round_id=…`
 - CLI:
   - `db8 verify submit --round <uuid> --submission <uuid> [--claim <id>] --verdict <true|false|unclear|needs_work> [--rationale <text>] [--nonce <id>]`
@@ -33,5 +33,5 @@ This milestone (M3) adds per-claim and per-submission verification verdicts. Jud
 
 ## Notes
 
-- The server prefers the DB path. If Postgres is not configured, an in-memory fallback supports demos/tests (non-persistent).
+- With Postgres configured, verdicts are stored only there; a database failure answers `503 database_unavailable` and records nothing ([#257](https://github.com/flyingrobots/db8/issues/257)). Without Postgres, memory mode supports demos and tests (non-persistent).
 - RLS visibility mirrors submissions: verdicts become generally visible after the round is published; reporters always see their own.

@@ -1,5 +1,6 @@
 import express from 'express';
 import { ScoreSubmit, ScoreGet, ReputationGet } from '../schemas.js';
+import { queryOrUnavailable, sendIfDatabaseUnavailable } from '../database-unavailable.js';
 
 export function createScoringRouter({ scoringService, requireDbInProduction }) {
   const router = express.Router();
@@ -11,6 +12,7 @@ export function createScoringRouter({ scoringService, requireDbInProduction }) {
       const result = await scoringService.submitScore(input);
       return res.json({ ok: true, ...result });
     } catch (err) {
+      if (sendIfDatabaseUnavailable(res, err)) return;
       console.error('[score.submit] error:', err);
       const msg = String(err?.message || '');
       if (/only judges/.test(msg)) return res.status(403).json({ ok: false, error: msg });
@@ -49,9 +51,11 @@ export function createScoringRouter({ scoringService, requireDbInProduction }) {
       const roomId = req.body.room_id;
 
       if (!roundId && roomId && scoringService.pool) {
-        const r = await scoringService.pool.query(
+        const r = await queryOrUnavailable(
+          scoringService.pool,
           'SELECT round_id FROM view_current_round WHERE room_id = $1',
-          [roomId]
+          [roomId],
+          { wrote: false }
         );
         roundId = r.rows[0]?.round_id;
       }
@@ -60,6 +64,7 @@ export function createScoringRouter({ scoringService, requireDbInProduction }) {
       await scoringService.updateReputations(roundId);
       return res.json({ ok: true });
     } catch (err) {
+      if (sendIfDatabaseUnavailable(res, err)) return;
       console.error('[reputation.update] error:', err);
       return res.status(400).json({ ok: false, error: err?.message || String(err) });
     }

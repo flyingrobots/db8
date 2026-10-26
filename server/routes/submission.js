@@ -1,6 +1,7 @@
 import express from 'express';
 import { SubmissionIn, SubmissionFlag } from '../schemas.js';
 import { validateTerm } from '../claims/terms.js';
+import { queryOrUnavailable, sendIfDatabaseUnavailable } from '../database-unavailable.js';
 
 // Runs against the *raw* body, before SubmissionIn.parse.
 //
@@ -43,6 +44,7 @@ export function createSubmissionRouter({ submissionService, requireDbInProductio
       const result = await submissionService.create(input, { forceDlq: req.body._force_dlq });
       return res.json({ ok: true, ...result });
     } catch (err) {
+      if (sendIfDatabaseUnavailable(res, err)) return;
       // A predicate outside the room's declared vocabulary (#244), reported in
       // the same shape as any other invalid term.
       if (err.message === 'invalid_claim_term')
@@ -71,13 +73,14 @@ export function createSubmissionRouter({ submissionService, requireDbInProductio
       const input = SubmissionFlag.parse(req.body);
       const db = submissionService.db;
       if (db) {
-        const r = await db.query(
+        const r = await queryOrUnavailable(
+          db,
           'SELECT submission_flag($1::uuid,$2::uuid,$3::text,$4::text) AS count',
           [input.submission_id, input.reporter_id, input.reporter_role, input.reason]
         );
         return res.json({ ok: true, flag_count: Number(r.rows[0].count) });
       }
-      // Memory fallback
+      // Memory mode: no database is configured.
       if (!submissionService.memSubmissionIndex.has(input.submission_id)) {
         return res.status(404).json({ ok: false, error: 'submission_not_found' });
       }
@@ -91,8 +94,9 @@ export function createSubmissionRouter({ submissionService, requireDbInProductio
         created_at: new Date().toISOString()
       });
       memFlags.set(input.submission_id, flags);
-      return res.json({ ok: true, flag_count: flags.size, note: 'db_fallback' });
+      return res.json({ ok: true, flag_count: flags.size });
     } catch (err) {
+      if (sendIfDatabaseUnavailable(res, err)) return;
       return res.status(400).json({ ok: false, error: err?.message || String(err) });
     }
   });

@@ -1,36 +1,44 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import { ResearchFetch, ResearchCacheGet } from '../schemas.js';
+import { queryOrUnavailable, sendIfDatabaseUnavailable } from '../database-unavailable.js';
 
-export function createResearchRouter({
-  db,
-  requireDbInProduction,
-  memResearchCache,
-  memResearchQuotas
-}) {
+export function createResearchRouter(deps) {
+  const { requireDbInProduction, memResearchCache, memResearchQuotas } = deps;
   const router = express.Router();
 
   // research.fetch
   router.post('/rpc/research.fetch', requireDbInProduction, async (req, res) => {
     try {
       const input = ResearchFetch.parse(req.body);
+      // Read per request: rpc.js swaps the pool at runtime (__setDbPool), and a
+      // pool captured when the router was built would be the wrong one.
+      const db = deps.db;
       if (db) {
         try {
           // 1. Check/Increment usage
           // We need max fetches from room config
-          const roomRes = await db.query('SELECT config FROM rooms WHERE id = $1', [input.room_id]);
+          const roomRes = await queryOrUnavailable(
+            db,
+            'SELECT config FROM rooms WHERE id = $1',
+            [input.room_id],
+            { wrote: false }
+          );
           const max = Number(roomRes.rows[0]?.config?.max_fetches_per_round || 0);
 
-          await db.query('SELECT research_usage_increment($1,$2,$3)', [
+          await queryOrUnavailable(db, 'SELECT research_usage_increment($1,$2,$3)', [
             input.room_id,
             input.round_id,
             max
           ]);
 
           // 2. Check cache
-          const cacheRes = await db.query('SELECT snapshot FROM research_cache WHERE url = $1', [
-            input.url
-          ]);
+          const cacheRes = await queryOrUnavailable(
+            db,
+            'SELECT snapshot FROM research_cache WHERE url = $1',
+            [input.url],
+            { wrote: false }
+          );
           if (cacheRes.rows[0]) {
             return res.json({ ok: true, snapshot: cacheRes.rows[0].snapshot, cached: true });
           }
@@ -43,7 +51,7 @@ export function createResearchRouter({
             created_at: new Date().toISOString()
           };
           const urlHash = crypto.createHash('sha256').update(input.url).digest('hex');
-          await db.query('SELECT research_cache_upsert($1,$2,$3)', [
+          await queryOrUnavailable(db, 'SELECT research_cache_upsert($1,$2,$3)', [
             input.url,
             urlHash,
             JSON.stringify(snapshot)
@@ -57,7 +65,7 @@ export function createResearchRouter({
         }
       }
 
-      // Memory fallback
+      // Memory mode: no database is configured.
       const roundId = input.round_id || 'default';
       const quota = memResearchQuotas.get(roundId) || 0;
       if (quota >= 10) return res.status(429).json({ ok: false, error: 'quota_exceeded' });
@@ -72,8 +80,9 @@ export function createResearchRouter({
       };
       memResearchCache.set(input.url, snapshot);
 
-      return res.json({ ok: true, id, snapshot, cached: false, note: 'db_fallback' });
+      return res.json({ ok: true, id, snapshot, cached: false });
     } catch (err) {
+      if (sendIfDatabaseUnavailable(res, err)) return;
       return res.status(400).json({ ok: false, error: err?.message || String(err) });
     }
   });
@@ -82,6 +91,7 @@ export function createResearchRouter({
   router.get('/rpc/research.cache', async (req, res) => {
     try {
       const input = ResearchCacheGet.parse(req.query);
+      const db = deps.db;
       if (db) {
         const r = await db.query('SELECT snapshot FROM research_cache WHERE url = $1', [input.url]);
         if (r.rows[0]) return res.json({ ok: true, snapshot: r.rows[0].snapshot });

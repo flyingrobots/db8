@@ -578,6 +578,56 @@ describe('db8 MCP agent server', () => {
     expect(retry.isError, retry.text).toBe(false);
   });
 
+  it('a 503 with outcome unknown keeps the nonce, so the retry cannot store a second turn (#257)', async () => {
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Unknown outcome',
+      cfg: { participant_count: 2 },
+      client_nonce: nonce()
+    });
+    const nonces = [];
+    let creates = 0;
+    // The API stored the turn, then lost its database connection before it
+    // could confirm the commit.
+    const lostCommit = async (url, init) => {
+      if (!String(url).includes('submission.create')) return fetch(url, init);
+      nonces.push(JSON.parse(init.body).client_nonce);
+      const res = await fetch(url, init);
+      if (++creates > 1) return res;
+      return new globalThis.Response(
+        JSON.stringify({ ok: false, error: 'database_unavailable', outcome: 'unknown' }),
+        { status: 503, headers: { 'content-type': 'application/json' } }
+      );
+    };
+    const a1 = await seat(room_id, 'agent_1', { fetch: lostCommit });
+    const first = await call(a1, 'debate_submit', turn('Commit lost'));
+    expect(first.isError).toBe(true);
+    expect(first.text).toMatch(/unknown/);
+    const retry = await call(a1, 'debate_submit', turn('Commit lost'));
+    expect(retry.isError, retry.text).toBe(false);
+    expect(nonces).toHaveLength(2);
+    expect(nonces[1]).toBe(nonces[0]);
+  });
+
+  it('a 503 with outcome not_stored is a definite failure (#257)', async () => {
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Not stored',
+      cfg: { participant_count: 2 },
+      client_nonce: nonce()
+    });
+    const down = async (url, init) => {
+      if (!String(url).includes('submission.create')) return fetch(url, init);
+      return new globalThis.Response(
+        JSON.stringify({ ok: false, error: 'database_unavailable', outcome: 'not_stored' }),
+        { status: 503, headers: { 'content-type': 'application/json' } }
+      );
+    };
+    const a1 = await seat(room_id, 'agent_1', { fetch: down });
+    const r = await call(a1, 'debate_submit', turn('Database down'));
+    expect(r.isError).toBe(true);
+    expect(r.text).toMatch(/database_unavailable/);
+    expect(r.text).not.toMatch(/unknown/);
+  });
+
   it('debate_wait returns at once when the phase moved since the agent last looked', async () => {
     const t0 = Date.now();
     vi.useFakeTimers({ toFake: ['Date'], now: t0 });
