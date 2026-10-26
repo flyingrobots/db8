@@ -4,7 +4,17 @@ import crypto from 'node:crypto';
  * RoomService handles room lifecycle, state aggregation, and in-memory fallback management.
  */
 export class RoomService {
-  constructor({ dbRef, memRooms, memRoomNonces, memSubmissions, memFlags, memVoteTotals, config }) {
+  constructor({
+    dbRef,
+    memRooms,
+    memRoomNonces,
+    memSubmissions,
+    memFlags,
+    memVoteTotals,
+    memFinalVotes = new Map(),
+    config
+  }) {
+    this.memFinalVotes = memFinalVotes;
     this.dbRef = dbRef;
     this.memRooms = memRooms;
     this.memRoomNonces = memRoomNonces;
@@ -199,11 +209,27 @@ export class RoomService {
     return {
       ok: true,
       room_id: roomId,
-      round: { ...room.round, continue_tally: tally, transcript },
+      round: {
+        ...room.round,
+        continue_tally: tally,
+        final_tally: this._memoryFinalTally(room),
+        transcript
+      },
       flags: transcript
         .filter((s) => s.flag_count > 0)
         .map((s) => ({ submission_id: s.submission_id, flag_count: s.flag_count }))
     };
+  }
+
+  _memoryFinalTally(room) {
+    let approves = 0;
+    let rejects = 0;
+    for (const ballot of this.memFinalVotes.values()) {
+      if (ballot.round_id !== room.round.round_id) continue;
+      if (ballot.approval) approves += 1;
+      else rejects += 1;
+    }
+    return { approves, rejects };
   }
 
   /**

@@ -4,10 +4,11 @@ import crypto from 'node:crypto';
  * VoteService handles continue and final approval voting.
  */
 export class VoteService {
-  constructor({ dbRef, memVotes, memVoteTotals }) {
+  constructor({ dbRef, memVotes, memVoteTotals, memFinalVotes = new Map() }) {
     this.dbRef = dbRef;
     this.memVotes = memVotes;
     this.memVoteTotals = memVoteTotals;
+    this.memFinalVotes = memFinalVotes;
   }
 
   get pool() {
@@ -76,11 +77,21 @@ export class VoteService {
         if (err?.severity) throw err;
         console.error('[VoteService] database unreachable (final_vote):', err.message);
       }
-      return { vote_id: crypto.randomUUID(), note: 'db_fallback' };
+      return { ...this._finalInMemory(round_id, voter_id, approval, ranking), note: 'db_fallback' };
     }
     return {
-      vote_id: crypto.randomUUID(),
+      ...this._finalInMemory(round_id, voter_id, approval, ranking),
       note: this.dbRef.configured ? 'db_fallback' : undefined
     };
+  }
+
+  // One ballot per voter per round, revised in place, as final_votes is keyed.
+  // Acknowledging a final vote without keeping it told the caller a discarded
+  // ballot had counted.
+  _finalInMemory(round_id, voter_id, approval, ranking) {
+    const key = `${round_id}:${voter_id}`;
+    const vote_id = this.memFinalVotes.get(key)?.id ?? crypto.randomUUID();
+    this.memFinalVotes.set(key, { id: vote_id, round_id, approval, ranking: ranking || [] });
+    return { vote_id };
   }
 }

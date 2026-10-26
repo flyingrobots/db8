@@ -79,6 +79,8 @@ const memRooms = new LRUMap(100);
 const memRoomNonces = new LRUMap(500);
 const memVotes = new LRUMap(1000);
 const memVoteTotals = new LRUMap(100);
+// Final ballots in memory mode, one per voter per round (as final_votes).
+const memFinalVotes = new LRUMap(1000);
 const memParticipantFingerprints = new LRUMap(1000);
 const memAuthChallenges = new LRUMap(500);
 
@@ -96,9 +98,10 @@ const roomService = new RoomService({
   memSubmissions,
   memFlags,
   memVoteTotals,
+  memFinalVotes,
   config
 });
-const voteService = new VoteService({ dbRef, memVotes, memVoteTotals });
+const voteService = new VoteService({ dbRef, memVotes, memVoteTotals, memFinalVotes });
 const scoringService = new ScoringService({ dbRef });
 // Composition root for verdict persistence. The service holds the rules; the
 // adapter chosen here decides where they are applied. Memory is a configured

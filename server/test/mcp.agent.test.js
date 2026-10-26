@@ -195,6 +195,11 @@ describe('db8 MCP agent server', () => {
 
     const f = await call(a1, 'debate_vote_final', { approval: true, ranking: ['agent_2'] });
     expect(f.isError, f.text).toBe(false);
+    // The ballot is kept and counted, not just acknowledged.
+    expect((await call(a1, 'debate_status')).body.final_tally).toEqual({ approves: 1, rejects: 0 });
+    await call(a2, 'debate_vote_final', { approval: false });
+    await call(a1, 'debate_vote_final', { approval: false }); // a revision, not a second ballot
+    expect((await call(a1, 'debate_status')).body.final_tally).toEqual({ approves: 0, rejects: 2 });
     const unknownSeat = await call(a1, 'debate_vote_final', {
       approval: true,
       ranking: ['agent_9']
