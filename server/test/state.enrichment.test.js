@@ -1,6 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
-import app from '../rpc.js';
+import app, { __setDbPool } from '../rpc.js';
+
+// Memory mode by configuration. These rounds exist only in memory; with a
+// database configured, vote_submit refuses them as unknown, and since #231 that
+// refusal is a 400 rather than a vote quietly counted in memory.
+beforeAll(() => __setDbPool(null));
 
 describe('GET /state enrichment', () => {
   it('returns round metadata with deadline and tally', async () => {

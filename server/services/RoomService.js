@@ -4,7 +4,17 @@ import crypto from 'node:crypto';
  * RoomService handles room lifecycle, state aggregation, and in-memory fallback management.
  */
 export class RoomService {
-  constructor({ dbRef, memRooms, memRoomNonces, memSubmissions, memFlags, memVoteTotals, config }) {
+  constructor({
+    dbRef,
+    memRooms,
+    memRoomNonces,
+    memSubmissions,
+    memFlags,
+    memVoteTotals,
+    memFinalVotes = new Map(),
+    config
+  }) {
+    this.memFinalVotes = memFinalVotes;
     this.dbRef = dbRef;
     this.memRooms = memRooms;
     this.memRoomNonces = memRoomNonces;
@@ -44,6 +54,8 @@ export class RoomService {
         const submissionsRes = await this.pool
           .query(
             `select id,
+                    round_id,
+                    idx,
                     author_id,
                     author_anon_name,
                     content,
@@ -72,6 +84,8 @@ export class RoomService {
 
           const transcript = submissionsRes.rows.map((row) => ({
             submission_id: row.id,
+            round_id: row.round_id,
+            round_idx: row.idx,
             author_id: row.author_id,
             author_anon_name: row.author_anon_name,
             content: row.content,
@@ -150,6 +164,9 @@ export class RoomService {
         // The outgoing round has published; remember it so its submissions
         // stay visible after the room moves on.
         room.publishedRounds = new Set(room.publishedRounds).add(room.round.round_id);
+        // Keep each round's index, so transcript entries from earlier rounds
+        // still say which round they belong to.
+        room.roundIdx = new Map(room.roundIdx).set(room.round.round_id, room.round.idx);
         room.round = {
           round_id: crypto.randomUUID(),
           idx: room.round.idx + 1,
@@ -177,6 +194,11 @@ export class RoomService {
         const count = flags ? flags.size : 0;
         return {
           submission_id: value.id,
+          round_id: value.round_id,
+          round_idx:
+            value.round_id === room.round.round_id
+              ? room.round.idx
+              : room.roundIdx?.get(value.round_id),
           author_id: value.author_id,
           content: value.content,
           canonical_sha256: value.canonical_sha256,
@@ -187,11 +209,27 @@ export class RoomService {
     return {
       ok: true,
       room_id: roomId,
-      round: { ...room.round, continue_tally: tally, transcript },
+      round: {
+        ...room.round,
+        continue_tally: tally,
+        final_tally: this._memoryFinalTally(room),
+        transcript
+      },
       flags: transcript
         .filter((s) => s.flag_count > 0)
         .map((s) => ({ submission_id: s.submission_id, flag_count: s.flag_count }))
     };
+  }
+
+  _memoryFinalTally(room) {
+    let approves = 0;
+    let rejects = 0;
+    for (const ballot of this.memFinalVotes.values()) {
+      if (ballot.round_id !== room.round.round_id) continue;
+      if (ballot.approval) approves += 1;
+      else rejects += 1;
+    }
+    return { approves, rejects };
   }
 
   /**
