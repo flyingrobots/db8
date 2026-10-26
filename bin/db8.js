@@ -52,7 +52,7 @@ Global options:
   --json               machine-readable output
   --quiet              suppress non-errors
   --non-interactive    fail instead of prompting
-  --timeout <ms>       RPC timeout
+  --timeout <ms>       limit for each API request; exit 7 when it passes
   --nonce <id>         client idempotency key
 
 Commands:
@@ -118,6 +118,37 @@ async function main() {
   if (!commandFile) {
     printerr(`Unknown command: ${cmd} ${subcmd || ''}`);
     return EXIT.NOT_FOUND;
+  }
+
+  // --timeout <ms> bounds every API request (#235). Installed once around fetch,
+  // so every command that calls the API honours it, including ones added
+  // later. A timeout surfaces as an ETIMEDOUT error, which each command's
+  // existing network handling turns into EXIT.NETWORK. `room watch` streams
+  // over node:http, not fetch, and is deliberately not bounded by this.
+  if (args.timeout !== undefined) {
+    const ms = Number(args.timeout);
+    if (!Number.isInteger(ms) || ms <= 0) {
+      printerr('--timeout must be a positive integer number of milliseconds');
+      return EXIT.VALIDATION;
+    }
+    const baseFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init = {}) => {
+      try {
+        return await baseFetch(url, {
+          ...init,
+          signal: init.signal ?? globalThis.AbortSignal.timeout(ms)
+        });
+      } catch (err) {
+        if (err?.name !== 'TimeoutError') throw err;
+        throw Object.assign(
+          new Error(`request to ${url} timed out after ${ms} ms`, { cause: err }),
+          {
+            name: 'TimeoutError',
+            code: 'ETIMEDOUT'
+          }
+        );
+      }
+    };
   }
 
   // Shared Context and Helpers
