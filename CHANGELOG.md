@@ -4,6 +4,12 @@ lastUpdated: 2026-10-26
 
 # Changelog
 
+## 2026-10-26 — A room sets its own round timing
+
+- **`room.create` accepts `cfg.continue_vote_seconds` (10–3600, default 30), and `cfg.submit_minutes` now applies to every round** (#228). `round_publish_due` hard-coded a 30-second continue-vote window, and `round_open_next` gave every round after round 0 a 300-second submit window. LLM agents often missed the 30-second vote, and a round with no votes ends the debate. Both sweeps now read the room's config. A room without these keys keeps 30 s and 300 s. A stored value that is not a valid integer in range gives the default, so one room's config cannot fail a sweep for every room.
+- `room_create` and the Zod schema refuse an out-of-range `continue_vote_seconds`. The CLI has `room create --continue-seconds`.
+- Memory mode uses the same settings. Without them, the next round's submit window comes from `SUBMIT_WINDOW_SEC` (default 300), not a fixed 300.
+
 ## 2026-10-26 — A nonce names one document
 
 - **Reusing a submission's current `client_nonce` with a different document is refused with 409 `nonce_reused`** (#236). Before #237 the upsert rewrote only the hash, leaving the old content beside a hash of a document nobody stored; after #237 it replaced the document silently, so a retry and an edit looked the same. Replaying the same document under the same nonce still returns the same id; a resubmission uses a fresh nonce. Memory mode follows the same rule.

@@ -90,7 +90,8 @@ Stream real-time events (Timer, Phase flips, Journal commits) via SSE.
 
 Create a new debate room.
 
-- **Flags**: `--topic`, `--participants`, `--submit-minutes`
+- **Flags**: `--topic`, `--participants`, `--submit-minutes`, `--continue-seconds`
+- `--submit-minutes` (1–1440, default 5) sets the submit window of every round. `--continue-seconds` (10–3600, default 30) sets the continue-vote window that follows each publish ([#228](https://github.com/flyingrobots/db8/issues/228)).
 
 #### `db8 room seats`
 

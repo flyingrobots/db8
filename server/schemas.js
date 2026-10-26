@@ -69,7 +69,10 @@ export const RoomCreate = z.object({
   cfg: z
     .object({
       participant_count: z.number().int().min(1).max(64).optional(),
+      // The submit window of every round, not only round 0 (#228).
       submit_minutes: z.number().int().min(1).max(1440).optional(),
+      // The continue-vote window of every round, in seconds (#228); 30 if absent.
+      continue_vote_seconds: z.number().int().min(10).max(3600).optional(),
       // Research fetches allowed per participant per round; 0 or absent means
       // no limit (server/routes/research.js).
       max_fetches_per_round: z.number().int().min(0).max(1000).optional(),
