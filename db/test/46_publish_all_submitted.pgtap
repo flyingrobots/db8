@@ -1,0 +1,47 @@
+BEGIN;
+SELECT plan(4);
+
+-- #229: round_publish_due publishes a submit round once every debater in its
+-- room has submitted, and still publishes at the deadline otherwise.
+-- Assertions are top-level so their results are reported (see #238).
+
+INSERT INTO rooms (id, title) VALUES
+  ('22910000-0000-4000-8000-000000000001', 'all submitted'),
+  ('22910000-0000-4000-8000-000000000002', 'deadline');
+INSERT INTO rounds (id, room_id, idx, phase, submit_deadline_unix) VALUES
+  ('22910000-0000-4000-8000-000000000011', '22910000-0000-4000-8000-000000000001', 0, 'submit',
+   extract(epoch from now())::bigint + 3600),
+  ('22910000-0000-4000-8000-000000000012', '22910000-0000-4000-8000-000000000002', 0, 'submit', 100);
+INSERT INTO participants (id, room_id, anon_name, role)
+SELECT ('22910000-0000-4000-8000-00000000010' || i)::uuid, '22910000-0000-4000-8000-000000000001',
+       'agent_' || i, 'debater'
+  FROM generate_series(1, 4) AS i;
+INSERT INTO participants (id, room_id, anon_name, role) VALUES
+  ('22910000-0000-4000-8000-000000000201', '22910000-0000-4000-8000-000000000002', 'agent_1', 'debater'),
+  ('22910000-0000-4000-8000-000000000202', '22910000-0000-4000-8000-000000000002', 'agent_2', 'debater');
+
+-- 3 of 4 debaters submit.
+SELECT submission_upsert('22910000-0000-4000-8000-000000000011',
+                         ('22910000-0000-4000-8000-00000000010' || i)::uuid,
+                         'turn', '[]'::jsonb, '[]'::jsonb, repeat(i::text, 64), 'pgtap-229-' || i)
+  FROM generate_series(1, 3) AS i;
+SELECT round_publish_due();
+SELECT is((SELECT phase FROM rounds WHERE id = '22910000-0000-4000-8000-000000000011'), 'submit',
+          'a round with 3 of 4 debater submissions stays in submit');
+
+-- The 4th submission, then a sweep.
+SELECT submission_upsert('22910000-0000-4000-8000-000000000011', '22910000-0000-4000-8000-000000000104',
+                         'turn', '[]'::jsonb, '[]'::jsonb, repeat('4', 64), 'pgtap-229-4');
+SELECT round_publish_due();
+SELECT is((SELECT phase FROM rounds WHERE id = '22910000-0000-4000-8000-000000000011'), 'published',
+          'the 4th submission publishes the round before its deadline');
+SELECT is((SELECT details->>'reason' FROM admin_audit_log
+            WHERE entity_id = '22910000-0000-4000-8000-000000000011' AND action = 'publish'),
+          'all_submitted', 'an early publish is audit-logged as all_submitted');
+
+-- Deadline passed with a missing submission.
+SELECT is((SELECT phase FROM rounds WHERE id = '22910000-0000-4000-8000-000000000012'), 'published',
+          'the deadline still publishes a round with missing submissions');
+
+SELECT * FROM finish();
+ROLLBACK;
