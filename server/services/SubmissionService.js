@@ -12,8 +12,10 @@ export class SubmissionService {
     config,
     memSubmissions,
     memSubmissionIndex,
-    validateAndConsumeNonceMemory
+    validateAndConsumeNonceMemory,
+    memRooms = new Map()
   }) {
+    this.memRooms = memRooms;
     this.dbRef = dbRef;
     this.config = config;
     this.memSubmissions = memSubmissions;
@@ -112,6 +114,19 @@ export class SubmissionService {
     );
   }
 
+  // The memory room's own view of the round: a round it has moved past, or the
+  // current one once it has left submit or its deadline has passed. Unknown
+  // rooms (no memory room) cannot be judged and are left open.
+  _memoryRoundClosed(roomId, roundId) {
+    const room = this.memRooms.get(roomId);
+    if (!room?.round) return false;
+    if (room.publishedRounds?.has(roundId)) return true;
+    if (room.round.round_id !== roundId) return false;
+    if (room.round.phase !== 'submit') return true;
+    const deadline = Number(room.round.submit_deadline_unix || 0);
+    return deadline > 0 && Math.floor(Date.now() / 1000) > deadline;
+  }
+
   _createInMemory(key, input, canonical_sha256, dbError = null) {
     const previous = this.memSubmissions.get(key);
     // As in the database: replaying a nonce a resubmission superseded would
@@ -122,6 +137,11 @@ export class SubmissionService {
       previous.nonces?.has(input.client_nonce)
     ) {
       throw new Error('nonce_superseded');
+    }
+    if (previous && this._memoryRoundClosed(input.room_id, input.round_id)) {
+      // As submission_upsert does: once the round has closed, the document is
+      // frozen, because flags and verdicts stay attached to its id.
+      throw new Error('submission_closed');
     }
     const submission_id = previous?.id ?? crypto.randomUUID();
     this.memSubmissions.set(key, {

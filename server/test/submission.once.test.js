@@ -403,6 +403,42 @@ describe('one submission per participant per round (memory)', () => {
     expect(retry.body.error).toBe('nonce_superseded');
   });
 
+  it('room.create without a client_nonce makes a new room each time', async () => {
+    // As in the database, where a missing nonce is NULL and never conflicts.
+    const a = await request(app).post('/rpc/room.create').send({ topic: 'No nonce' }).expect(200);
+    const b = await request(app).post('/rpc/room.create').send({ topic: 'No nonce' }).expect(200);
+    expect(b.body.room_id).not.toBe(a.body.room_id);
+  });
+
+  it('a replacement after the round closes is refused in memory mode too', async () => {
+    const created = await request(app)
+      .post('/rpc/room.create')
+      .send({ topic: 'Frozen in memory', cfg: { participant_count: 2, submit_minutes: 1 } })
+      .expect(200);
+    const room_id = created.body.room_id;
+    const seats = (await request(app).get(`/rpc/room.get?room_id=${room_id}`)).body.participants;
+    const round_id = (await request(app).get(`/state?room_id=${room_id}`)).body.round.round_id;
+    const ids = { room_id, round_id, author_id: seats[0].id };
+    await request(app)
+      .post('/rpc/submission.create')
+      .send(doc(ids, 'Before', 'mem-frz-1'))
+      .expect(200);
+    const realNow = Date.now;
+    Date.now = () => realNow() + 61_000; // past the deadline; the round publishes
+    try {
+      await request(app).get(`/state?room_id=${room_id}`).expect(200);
+      const late = await request(app)
+        .post('/rpc/submission.create')
+        .send(doc(ids, 'After', 'mem-frz-2'))
+        .expect(409);
+      expect(late.body.error).toBe('submission_closed');
+      const state = (await request(app).get(`/state?room_id=${room_id}`)).body;
+      expect(state.round.transcript.map((t) => t.content)).toEqual(['Before']);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   it('a resubmission replaces the turn in the published transcript', async () => {
     const created = await request(app)
       .post('/rpc/room.create')

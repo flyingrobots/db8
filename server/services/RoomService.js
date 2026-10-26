@@ -307,7 +307,10 @@ export class RoomService {
       }
     }
 
-    if (this.memRoomNonces.has(client_nonce)) {
+    // Only a real nonce makes room.create idempotent. Without one, room_create
+    // stores NULL, which never conflicts; keying memory on `undefined` made
+    // every nonce-less create return the first such room.
+    if (client_nonce && this.memRoomNonces.has(client_nonce)) {
       return { room_id: this.memRoomNonces.get(client_nonce) };
     }
 
@@ -334,7 +337,7 @@ export class RoomService {
         submit_deadline_unix: Math.floor(Date.now() / 1000) + (cfg?.submit_minutes || 60) * 60
       }
     });
-    this.memRoomNonces.set(client_nonce, roomId);
+    if (client_nonce) this.memRoomNonces.set(client_nonce, roomId);
     return { room_id: roomId, note: 'db_fallback' };
   }
 }
