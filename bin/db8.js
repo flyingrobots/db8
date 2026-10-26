@@ -132,21 +132,33 @@ async function main() {
       return EXIT.VALIDATION;
     }
     const baseFetch = globalThis.fetch;
+    const timedOut = (url, err) =>
+      Object.assign(new Error(`request to ${url} timed out after ${ms} ms`, { cause: err }), {
+        name: 'TimeoutError',
+        code: 'ETIMEDOUT'
+      });
     globalThis.fetch = async (url, init = {}) => {
       try {
-        return await baseFetch(url, {
+        const res = await baseFetch(url, {
           ...init,
           signal: init.signal ?? globalThis.AbortSignal.timeout(ms)
         });
+        // Read the whole body here, inside the same deadline. A server can send
+        // headers in time and then stall the body; commands read bodies with
+        // `res.json().catch(() => ({}))`, which would turn that timeout into an
+        // empty, successful answer.
+        const body = await res.arrayBuffer();
+        // These statuses may not carry a body, and the Response constructor
+        // throws if given one, even an empty one.
+        const nullBody = [101, 204, 205, 304].includes(res.status);
+        return new globalThis.Response(nullBody ? null : body, {
+          status: res.status,
+          statusText: res.statusText,
+          headers: res.headers
+        });
       } catch (err) {
         if (err?.name !== 'TimeoutError') throw err;
-        throw Object.assign(
-          new Error(`request to ${url} timed out after ${ms} ms`, { cause: err }),
-          {
-            name: 'TimeoutError',
-            code: 'ETIMEDOUT'
-          }
-        );
+        throw timedOut(url, err);
       }
     };
   }

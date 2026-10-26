@@ -18,7 +18,14 @@ const open = new Set();
 
 beforeAll(async () => {
   // Accepts every request and never answers it.
-  server = http.createServer((req, res) => open.add(res));
+  server = http.createServer((req, res) => {
+    open.add(res);
+    // /stall-body: headers and the start of a JSON body, then nothing.
+    if (req.url.includes('stall-body') || req.headers['x-stall-body']) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{"ok":');
+    }
+  });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   apiUrl = `http://127.0.0.1:${server.address().port}`;
 });
@@ -29,11 +36,11 @@ afterAll(async () => {
   await new Promise((r) => server.close(r));
 });
 
-async function run(args) {
+async function run(args, extraEnv = {}) {
   const started = performance.now();
   try {
     const { stdout, stderr } = await execFile(process.execPath, [cli, ...args], {
-      env: { ...process.env, DB8_API_URL: apiUrl, HOME: '/nonexistent-db8-home' },
+      env: { ...process.env, DB8_API_URL: apiUrl, HOME: '/nonexistent-db8-home', ...extraEnv },
       timeout: 10_000
     });
     return { code: 0, stdout, stderr, ms: performance.now() - started };
@@ -57,6 +64,15 @@ describe('--timeout bounds every API request', () => {
     const r = await run([...args, '--timeout', '200']);
     expect(r.code).toBe(7);
     expect(r.ms).toBeLessThan(2000);
+    expect(r.stderr).toMatch(/timed out after 200 ms/);
+  });
+
+  it('a body that stops arriving times out too, instead of becoming {}', async () => {
+    const r = await run(['room', 'status', '--room', 'stall-body', '--json', '--timeout', '200'], {
+      DB8_API_URL: apiUrl
+    });
+    expect(r.code).toBe(7);
+    expect(r.stdout).not.toMatch(/\{\}/);
     expect(r.stderr).toMatch(/timed out after 200 ms/);
   });
 
