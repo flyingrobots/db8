@@ -442,6 +442,44 @@ describe('db8 MCP agent server', () => {
     expect(s.body.transcript[0].turns.filter((t) => t.author === 'agent_1')).toHaveLength(1);
   });
 
+  it('a throttled retry of an unknown submission keeps its nonce', async () => {
+    const t0 = Date.now();
+    vi.useFakeTimers({ toFake: ['Date'], now: t0 });
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Lost then throttled',
+      cfg: { participant_count: 2, submit_minutes: 1 },
+      client_nonce: nonce()
+    });
+    let creates = 0;
+    let issues = 0;
+    const flaky = async (url, init) => {
+      if (String(url).includes('nonce.issue')) issues += 1;
+      if (String(url).includes('submission.create')) {
+        creates += 1;
+        if (creates === 1) {
+          await fetch(url, init); // stored, but the answer is lost
+          throw new TypeError('fetch failed');
+        }
+        if (creates === 2) {
+          return new globalThis.Response(JSON.stringify({ ok: false, error: 'rate_limited' }), {
+            status: 429,
+            headers: { 'content-type': 'application/json' }
+          });
+        }
+      }
+      return fetch(url, init);
+    };
+    const a1 = await seat(room_id, 'agent_1', { fetch: flaky });
+    expect((await call(a1, 'debate_submit', turn('Once only'))).isError).toBe(true);
+    expect((await call(a1, 'debate_submit', turn('Once only'))).isError).toBe(true);
+    const third = await call(a1, 'debate_submit', turn('Once only'));
+    expect(third.isError, third.text).toBe(false);
+    expect(issues).toBe(1);
+    vi.setSystemTime(t0 + 61_000);
+    const s = await call(a1, 'debate_status');
+    expect(s.body.transcript[0].turns.filter((t) => t.author === 'agent_1')).toHaveLength(1);
+  });
+
   it('gives up on a request the API never answers', async () => {
     const { room_id } = await api('/rpc/room.create', {
       topic: 'Stalled',

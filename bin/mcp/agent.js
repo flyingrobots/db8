@@ -447,7 +447,11 @@ export function createAgentServer({
           );
         }
         if (rejected) {
-          attemptNonces.delete(rid);
+          // A rejected first attempt stored nothing, so its nonce can go. A
+          // rejected *retry* (throttled, say) says nothing about the earlier
+          // attempt whose outcome is still unknown: keep that nonce, or the
+          // next attempt would issue a fresh one and could store a second turn.
+          if (!reused) attemptNonces.delete(rid);
           throw err;
         }
         if (!attemptNonces.has(rid)) throw err; // failed before a nonce existed
