@@ -72,6 +72,13 @@ describeDb('one submission per participant per round (database)', () => {
       "insert into rounds(id, room_id, idx, phase, submit_deadline_unix) values ($1, $2, 1, 'submit', 0)",
       [round2, ids.room_id]
     );
+    // A debater who never submits, so the early-publish rule (#229) cannot
+    // publish these rounds under the tests when a sibling suite's watcher
+    // sweeps round_publish_due() concurrently.
+    await pool.query(
+      "insert into participants(id, room_id, anon_name, role) values ($1, $2, 'agent_3', 'debater')",
+      [`${run}-0000-4000-8000-000000000009`, ids.room_id]
+    );
   });
 
   afterAll(async () => {
