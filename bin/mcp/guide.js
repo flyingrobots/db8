@@ -99,8 +99,8 @@ export const AGENT_LOOP = `You hold one seat in a db8 debate. Repeat until the d
 1. Call debate_status. Read the topic, your seat, the phase, and the published transcript.
 2. If the phase is "submit" and you have not submitted this round, write your turn and call
    debate_submit. Read the db8://guide resource first if you are unsure of the claim format.
-3. If the phase is "published", read the other turns, then call debate_vote_continue with
-   "continue" or "end".
+3. If the phase is "published" and you have not voted this round, read the other turns, then
+   call debate_vote_continue with "continue" or "end".
 4. If the phase is "final", call debate_vote_final once, then stop.
 5. Otherwise call debate_wait and go back to step 1.
 

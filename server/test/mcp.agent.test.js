@@ -375,6 +375,109 @@ describe('db8 MCP agent server', () => {
     expect(w.text).toMatch(/timeout_sec|did not answer/);
   });
 
+  it('a revised continue vote replaces the earlier choice in memory mode', async () => {
+    const t0 = Date.now();
+    vi.useFakeTimers({ toFake: ['Date'], now: t0 });
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Revise vote',
+      cfg: { participant_count: 2, submit_minutes: 1 },
+      client_nonce: nonce()
+    });
+    const a1 = await seat(room_id, 'agent_1');
+    vi.setSystemTime(t0 + 61_000);
+    await call(a1, 'debate_vote_continue', { choice: 'continue' });
+    await call(a1, 'debate_vote_continue', { choice: 'end' });
+    const s = await call(a1, 'debate_status');
+    expect(s.body.continue_tally).toEqual({ yes: 0, no: 1 });
+  });
+
+  it('after voting, status reports the vote and points at debate_wait', async () => {
+    const t0 = Date.now();
+    vi.useFakeTimers({ toFake: ['Date'], now: t0 });
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Voted flag',
+      cfg: { participant_count: 2, submit_minutes: 1 },
+      client_nonce: nonce()
+    });
+    const a1 = await seat(room_id, 'agent_1');
+    vi.setSystemTime(t0 + 61_000);
+    expect((await call(a1, 'debate_status')).body.round.voted).toBe(false);
+    await call(a1, 'debate_vote_continue', { choice: 'continue' });
+    const s = await call(a1, 'debate_status');
+    expect(s.body.round.voted).toBe(true);
+    expect(s.body.next_action).toMatch(/debate_wait/);
+  });
+
+  it('retrying a submission whose response was lost does not store a second turn', async () => {
+    const t0 = Date.now();
+    vi.useFakeTimers({ toFake: ['Date'], now: t0 });
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Lost response',
+      cfg: { participant_count: 2, submit_minutes: 1 },
+      client_nonce: nonce()
+    });
+    let creates = 0;
+    let issues = 0;
+    const lossy = async (url, init) => {
+      if (String(url).includes('nonce.issue')) issues += 1;
+      if (String(url).includes('submission.create') && ++creates === 1) {
+        await fetch(url, init); // the server stores the turn...
+        throw new TypeError('fetch failed'); // ...and the answer never arrives
+      }
+      return fetch(url, init);
+    };
+    const a1 = await seat(room_id, 'agent_1', { fetch: lossy });
+    const first = await call(a1, 'debate_submit', turn('Only once.'));
+    expect(first.isError).toBe(true);
+    const retry = await call(a1, 'debate_submit', turn('Only once.'));
+    expect(retry.isError, retry.text).toBe(false);
+    expect(issues).toBe(1);
+    vi.setSystemTime(t0 + 61_000);
+    const s = await call(a1, 'debate_status');
+    expect(s.body.transcript[0].turns.filter((t) => t.author === 'agent_1')).toHaveLength(1);
+  });
+
+  it('gives up on a request the API never answers', async () => {
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Stalled',
+      cfg: { participant_count: 2 },
+      client_nonce: nonce()
+    });
+    const stall = async (url, init) => {
+      if (!String(url).includes('/state')) return fetch(url, init);
+      return new Promise((_, reject) =>
+        init.signal?.addEventListener('abort', () => reject(init.signal.reason))
+      );
+    };
+    const a1 = await seat(room_id, 'agent_1', { fetch: stall, requestTimeoutMs: 50 });
+    const started = performance.now();
+    const r = await call(a1, 'debate_status');
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(r.isError).toBe(true);
+    expect(r.text).toMatch(/did not answer/);
+  });
+
+  it('numbers rounds correctly when a memory round published with no turns', async () => {
+    const t0 = Date.now();
+    vi.useFakeTimers({ toFake: ['Date'], now: t0 });
+    const { room_id } = await api('/rpc/room.create', {
+      topic: 'Empty first round',
+      cfg: { participant_count: 2, submit_minutes: 1 },
+      client_nonce: nonce()
+    });
+    const a1 = await seat(room_id, 'agent_1');
+    const a2 = await seat(room_id, 'agent_2');
+    vi.setSystemTime(t0 + 61_000); // round 0 publishes empty
+    await call(a1, 'debate_vote_continue', { choice: 'continue' });
+    await call(a2, 'debate_vote_continue', { choice: 'continue' });
+    vi.setSystemTime(t0 + 92_000); // round 1 opens
+    expect((await call(a1, 'debate_status')).body.round.idx).toBe(1);
+    expect((await call(a1, 'debate_submit', turn('Round one turn'))).isError).toBe(false);
+    vi.setSystemTime(t0 + 92_000 + 301_000); // round 1 publishes
+    const s = await call(a1, 'debate_status');
+    expect(s.body.transcript.map((g) => g.round)).toEqual([1]);
+  });
+
   it('refuses a seat the room does not have', async () => {
     const { room_id } = await api('/rpc/room.create', {
       topic: 'Seats',

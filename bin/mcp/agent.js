@@ -54,6 +54,9 @@ function guarded(fn) {
       return await fn(args);
     } catch (err) {
       if (err instanceof ToolError) return fail(err.message);
+      if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+        return fail('The db8 API did not answer in time. Try again, or tell the debate host.');
+      }
       return fail(`db8 API request failed: ${err?.message || String(err)}`);
     }
   };
@@ -86,7 +89,8 @@ export function createAgentServer({
   seat,
   participantId,
   fetch: fetchImpl = globalThis.fetch,
-  pollMs = 2000
+  pollMs = 2000,
+  requestTimeoutMs = 15_000
 }) {
   const base = apiUrl.replace(/\/+$/, '');
   const mcp = new McpServer({ name: 'db8-agent', version: '0.1.0' });
@@ -101,6 +105,16 @@ export function createAgentServer({
   // One continue-vote nonce per round. A repeated vote reuses it, so the API
   // revises the ballot instead of counting a second one.
   const voteNonces = new Map();
+  // Rounds this process has voted in, for status and hints. Voting again is
+  // allowed and revises the ballot.
+  const votedRounds = new Set();
+  // The nonce of a submission whose outcome is unknown (no answer, or an answer
+  // kept only in memory). A retry reuses it, so the API's idempotent upsert
+  // returns the stored turn instead of adding a second one.
+  const attemptNonces = new Map();
+  // Rounds where an earlier attempt may have been stored but cannot be
+  // confirmed. Submitting again could duplicate it, so it is refused.
+  const uncertainRounds = new Set();
   let roomCache = null;
 
   async function request(path, body, { signal } = {}) {
@@ -114,7 +128,9 @@ export function createAgentServer({
       method: body ? 'POST' : 'GET',
       headers,
       body: body ? JSON.stringify(body) : undefined,
-      signal
+      // Every request is bounded, so a stalled API cannot hold a tool call open
+      // until the MCP client gives up on it.
+      signal: signal ?? globalThis.AbortSignal.timeout(requestTimeoutMs)
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok || json.ok === false) {
@@ -130,7 +146,8 @@ export function createAgentServer({
     if (json.note === 'db_fallback') {
       throw new ToolError(
         'db_fallback: the db8 server could not reach its database and did not persist this request. ' +
-          'Tell the debate host; do not assume it counted.'
+          'Tell the debate host; do not assume it counted.',
+        { status: res.status }
       );
     }
     return json;
@@ -161,14 +178,16 @@ export function createAgentServer({
     return Math.max(0, Math.round(unix - Date.now() / 1000));
   }
 
-  function nextAction(round, submitted) {
+  function nextAction(round, submitted, voted) {
     switch (round.phase) {
       case 'submit':
         return submitted
           ? 'You have submitted this round. Call debate_wait until the round publishes.'
           : 'Write your turn and call debate_submit before the deadline.';
       case 'published':
-        return 'Read the published turns, then call debate_vote_continue with "continue" or "end".';
+        return voted
+          ? 'You have voted this round. Call debate_wait (calling debate_vote_continue again revises your vote).'
+          : 'Read the published turns, then call debate_vote_continue with "continue" or "end".';
       case 'final':
         return 'The debate is over. Call debate_vote_final once, then stop.';
       default:
@@ -209,6 +228,7 @@ export function createAgentServer({
     }));
 
     const submitted = submittedRounds.has(rnd.round_id);
+    const voted = votedRounds.has(rnd.round_id);
     return {
       topic: r.topic,
       me: { seat: r.me.seat, role: r.me.role },
@@ -219,12 +239,13 @@ export function createAgentServer({
         phase: rnd.phase,
         deadline_unix: deadline ?? null,
         seconds_remaining: secondsUntil(deadline),
-        submitted
+        submitted,
+        voted
       },
       continue_tally: rnd.continue_tally ?? null,
       final_tally: rnd.final_tally ?? null,
       transcript,
-      next_action: nextAction(rnd, submitted)
+      next_action: nextAction(rnd, submitted, voted)
     };
   }
 
@@ -284,7 +305,9 @@ export function createAgentServer({
       const until = performance.now() + timeout_sec * 1000;
       const left = () => Math.max(0, until - performance.now());
       const bounded = () => ({
-        signal: globalThis.AbortSignal.timeout(Math.max(1, Math.ceil(left())))
+        signal: globalThis.AbortSignal.timeout(
+          Math.max(1, Math.ceil(Math.min(left(), requestTimeoutMs)))
+        )
       });
       const timedOut = (err) => err?.name === 'TimeoutError' || err?.name === 'AbortError';
       let start;
@@ -357,14 +380,26 @@ export function createAgentServer({
           `You already submitted in round ${snap.round.idx}. ${snap.next_action}`
         );
       }
+      if (uncertainRounds.has(rid)) {
+        throw new ToolError(
+          `An earlier submission in round ${snap.round.idx} may have been stored, and it cannot be ` +
+            'confirmed until the round publishes. Submitting again could store a second turn. Call debate_wait.'
+        );
+      }
       pendingRounds.add(rid);
       let res;
+      const reused = attemptNonces.get(rid);
       try {
         const { me } = await room();
-        const issued = await request('/rpc/nonce.issue', {
-          round_id: rid,
-          author_id: me.participant_id
-        });
+        const nonce =
+          reused ??
+          (
+            await request('/rpc/nonce.issue', {
+              round_id: rid,
+              author_id: me.participant_id
+            })
+          ).nonce;
+        attemptNonces.set(rid, nonce);
         res = await request('/rpc/submission.create', {
           room_id: roomId,
           round_id: rid,
@@ -374,9 +409,35 @@ export function createAgentServer({
           content,
           claims,
           citations,
-          client_nonce: issued.nonce
+          client_nonce: nonce
         });
         submittedRounds.add(rid);
+        attemptNonces.delete(rid);
+      } catch (err) {
+        // An HTTP error answer is a definite rejection: nothing was stored, and
+        // a later attempt may start afresh. Anything else (no answer, a timeout,
+        // or db_fallback) leaves the outcome unknown, so the nonce is kept.
+        const rejected = err instanceof ToolError && err.status >= 400;
+        if (rejected && reused && /invalid_nonce/.test(err.message)) {
+          // The reused nonce was already consumed, so the first attempt most
+          // likely reached the database. Do not risk a duplicate.
+          uncertainRounds.add(rid);
+          attemptNonces.delete(rid);
+          throw new ToolError(
+            'Your earlier submission in this round was probably stored, but the server would not ' +
+              'confirm it. It will appear in the transcript when the round publishes. Call debate_wait.'
+          );
+        }
+        if (rejected) {
+          attemptNonces.delete(rid);
+          throw err;
+        }
+        if (!attemptNonces.has(rid)) throw err; // failed before a nonce existed
+        const why = err instanceof ToolError ? err.message : err?.message || String(err);
+        throw new ToolError(
+          `The outcome of this submission is unknown (${why}). Call debate_submit again with the ` +
+            'same turn: the retry reuses its nonce, so it cannot store a second turn.'
+        );
       } finally {
         pendingRounds.delete(rid);
       }
@@ -413,6 +474,7 @@ export function createAgentServer({
         choice,
         client_nonce: voteNonces.get(rid)
       });
+      votedRounds.add(rid);
       return ok({ voted: choice, vote_id: res.vote_id, next_action: 'Call debate_wait.' });
     })
   );
