@@ -14,7 +14,10 @@ const nonce = () => `fc-${uuid()}`;
 
 // A pool whose every query fails the way node-pg fails when it gets no answer.
 function failingPool(make) {
-  return { query: vi.fn(async () => Promise.reject(make())) };
+  return {
+    query: vi.fn(async () => Promise.reject(make())),
+    connect: vi.fn(async () => Promise.reject(make()))
+  };
 }
 const refused = () =>
   Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), { code: 'ECONNREFUSED' });
@@ -213,6 +216,14 @@ describe('databaseFailure', () => {
         code: '28P01'
       })
     ],
+    [
+      'statement timeout',
+      'not_stored',
+      Object.assign(new Error('canceling statement due to statement timeout'), {
+        severity: 'ERROR',
+        code: '57014'
+      })
+    ],
     ['connection dropped', 'unknown', dropped()],
     [
       'admin shutdown',
@@ -286,5 +297,59 @@ describeDb('a commit whose answer was lost (database)', () => {
     );
     expect(rows.rows).toHaveLength(1);
     expect(rows.rows[0].id).toBe(retry.body.submission_id);
+  });
+});
+
+describeDb('research.fetch: a failure after the quota increment (database)', () => {
+  const dbUrl =
+    process.env.DB8_TEST_DATABASE_URL ||
+    process.env.DATABASE_URL ||
+    'postgresql://postgres:test@localhost:54329/db8_test';
+  const run = uuid().slice(0, 8);
+  const id = (n) => `${run}-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  const ids = { room_id: id(21), round_id: id(22), participant_id: id(23) };
+  let pool;
+
+  beforeEach(async () => {
+    pool = new pg.Pool({ connectionString: dbUrl });
+    await pool.query('insert into rooms(id, title, config) values ($1, $2, $3)', [
+      ids.room_id,
+      'research quota',
+      JSON.stringify({ max_fetches_per_round: 1 })
+    ]);
+    await pool.query(
+      "insert into rounds(id, room_id, idx, phase, submit_deadline_unix) values ($1, $2, 0, 'submit', 0)",
+      [ids.round_id, ids.room_id]
+    );
+  });
+
+  afterEach(async () => {
+    await pool.query('delete from research_usage where room_id = $1', [ids.room_id]);
+    await pool.query('delete from rooms where id = $1', [ids.room_id]);
+    await pool.end();
+  });
+
+  it('answers not_stored and does not spend the quota', async () => {
+    // The connection drops on the cache lookup, after the quota increment.
+    const lossy = (target) => async (sql, params) => {
+      if (/FROM research_cache/i.test(sql)) throw dropped();
+      return target.query(sql, params);
+    };
+    const lossyPool = {
+      query: lossy(pool),
+      connect: async () => {
+        const client = await pool.connect();
+        return { release: (err) => client.release(err), query: lossy(client) };
+      }
+    };
+    const body = { ...ids, url: `https://example.org/${run}` };
+    __setDbPool(lossyPool);
+    const first = await request(app).post('/rpc/research.fetch').send(body);
+    expect(first.status).toBe(503);
+    expect(first.body.outcome).toBe('not_stored');
+
+    __setDbPool(pool);
+    const retry = await request(app).post('/rpc/research.fetch').send(body);
+    expect(retry.status).toBe(200);
   });
 });

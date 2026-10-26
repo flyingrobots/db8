@@ -1,7 +1,7 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import { ResearchFetch, ResearchCacheGet } from '../schemas.js';
-import { queryOrUnavailable, sendIfDatabaseUnavailable } from '../database-unavailable.js';
+import { inTransaction, sendIfDatabaseUnavailable } from '../database-unavailable.js';
 
 export function createResearchRouter(deps) {
   const { requireDbInProduction, memResearchCache, memResearchQuotas } = deps;
@@ -16,48 +16,42 @@ export function createResearchRouter(deps) {
       const db = deps.db;
       if (db) {
         try {
-          // 1. Check/Increment usage
-          // We need max fetches from room config
-          const roomRes = await queryOrUnavailable(
-            db,
-            'SELECT config FROM rooms WHERE id = $1',
-            [input.room_id],
-            { wrote: false }
-          );
-          const max = Number(roomRes.rows[0]?.config?.max_fetches_per_round || 0);
+          // One transaction: the quota increment commits only with the cache
+          // write. Spending quota on a fetch that then failed would leave the
+          // round short of fetches, and a 503 not_stored would be untrue (#257).
+          const out = await inTransaction(db, async (client) => {
+            const roomRes = await client.query('SELECT config FROM rooms WHERE id = $1', [
+              input.room_id
+            ]);
+            const max = Number(roomRes.rows[0]?.config?.max_fetches_per_round || 0);
+            await client.query('SELECT research_usage_increment($1,$2,$3)', [
+              input.room_id,
+              input.round_id,
+              max
+            ]);
 
-          await queryOrUnavailable(db, 'SELECT research_usage_increment($1,$2,$3)', [
-            input.room_id,
-            input.round_id,
-            max
-          ]);
+            const cacheRes = await client.query(
+              'SELECT snapshot FROM research_cache WHERE url = $1',
+              [input.url]
+            );
+            if (cacheRes.rows[0]) return { snapshot: cacheRes.rows[0].snapshot, cached: true };
 
-          // 2. Check cache
-          const cacheRes = await queryOrUnavailable(
-            db,
-            'SELECT snapshot FROM research_cache WHERE url = $1',
-            [input.url],
-            { wrote: false }
-          );
-          if (cacheRes.rows[0]) {
-            return res.json({ ok: true, snapshot: cacheRes.rows[0].snapshot, cached: true });
-          }
-
-          // 3. Perform "fetch" (stubbed for now as in memory path)
-          const snapshot = {
-            url: input.url,
-            title: 'Snapshot',
-            content: '...',
-            created_at: new Date().toISOString()
-          };
-          const urlHash = crypto.createHash('sha256').update(input.url).digest('hex');
-          await queryOrUnavailable(db, 'SELECT research_cache_upsert($1,$2,$3)', [
-            input.url,
-            urlHash,
-            JSON.stringify(snapshot)
-          ]);
-
-          return res.json({ ok: true, snapshot, cached: false });
+            // Perform "fetch" (stubbed for now as in memory path)
+            const snapshot = {
+              url: input.url,
+              title: 'Snapshot',
+              content: '...',
+              created_at: new Date().toISOString()
+            };
+            const urlHash = crypto.createHash('sha256').update(input.url).digest('hex');
+            await client.query('SELECT research_cache_upsert($1,$2,$3)', [
+              input.url,
+              urlHash,
+              JSON.stringify(snapshot)
+            ]);
+            return { snapshot, cached: false };
+          });
+          return res.json({ ok: true, ...out });
         } catch (e) {
           if (/quota_exceeded/.test(e.message))
             return res.status(429).json({ ok: false, error: 'quota_exceeded' });

@@ -157,6 +157,11 @@ With `DATABASE_URL` set, Postgres is the only store. If a write cannot reach it,
 - `outcome: "not_stored"`: the statement never reached the database (connection refused, connect timeout, authentication failure, too many connections, or a pool that did not initialize). A new attempt may start afresh.
 - `outcome: "unknown"`: the connection failed after the statement was sent, so it may have committed. Retry with the same `client_nonce`: the write RPCs treat a repeated nonce idempotently, so the retry cannot store a second copy.
 
+Two writes have no client nonce, and are safe to retry for other reasons:
+
+- `research.fetch` runs its quota increment and its cache write in one transaction, so a failure before COMMIT spends no quota. Only a failed COMMIT gives `unknown`, and a retry then can spend one more fetch.
+- `reputation.update` applies each round once (`reputation_rounds_applied`), so a retry after `unknown` changes nothing.
+
 An error the database answered with (a rule an RPC enforces, such as `submission_closed`) keeps its own status. Before #257 the API kept the write in memory and answered `200` with `note: "db_fallback"`; that note no longer exists.
 
 ### Environment Flags (M2)

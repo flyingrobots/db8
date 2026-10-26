@@ -31,9 +31,10 @@ const CONNECT_MESSAGES = [
   /timeout exceeded when trying to connect/i,
   /cannot use a pool after calling end/i
 ];
-// SQLSTATEs Postgres raises at connection time: invalid authorization (28),
-// too many connections (53300), cannot connect now (57P03).
-const CONNECT_SQLSTATE = /^(28...|53300|57P03)$/;
+// SQLSTATEs after which nothing was written: invalid authorization (28), too
+// many connections (53300), cannot connect now (57P03), and query canceled
+// (57014: a statement timeout or a cancel request rolls the statement back).
+const CONNECT_SQLSTATE = /^(28...|53300|57P03|57014)$/;
 // SQLSTATEs that mean the server or the connection failed, not that the
 // database refused the statement: connection exception (08), insufficient
 // resources (53), operator intervention (57P), system error (58).
@@ -85,5 +86,42 @@ export async function queryOrUnavailable(pool, sql, params, opts) {
     return await pool.query(sql, params);
   } catch (err) {
     throw databaseFailure(err, opts);
+  }
+}
+
+/**
+ * Runs `fn(client)` in one transaction. A failure before COMMIT rolls the
+ * transaction back (the database also discards it when the connection drops),
+ * so an outage there is `not_stored`. Only a failed COMMIT is `unknown`.
+ */
+export async function inTransaction(pool, fn) {
+  let client;
+  try {
+    client = await pool.connect();
+  } catch (err) {
+    throw databaseFailure(err, { wrote: false });
+  }
+  // A client whose connection failed is destroyed, not returned to the pool.
+  let broken;
+  try {
+    let result;
+    try {
+      await client.query('BEGIN');
+      result = await fn(client);
+    } catch (err) {
+      await client.query('ROLLBACK').catch((rollbackErr) => {
+        broken = rollbackErr;
+      });
+      throw databaseFailure(err, { wrote: false });
+    }
+    try {
+      await client.query('COMMIT');
+    } catch (err) {
+      broken = err;
+      throw databaseFailure(err);
+    }
+    return result;
+  } finally {
+    client.release(broken);
   }
 }
