@@ -95,6 +95,13 @@ BEGIN
   -- author first, so a concurrent replacement cannot read a version that is
   -- about to be replaced and record the wrong previous_sha256.
   PERFORM pg_advisory_xact_lock(hashtextextended(p_round_id::text || ':' || p_author_id::text, 0));
+  -- Hold the round row against publication until this transaction commits.
+  -- FOR SHARE conflicts with round_publish_due's UPDATE: a publish in progress
+  -- makes this wait and then see the round published, and a write in progress
+  -- makes the publish wait for it. Without it, a replacement could read
+  -- 'submit', the round publish and sign the previous hash, and the
+  -- replacement then commit new content under the same id.
+  SELECT phase, submit_deadline_unix INTO v_round FROM rounds WHERE id = p_round_id FOR SHARE;
 
   SELECT id, canonical_sha256, client_nonce, version INTO v_prev
     FROM submissions
@@ -119,7 +126,6 @@ BEGIN
     -- A replacement keeps the submission id, and with it any flags and
     -- verdicts. Once the round has left submit (or its deadline has passed),
     -- those ruled on the published document, so the document is frozen.
-    SELECT phase, submit_deadline_unix INTO v_round FROM rounds WHERE id = p_round_id;
     IF v_round.phase IS DISTINCT FROM 'submit'
        OR (v_round.submit_deadline_unix > 0 AND v_round.submit_deadline_unix < v_now) THEN
       RAISE EXCEPTION 'submission_closed' USING ERRCODE = '22023',

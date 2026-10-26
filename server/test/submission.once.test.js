@@ -206,6 +206,39 @@ describeDb('one submission per participant per round (database)', () => {
     ]);
   });
 
+  it('a replacement that races the publish of its round waits for it and is refused', async () => {
+    const round3 = `${run}-0000-4000-8000-000000000006`;
+    await pool.query(
+      "insert into rounds(id, room_id, idx, phase, submit_deadline_unix) values ($1, $2, 2, 'submit', 0)",
+      [round3, ids.room_id]
+    );
+    const upsert = (client, content, nonce) =>
+      client.query(
+        'select submission_upsert($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id',
+        [round3, ids.author_id, content, '[]', '[]', sha(content), nonce]
+      );
+    await upsert(pool, `before-${run}`, `race-${run}-0`);
+    const publisher = await pool.connect();
+    const author = await pool.connect();
+    try {
+      // The watcher publishes in its own transaction, not yet committed.
+      await publisher.query('BEGIN');
+      await publisher.query("update rounds set phase = 'published' where id = $1", [round3]);
+      const replacement = upsert(author, `after-${run}`, `race-${run}-1`).then(
+        () => 'stored',
+        (err) => err.message
+      );
+      await new Promise((r) => setTimeout(r, 200));
+      await publisher.query('COMMIT');
+      expect(await replacement).toBe('submission_closed');
+    } finally {
+      publisher.release();
+      author.release();
+    }
+    const row = await pool.query('select content from submissions where round_id = $1', [round3]);
+    expect(row.rows).toEqual([{ content: `before-${run}` }]);
+  });
+
   it('upgrading a database with several drafts per author keeps the newest', async () => {
     // Its own database: re-applying db/schema.sql takes schema-wide locks that
     // sibling suites must not run into.
