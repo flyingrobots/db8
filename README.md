@@ -179,7 +179,7 @@ The system needs to recognize its own negative case. Consider:
 ```json
 {
   "kind": "framed",
-  "frame": { "kind": "hedge" },
+  "frame": { "kind": "hedge", "expression": "may" },
   "body": {
     "kind": "framed",
     "frame": { "kind": "attribution", "source": { "kind": "named", "name": "some_people" } },

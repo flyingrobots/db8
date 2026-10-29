@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-08-16
+lastUpdated: 2026-10-29
 tags: [standard]
 ---
 
@@ -440,7 +440,9 @@ Known gaps, aspirational until an implementation lands:
   [the design guide](DesignGuide.md) is unenforced;
 - **undocumented public surface** — no coverage check ties CLI commands, HTTP
   endpoints, environment variables, or error identifiers to reference pages;
-- **executable examples** — no doctest harness; examples are verified by review.
+- **executable examples** — no general doctest harness. The README's claim-term
+  JSON examples are validated by `server/test/readme.examples.test.js`; other
+  examples are verified by review.
 
 The following **SHOULD** remain advisory: page length, sentence length, passive
 voice, jargon density, bullet count, tone, overuse of bold, table complexity,
