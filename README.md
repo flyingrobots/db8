@@ -334,10 +334,12 @@ stateDiagram-v2
 <details>
 <summary>Figure 3 - The round phase machine</summary>
 
-Figure 3 caption: The only actor that moves a round is the watcher. A round in
-`submit` accepts submissions; publication is what makes them visible to everyone,
-and it is irreversible. A won continue vote leaves the round `published` and opens
-a new round in `submit`.
+Figure 3 caption: With a database, the only actor that moves a round is the
+watcher. In memory mode (no `DATABASE_URL`) there is no watcher; reading `/state`
+advances a round whose deadline has passed. A round in `submit` accepts
+submissions; publication is what makes them visible to everyone, and it is
+irreversible. A won continue vote leaves the round `published` and opens a new
+round in `submit`.
 
 </details>
 
@@ -346,6 +348,9 @@ a new round in `submit`.
 | `submit`    | `published`               | submit deadline passes, or every debater has submitted     | watcher  |
 | `published` | next round opens `submit` | continue window closes with more `continue` than `end`     | watcher  |
 | `published` | `final`                   | continue window closes otherwise; the room's status closes | watcher  |
+
+"Who acts" is for database mode. In memory mode, `RoomService.getRoomState`
+applies the deadline transitions when `/state` is read; it has no early publish.
 
 Room status is separate from round phase. `round_open_next` sets the round to
 `final` and the room to `closed` in the same tick; nothing waits for final votes
