@@ -19,11 +19,11 @@ mattered.
 
 ## Storage
 
-`verification_verdicts` (`db/schema.sql:292-306`), with a `claim_path` column
+`verification_verdicts` (`db/schema.sql:486-500`), with a `claim_path` column
 recording which node the verdict rules on. `NULL` means the claim as a whole.
 
 Idempotency is the unique index `ux_verification_verdicts_unique_path`
-(`db/schema.sql:331-336`), over six expressions:
+(`db/schema.sql:525-530`), over six expressions:
 
 ```text
 round_id, reporter_id, submission_id,
@@ -52,7 +52,7 @@ verify_summary(round_id) → TABLE (submission_id, claim_id, claim_path,
 ```
 
 `verify_submit` takes **eight** arguments. The pre-`claim_path` seven-argument
-overload was dropped explicitly (`db/rpc.sql:663`): `CREATE OR REPLACE` does not
+overload was dropped explicitly (`db/rpc.sql:805`): `CREATE OR REPLACE` does not
 replace across a changed argument list, and because the new parameter has a
 default, a seven-argument call fits both signatures and Postgres refuses it as
 not unique.
@@ -79,7 +79,7 @@ reaching the SQL function directly is not stopped.
 Paths are also normalized at the schema edge — `$.parts[01]` and `$.parts[1]`
 both store as `$.parts[1]`, because the stored string is row identity and the two
 spellings would otherwise split one node into two half-counted findings
-(`server/schemas.js:155-161`).
+(`server/schemas.js:167-173`).
 
 ## Persistence
 
@@ -118,7 +118,7 @@ not, so two findings differing only by path render identically there
 
 ## Known gaps
 
-- **Row level security does not take effect.** The policies at `db/rls.sql:140-161`
+- **Row level security does not take effect.** The policies at `db/rls.sql:146-167`
   are correct and are bypassed — the API connects as the table owner, no table
   sets `FORCE ROW LEVEL SECURITY`, and nothing sets `db8.participant_id`. See
   [#208](https://github.com/flyingrobots/db8/issues/208). Read visibility is

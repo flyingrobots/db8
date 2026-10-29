@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-08-16
+lastUpdated: 2026-10-29
 ---
 
 # db8 Teardown
@@ -99,15 +99,15 @@ The order and the line numbers:
 
 | Step | Line                    | What happens                                                             |
 | ---- | ----------------------- | ------------------------------------------------------------------------ |
-| 1    | `server/rpc.js:30`      | `const app = express()`                                                  |
-| 2    | `server/rpc.js:31`      | `loadConfig()` reads `process.env` once and freezes the result           |
-| 3    | `server/rpc.js:32-35`   | `cors` → `express.json()` → `rateLimitStub` → `express.static('public')` |
-| 4    | `server/rpc.js:38-47`   | `dbRef = {pool:null}`, then `new pg.Pool` if a URL is configured         |
-| 5    | `server/rpc.js:67-79`   | Nine in-memory stores                                                    |
-| 6    | `server/rpc.js:82-107`  | Services, including the verdict store trio                               |
-| 7    | `server/rpc.js:154-180` | Routers mounted at root                                                  |
-| 8    | `server/rpc.js:213`     | `createSigner({...getPersistentSigningKeys()})`                          |
-| 9    | `server/rpc.js:244-246` | Conditional `app.listen`                                                 |
+| 1    | `server/rpc.js:35`      | `const app = express()`                                                  |
+| 2    | `server/rpc.js:36`      | `loadConfig()` reads `process.env` once and freezes the result           |
+| 3    | `server/rpc.js:37-40`   | `cors` → `express.json()` → `rateLimitStub` → `express.static('public')` |
+| 4    | `server/rpc.js:45-54`   | `dbRef = {pool:null, configured}`, then `new pg.Pool` if a URL is set    |
+| 5    | `server/rpc.js:81-96`   | Eleven in-memory stores (three more at `:127` and `:180-181`)            |
+| 6    | `server/rpc.js:98-125`  | Services, including the verdict store trio                               |
+| 7    | `server/rpc.js:173-199` | Routers mounted at root                                                  |
+| 8    | `server/rpc.js:235`     | `createSigner({...getPersistentSigningKeys()})`                          |
+| 9    | `server/rpc.js:266-268` | Conditional `app.listen`                                                 |
 
 Two details that surprise people. First, `new pg.Pool()` **does not connect** —
 it is lazy, so a wrong-but-parseable `DATABASE_URL` boots fine and fails on the
@@ -126,7 +126,7 @@ export function __setDbPool(pool) {
 }
 ```
 
-The reason is documented at `server/adapters/PostgresVerdictStore.js:8-10`: the
+The reason is documented at `server/adapters/PostgresVerdictStore.js:10-12`: the
 app is a module singleton, so tests cannot rebuild it with different config —
 they mutate the live instance. A captured reference would keep using a pool that
 had been replaced. This is test-only surface on a production module, and it is
@@ -217,13 +217,13 @@ The same journey as a table, with what each stage refuses:
 | Stage                 | Source                                       | Rejects with                                                                             |
 | --------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | CORS                  | `server/cors.js:35-74`                       | no `Access-Control-Allow-Origin` (the browser blocks; the server still runs the request) |
-| JSON body             | `server/rpc.js:33`                           | `400` or `413`, as **HTML** — there is no error middleware                               |
+| JSON body             | `server/rpc.js:38`                           | `400` or `413`, as **HTML** — there is no error middleware                               |
 | Rate limit            | `server/mw/rate-limit.js:52`                 | `429 rate_limited`                                                                       |
-| Claim term pre-gate   | `server/routes/submission.js:36-40`          | `400 invalid_claim_term` with `details[]`                                                |
+| Claim term pre-gate   | `server/routes/submission.js:38-41`          | `400 invalid_claim_term` with `details[]`                                                |
 | Zod                   | `server/schemas.js:41-55`                    | `400`, `error` is a JSON-stringified issue array                                         |
-| Canonicalize + digest | `server/services/SubmissionService.js:41-52` | —                                                                                        |
-| Deadline              | `SubmissionService.js:54-58`                 | `400 deadline_passed`                                                                    |
-| `submission_upsert`   | `db/rpc.sql:76-116`                          | SQL error, or memory fallback                                                            |
+| Canonicalize + digest | `server/services/SubmissionService.js:53-64` | —                                                                                        |
+| Deadline              | `server/services/SubmissionService.js:66-70` | `400 deadline_passed`                                                                    |
+| `submission_upsert`   | `db/rpc.sql:112-212`                         | SQL error, or `503 database_unavailable`                                                 |
 
 ### 3.1 Why the claim term is validated twice
 
@@ -237,11 +237,11 @@ if (invalid.length > 0) {
 }
 ```
 
-`server/routes/submission.js:37-40`. If this ran _after_ `SubmissionIn.parse`,
+`server/routes/submission.js:38-41`. If this ran _after_ `SubmissionIn.parse`,
 the schema's own `ClaimTermField` would already have thrown, so the gate would
 always see valid claims, always return `[]`, and re-walk every term for nothing.
 That is exactly what shipped in an earlier PR — a documented error the route
-could never actually produce. The comment at `server/routes/submission.js:5-14`
+could never actually produce. The comment at `server/routes/submission.js:6-15`
 records it, and an end-to-end test exists specifically to prove the gate can
 fire, on the principle that _a route that cannot produce its own documented
 error is not a gate_.
@@ -268,7 +268,7 @@ const canon = canonicalizer({
 const canonical_sha256 = sha256Hex(canon);
 ```
 
-`server/services/SubmissionService.js:41-52`. The object is rebuilt as an
+`server/services/SubmissionService.js:53-64`. The object is rebuilt as an
 explicit literal rather than passing `input` through, which quietly excludes the
 three signature fields the schema accepts. That has a consequence worth naming:
 **the signature fields are not covered by the digest, and no code on this path
@@ -281,11 +281,13 @@ the check entirely.
 
 ### 3.3 Idempotency
 
-`submission_upsert` keys on `(round_id, author_id, client_nonce)` and, on
-conflict, updates only `canonical_sha256` (`db/rpc.sql:100-102`). Retrying after
-a timeout returns the same row — retry safety is a property of the schema, not
-of client discipline. The sharp edge is that a _modified_ replay under the same
-nonce overwrites the stored digest while leaving `content` stale.
+A participant has one submission per round (`submissions_one_per_author_round`),
+and each `client_nonce` names one document (`db/rpc.sql:112-212`). Retrying after
+a timeout with the same nonce and document returns the same row — retry safety is
+a property of the schema, not of client discipline. A revision takes a fresh
+nonce and replaces the row. The same nonce with a different document is refused
+with `nonce_reused` (#236); before that, a modified replay overwrote the stored
+digest and left `content` stale.
 
 In summary, a submission is validated in widening circles — transport, shape,
 meaning, then storage — and the two apparent redundancies in that path (double
@@ -345,7 +347,7 @@ single deliberate exception, and the blue block is the only tamper-evident store
 | `memVerifications`  | **unbounded `Map`** | — (deliberate; see below)                                               |
 
 The verdict store is the one exception, and the reasoning is explicit at
-`server/rpc.js:70-73`: an LRU _"would evict older verdicts once a round exceeded
+`server/rpc.js:85-88`: an LRU _"would evict older verdicts once a round exceeded
 its limit and the summary would quietly report fewer findings than were filed."_
 Instead of evicting, the memory adapter **refuses** at capacity —
 `verdict_capacity_reached` at 50,000 (`server/adapters/MemoryVerdictStore.js:74`)
@@ -438,7 +440,7 @@ get delegate() {
 }
 ```
 
-`server/adapters/ConfiguredVerdictStore.js:24-26`. The header comment states the
+`server/adapters/ConfiguredVerdictStore.js:27-29`. The header comment states the
 policy: _"a configured database that errors surfaces `database_unavailable` from
 the Postgres adapter and the request fails. Answering from memory instead would
 tell a judge their verdict was recorded when it was only held in a process about
@@ -447,25 +449,24 @@ to restart."_
 **A rule the database enforced is not an outage.** This is the crux:
 
 ```js
-async #query(sql, params) {
+async #query(sql, params, opts) {
   try {
     return await this.pool.query(sql, params);
   } catch (err) {
-    if (err?.severity) throw err;
-
-    console.error('[PostgresVerdictStore] database unreachable:', err.message);
-    const wrapped = new Error('database_unavailable');
-    wrapped.cause = err;
-    throw wrapped;
+    const failure = databaseFailure(err, opts);
+    if (failure !== err)
+      console.error('[PostgresVerdictStore] database unreachable:', err.message);
+    throw failure;
   }
 }
 ```
 
-`server/adapters/PostgresVerdictStore.js:33-46`. Postgres sets `severity` on
-anything it _replied with_, whatever the SQLSTATE; a connection that never got an
-answer has none. So `round_not_verifiable` and `reporter_role_denied` propagate
-as `400` with their original error object intact, while a genuine outage becomes
-`503 database_unavailable`. The test asserts on **object identity**, not message,
+`server/adapters/PostgresVerdictStore.js:37-46`, with the classifier in
+`server/database-unavailable.js`. Postgres sets `severity` on anything it
+_replied with_; a connection that never got an answer has none. So
+`round_not_verifiable` and `reporter_role_denied` propagate as `400` with their
+original error object intact, while a genuine outage — no answer, or an answer
+with an outage SQLSTATE such as `57P01` — becomes `503 database_unavailable`. The test asserts on **object identity**, not message,
 because _"a replacement error carrying the same text would pass while losing
 `code`, `severity`, and everything a caller needs."_
 
@@ -482,7 +483,7 @@ if (atPath(term, parsePath(input.claim_path)) === undefined) {
 }
 ```
 
-`server/services/VerificationService.js:36-41`. Resolving per-adapter would be two
+`server/services/VerificationService.js:32-41`. Resolving per-adapter would be two
 implementations free to disagree. And because `verify_submit` does **not** re-check
 the path, `forRequest()` pins one delegate for the whole operation so a pool swap
 between the read and the write cannot validate against one store and persist
@@ -660,7 +661,7 @@ payload raised `RangeError: Maximum call stack size exceeded` out of a function
 documented to return a validation result. The early return is what stops the
 walker visiting a million elements to report a limit it already knows is broken.
 
-`__proto__` is refused anywhere in a payload (`terms.js:144-156`) because
+`__proto__` is refused anywhere in a payload (`server/claims/terms.js:144-160`) because
 _"terms are stored as authored and content-addressed, so a payload that comes
 back mutated is the one outcome that cannot stand."_
 
@@ -714,7 +715,7 @@ claim_path: z
   .optional(),
 ```
 
-`server/schemas.js:155-161`. Round-tripping through `parsePath` → `formatPath`
+`server/schemas.js:167-173`. Round-tripping through `parsePath` → `formatPath`
 _is_ the canonicalizer for paths.
 
 In summary, an address is only useful if it means the same thing every time, and
@@ -863,7 +864,7 @@ means any test or tool calling them affects every room. The test suite documents
 this and works around it.
 
 **Memory mode reimplements this state machine.** `RoomService` advances phases
-itself when no pool exists (`server/services/RoomService.js:131-161`), which is
+itself when no pool exists (`server/services/RoomService.js:153-196`), which is
 a second implementation of the same rules — the kind of duplication the project
 elsewhere works hard to avoid.
 
@@ -926,7 +927,7 @@ try {
 }
 ```
 
-`server/utils.js:143-159`. `link()` fails rather than clobbering, so exactly one
+`server/utils.js:148-164`. `link()` fails rather than clobbering, so exactly one
 starter wins and the rest adopt its key. The key appears complete or not at all.
 
 **The ABBA deadlock.** `db/rls.sql` locks `rooms` before `rounds`; `db/rpc.sql`
@@ -947,34 +948,36 @@ GET DIAGNOSTICS v_count = ROW_COUNT;
 IF v_count = 0 THEN RAISE EXCEPTION 'invalid_nonce' USING ERRCODE = '22023'; END IF;
 ```
 
-`db/rpc.sql:552-563`. Expiry is a `WHERE` predicate rather than a sweep, so an
+`db/rpc.sql:695-705`. Expiry is a `WHERE` predicate rather than a sweep, so an
 expired row simply matches nothing, and the consume plus the upsert sit in one
 function body — one transaction, so a failed upsert rolls the consumption back.
 
 ### 10.1 The unhappy paths
 
-| Condition                       | Status  | Identifier                                              |
-| ------------------------------- | ------- | ------------------------------------------------------- |
-| Malformed JSON                  | 400     | **HTML**, no `ok` field — there is no error middleware  |
-| Body > 100 kB                   | 413     | HTML                                                    |
-| Schema failure                  | 400     | `error` is a JSON-stringified Zod issue array           |
-| Invalid claim term              | 400     | `invalid_claim_term` with `details[]`                   |
-| Term too deep or large          | 400     | `term exceeds maximum nesting depth of 16`              |
-| Deadline passed                 | 400     | `deadline_passed`                                       |
-| Path names no node              | 400     | `claim_path_not_found`                                  |
-| Wrong phase for a verdict       | 400     | `round_not_verifiable` (Postgres, `severity` preserved) |
-| Reporter not a judge            | 400     | `reporter_role_denied`                                  |
-| DB unreachable, verdict path    | **503** | `database_unavailable`                                  |
-| DB unreachable, submission path | **200** | `{ok:true, note:'db_fallback'}` — a fabricated id       |
-| Memory verdict store full       | 503     | `verdict_capacity_reached`                              |
-| Rate limit                      | 429     | `rate_limited`                                          |
-| Research quota                  | 429     | `quota_exceeded`                                        |
-| No DB in production             | 503     | `service_unavailable`                                   |
+| Condition                 | Status | Identifier                                              |
+| ------------------------- | ------ | ------------------------------------------------------- |
+| Malformed JSON            | 400    | **HTML**, no `ok` field — there is no error middleware  |
+| Body > 100 kB             | 413    | HTML                                                    |
+| Schema failure            | 400    | `error` is a JSON-stringified Zod issue array           |
+| Invalid claim term        | 400    | `invalid_claim_term` with `details[]`                   |
+| Term too deep or large    | 400    | `term exceeds maximum nesting depth of 16`              |
+| Deadline passed           | 400    | `deadline_passed`                                       |
+| Path names no node        | 400    | `claim_path_not_found`                                  |
+| Wrong phase for a verdict | 400    | `round_not_verifiable` (Postgres, `severity` preserved) |
+| Reporter not a judge      | 400    | `reporter_role_denied`                                  |
+| DB unreachable, any write | 503    | `database_unavailable`, with `outcome`                  |
+| Memory verdict store full | 503    | `verdict_capacity_reached`                              |
+| Rate limit                | 429    | `rate_limited`                                          |
+| Research quota            | 429    | `quota_exceeded`                                        |
+| No DB in production       | 503    | `service_unavailable`                                   |
 
-The two rows in bold contrast are the whole argument of §5. The verdict path
-fails loudly when its database is gone; the submission path returns `200
-{ok:true}` with a fabricated `submission_id` and a `note` field as the only hint
-that nothing was persisted.
+That row is the argument of §5. Until #257 it had two rows: the verdict path
+failed loudly when its database was gone, and the submission path returned `200
+{ok:true}` with a fabricated `submission_id` and a `note: 'db_fallback'` as the
+only hint that nothing was persisted. The `outcome` field says what the client may
+assume: `not_stored` (the statement never reached the database) or `unknown` (it
+may have committed). `docs/LocalDB.md` lists, per endpoint, whether a retry is
+safe.
 
 ### 10.2 The fallback bug class
 
@@ -984,21 +987,25 @@ fall back to memory, so a **phase rejection** returned a fabricated `vote_id`
 with HTTP 200 — the database had answered perfectly well and said no, and the
 caller was told yes.
 
-The fix is the `err.severity` test, now applied in exactly two places:
-`VoteService.castFinalVote` and `PostgresVerdictStore`. By the project's own
-standard, these remain open instances of the same bug:
+The `err.severity` test fixed that in `VoteService.castFinalVote` and
+`PostgresVerdictStore` first. Five more sites kept the same bug until #257
+applied one classifier (`server/database-unavailable.js`) to every write:
 
-| Site                           | Fabricates          | Under                                                    |
-| ------------------------------ | ------------------- | -------------------------------------------------------- |
-| `VoteService.castContinueVote` | `vote_id`           | `200 {ok:true, note:'db_fallback'}`                      |
-| `SubmissionService.create`     | `submission_id`     | `200` — carve-out is a **message regex**, not `severity` |
-| `ScoringService.submitScore`   | `score_id`          | `200` — swallows the "only judges" rejection             |
-| `RoomService.createRoom`       | `room_id`           | `200`                                                    |
-| `AuthService.setFingerprint`   | an identity binding | `200` — survives only until restart                      |
+| Site                           | Fabricated          | Under                                                     |
+| ------------------------------ | ------------------- | --------------------------------------------------------- |
+| `VoteService.castContinueVote` | `vote_id`           | `200 {ok:true, note:'db_fallback'}`                       |
+| `SubmissionService.create`     | `submission_id`     | `200` — carve-out was a **message regex**, not `severity` |
+| `ScoringService.submitScore`   | `score_id`          | `200` — swallowed the "only judges" rejection             |
+| `RoomService.createRoom`       | `room_id`           | `200`                                                     |
+| `AuthService.setFingerprint`   | an identity binding | `200` — survived only until restart                       |
 
-In summary, db8 has a clear and well-argued policy about when degrading to
-memory is honest, and it is currently applied to two of the seven places that
-need it.
+Reads still fall back to memory when the database fails (`/state`, `scores.get`,
+`reputation.get`); that is tracked as
+[#259](https://github.com/flyingrobots/db8/issues/259).
+
+In summary, db8 has a clear policy about when degrading to memory is honest: only
+by configuration, never on failure. Every write follows it; some reads do not
+yet.
 
 ---
 
@@ -1068,13 +1075,15 @@ so it is the table **owner**, and in the default local setup that role is a
 superuser with `rolbypassrls`; and views default to `SECURITY DEFINER`, so they
 evaluate base tables as the view owner too.
 
-The view `/state` actually reads, `submissions_with_flags_view`, has no phase
-filter of its own — its `CASE` handles attribution masking, and the phase
-predicate only suppresses _flags_. So nothing is left holding the line.
+The view `/state` reads, `submissions_with_flags_view`, has no phase filter of
+its own — its `CASE` handles attribution masking, and the phase predicate only
+suppresses _flags_. Since #226, `RoomService` filters by phase itself, so `/state`
+no longer returns an unpublished submission. The database still does not hold the
+line for any other reader.
 
-Verified directly rather than inferred: with a round still in `submit`, a second
-debater querying exactly the statement `RoomService` issues gets the opponent's
-row back, `content` included. Simultaneous submission is the property the format
+Verified directly before #226: with a round still in `submit`, a second debater
+querying exactly the statement `RoomService` then issued got the opponent's row
+back, `content` included. Simultaneous submission is the property the format
 exists to provide, so this is arguably the most consequential defect in the
 system — and the fix is small: set `FORCE ROW LEVEL SECURITY`, and give the
 application a non-owner role.
@@ -1168,10 +1177,9 @@ and a verdict binds to a node. The **semantic** half — non-factive projection,
 content addressing, vocabulary alignment — is complete, specified, thoroughly
 tested, and unreferenced.
 
-**Specified but unreachable:** strict predicate vocabularies. The validator
-accepts an `opts.predicates` set and enforces it, but rooms have no `predicates`
-config key and `room_create` never persists arbitrary config, so it cannot be
-turned on.
+**Strict predicate vocabularies** are now reachable: `room_create` stores a
+room's `predicates` (#200), and `submission.create` validates each claim term
+against them (#244).
 
 ---
 
