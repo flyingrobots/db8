@@ -59,6 +59,13 @@ describe('room configuration survives the schema boundary', () => {
     expect(() => RoomConfig.parse({ submit_minutes: 1441 })).toThrow();
   });
 
+  it('rejects a repeated reputation tag', () => {
+    // reputation_update_round applies a round once per listed tag, so a repeated
+    // tag would apply each Elo change to that tag twice.
+    expect(RoomConfig.parse({ tags: ['science', 'policy'] }).tags).toEqual(['science', 'policy']);
+    expect(() => RoomConfig.parse({ tags: ['science', 'science'] })).toThrow(/tags must be unique/);
+  });
+
   it('still accepts a room created with no configuration at all', () => {
     expect(RoomCreate.parse(base).cfg).toBeUndefined();
   });
