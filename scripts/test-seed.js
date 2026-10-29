@@ -4,13 +4,15 @@
 
 export const DEFAULT_SEED = 20260816;
 
-// An unset or empty VITEST_SEED is the pinned default. Anything else must be an
-// integer: Number('abc') is NaN, and a NaN seed is no reproducer.
+// An unset or empty VITEST_SEED is the pinned default. Anything else must be a
+// safe integer: Number('abc') is NaN, a long enough digit string is Infinity,
+// and above 2^53 two different strings give one seed. None is a reproducer.
 export function resolveSeed(env = process.env) {
   const raw = env.VITEST_SEED;
   if (raw === undefined || raw === '') return DEFAULT_SEED;
-  if (!/^-?\d+$/.test(raw)) {
+  const seed = /^-?\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(seed)) {
     throw new Error(`VITEST_SEED must be an integer, got ${JSON.stringify(raw)}`);
   }
-  return Number(raw);
+  return seed;
 }

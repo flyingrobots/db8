@@ -47,6 +47,15 @@ describe('vitest-run logs the seed before Vitest starts', () => {
     expect(r.stdout).toBe('');
   });
 
+  it('refuses a seed outside the safe integer range', () => {
+    // '9'.repeat(400) is all digits, and Number() makes it Infinity.
+    for (const seed of ['9'.repeat(400), '9007199254740993']) {
+      const r = run({ VITEST_SEED: seed });
+      expect(r.status, seed).toBe(2);
+      expect(r.stderr).toMatch(/VITEST_SEED must be an integer/);
+    }
+  });
+
   it('refuses to start the real Vitest from inside a Vitest run', () => {
     const r = run({ VITEST: 'true' }, '');
     expect(r.status).toBe(2);
