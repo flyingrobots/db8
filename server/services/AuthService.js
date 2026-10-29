@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { queryOrUnavailable } from '../database-unavailable.js';
 
 const execFileP = promisify(execFile);
 
@@ -117,15 +118,14 @@ export class AuthService {
     }
 
     if (this.pool) {
-      try {
-        const r = await this.pool.query(
-          'SELECT participant_fingerprint_set($1::uuid,$2::text) AS fingerprint',
-          [participantId, publicKeyB64 ? String(publicKeyB64) : String(normalized)]
-        );
-        return String(r.rows[0].fingerprint);
-      } catch (err) {
-        console.error('[AuthService] DB error, falling back to memory:', err.message);
-      }
+      // A binding kept only in memory would stop being enforced on restart, so
+      // an outage is reported instead (#257).
+      const r = await queryOrUnavailable(
+        this.pool,
+        'SELECT participant_fingerprint_set($1::uuid,$2::text) AS fingerprint',
+        [participantId, publicKeyB64 ? String(publicKeyB64) : String(normalized)]
+      );
+      return String(r.rows[0].fingerprint);
     }
     this.memParticipantFingerprints.set(participantId, normalized);
     return normalized;

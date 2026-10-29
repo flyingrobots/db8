@@ -14,6 +14,11 @@ import { VoteService } from './services/VoteService.js';
 import { ScoringService } from './services/ScoringService.js';
 import { cors } from './cors.js';
 import { VerificationService } from './services/VerificationService.js';
+import {
+  DatabaseUnavailableError,
+  queryOrUnavailable,
+  sendIfDatabaseUnavailable
+} from './database-unavailable.js';
 import { createVerdictStore } from './adapters/ConfiguredVerdictStore.js';
 
 // Routers
@@ -34,8 +39,10 @@ app.use(express.json());
 app.use(rateLimitStub({ enforce: true }));
 app.use(express.static('public'));
 
-// Global DB Ref to allow swapping (test support)
-const dbRef = { pool: null };
+// Global DB Ref to allow swapping (test support). `configured` records that a
+// database was asked for, so a pool that failed to initialize is an outage
+// (503 database_unavailable), not memory mode by configuration (#257).
+const dbRef = { pool: null, configured: Boolean(config.databaseUrl) };
 
 if (config.databaseUrl) {
   try {
@@ -46,11 +53,19 @@ if (config.databaseUrl) {
   }
 }
 
-export function __setDbPool(pool) {
+export function __setDbPool(pool, { configured = Boolean(pool) } = {}) {
   dbRef.pool = pool;
+  // A test that clears the pool asks for memory mode by configuration, unless
+  // it says the database was configured and its pool failed to initialize.
+  dbRef.configured = configured;
 }
 
 function requireDbInProduction(req, res, next) {
+  // A database was configured and its pool did not initialize: nothing can be
+  // stored, and memory is not a substitute (#257).
+  if (dbRef.configured && !dbRef.pool) {
+    return sendIfDatabaseUnavailable(res, new DatabaseUnavailableError('not_stored'));
+  }
   if (!dbRef.pool && process.env.NODE_ENV === 'production') {
     return res
       .status(503)
@@ -63,7 +78,7 @@ function requireDbInProduction(req, res, next) {
   next();
 }
 
-// Global state for in-memory fallbacks
+// Global state for memory mode (no database configured)
 const memSubmissions = new LRUMap(1000);
 const memSubmissionIndex = new LRUMap(1000);
 const memFlags = new LRUMap(1000);
@@ -75,6 +90,8 @@ const memRooms = new LRUMap(100);
 const memRoomNonces = new LRUMap(500);
 const memVotes = new LRUMap(1000);
 const memVoteTotals = new LRUMap(100);
+// Final ballots in memory mode, one per voter per round (as final_votes).
+const memFinalVotes = new LRUMap(1000);
 const memParticipantFingerprints = new LRUMap(1000);
 const memAuthChallenges = new LRUMap(500);
 
@@ -92,9 +109,10 @@ const roomService = new RoomService({
   memSubmissions,
   memFlags,
   memVoteTotals,
+  memFinalVotes,
   config
 });
-const voteService = new VoteService({ dbRef, memVotes, memVoteTotals });
+const voteService = new VoteService({ dbRef, memVotes, memVoteTotals, memFinalVotes });
 const scoringService = new ScoringService({ dbRef });
 // Composition root for verdict persistence. The service holds the rules; the
 // adapter chosen here decides where they are applied. Memory is a configured
@@ -133,7 +151,8 @@ const submissionService = new SubmissionService({
   config,
   memSubmissions,
   memSubmissionIndex,
-  validateAndConsumeNonceMemory
+  validateAndConsumeNonceMemory,
+  memRooms
 });
 
 // Helper for router mounting
@@ -192,20 +211,23 @@ app.post('/rpc/nonce.issue', requireDbInProduction, async (req, res) => {
     if (!round_id || !author_id)
       return res.status(400).json({ ok: false, error: 'missing_fields' });
     if (dbRef.pool) {
-      const r = await dbRef.pool.query(
+      const r = await queryOrUnavailable(
+        dbRef.pool,
         'select submission_nonce_issue($1::uuid,$2::uuid,$3::int) as nonce',
         [round_id, author_id, ttl]
       );
       return res.json({ ok: true, nonce: r.rows[0].nonce });
     }
 
-    // Memory fallback
+    // Memory mode: no database is configured (requireDbInProduction refuses a
+    // configured one whose pool is missing).
     const nonce = crypto.randomUUID();
     const issueKey = `${round_id}:${author_id}:${nonce}`;
     memIssuedNonces.set(issueKey, { expiresAt: Date.now() + ttl * 1000 });
 
-    return res.json({ ok: true, nonce, note: 'db_fallback' });
+    return res.json({ ok: true, nonce });
   } catch (err) {
+    if (sendIfDatabaseUnavailable(res, err)) return;
     return res.status(400).json({ ok: false, error: err.message });
   }
 });

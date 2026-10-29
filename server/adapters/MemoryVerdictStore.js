@@ -69,13 +69,13 @@ export class MemoryVerdictStore {
     // Idempotent on the same tuple, matching verify_submit's ON CONFLICT. A
     // repeat is not a new identity, so it is answered even when full: refusing
     // it would break idempotency for a client retrying after a timeout.
-    if (existing) return { id: existing.id, note: 'db_fallback' };
+    if (existing) return { id: existing.id };
 
     if (this.verdicts.size >= this.capacity) throw new Error('verdict_capacity_reached');
 
     const id = crypto.randomUUID();
     this.verdicts.set(key, { id, verdict: input.verdict, rationale: input.rationale });
-    return { id, note: 'db_fallback' };
+    return { id };
   }
 
   async summary(roundId) {

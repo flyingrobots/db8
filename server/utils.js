@@ -126,6 +126,11 @@ export function getPersistentSigningKeys() {
   if (fs.existsSync(privPath)) return adopt();
 
   if (fs.existsSync(pubPath)) {
+    // A starter that wins the race links its private key before it publishes
+    // the public half. So a public key seen after "no private key" can be that
+    // winner's, between our two checks; look for the private key again before
+    // refusing (#234). A public key with no private key at all still refuses.
+    if (fs.existsSync(privPath)) return adopt();
     throw new Error(
       `signing key missing: ${pubPath} exists but ${privPath} does not. A private key cannot ` +
         'be recovered from a public one; generating a fresh pair here would invalidate ' +

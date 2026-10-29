@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-02
+lastUpdated: 2026-10-26
 ---
 
 # Architecture
@@ -281,7 +281,11 @@ Server flow:
    - Verify ed25519: libsodium crypto_sign_verify_detached.
    - Enforce that the signer principal/fingerprint maps to author_id.
 1. Check deadline and RLS.
-1. Enforce idempotency via (round_id, author_id, client_nonce) uniqueness.
+1. Enforce one submission per (round_id, author_id) ([#237](https://github.com/flyingrobots/db8/issues/237)).
+   A replay of the same nonce and document returns the same id. A different
+   document under the current nonce is refused with `409 nonce_reused`, and
+   the stored row is unchanged ([#236](https://github.com/flyingrobots/db8/issues/236)).
+   A fresh nonce replaces the document under the same id and bumps `version`.
 1. Insert row (status = submitted), persist signature fields.
 1. Return {ok, submission_id, canonical_sha256}.
 
@@ -579,6 +583,8 @@ RLS (sketch)
 
 Keep all business logic in SQL so web/CLI/agents are thin.
 
+The SQL below is the design sketch. The functions that run are in `db/rpc.sql`, and their signatures and rules can differ from it.
+
 ```sql
 -- helper: get participant by session (JWT sub or provided fp)
 create or replace function me(room uuid, jwt_sub_in text, ssh_fp_in text)
@@ -612,18 +618,31 @@ end; $$ language plpgsql;
 create or replace function submission_upsert(
   room uuid, round_in uuid, author uuid, payload jsonb,
   canonical_sha text, sig_kind text, sig_b64 text, signer_fp text, jwt_sub_in
-  text
+  text, nonce text
 ) returns uuid as $$
-declare sid uuid;
+declare sid uuid; cur record;
 begin
+  select id, client_nonce, canonical_sha256 into cur from submissions
+   where round_id = round_in and author_id = author;
+  -- same nonce, same document: a replay; return the id and change nothing
+  if cur.client_nonce = nonce and cur.canonical_sha256 = canonical_sha then
+    return cur.id;
+  end if;
+  -- same nonce, different document: refused, the row is unchanged
+  if cur.client_nonce = nonce then
+    raise exception 'nonce_reused';
+  end if;
+  -- (db/rpc.sql also refuses a superseded nonce and a closed round)
+
   insert into submissions(round_id, author_id, content, claims, citations,
   status,
                           submitted_at, canonical_sha256, signature_kind,
-                          signature_b64, signer_fingerprint, jwt_sub)
+                          signature_b64, signer_fingerprint, jwt_sub,
+                          client_nonce)
   values (round_in, author,
           payload->>'content', payload->'claims', payload->'citations',
           'submitted', now(), canonical_sha, sig_kind, sig_b64, signer_fp,
-          jwt_sub_in)
+          jwt_sub_in, nonce)
   on conflict (round_id, author_id) do update
     set content = excluded.content,
         claims = excluded.claims,
@@ -635,7 +654,8 @@ begin
         signature_kind = sig_kind,
         signature_b64 = sig_b64,
         signer_fingerprint = signer_fp,
-        jwt_sub = jwt_sub_in
+        jwt_sub = jwt_sub_in,
+        client_nonce = nonce
   returning id into sid;
 
   return sid;
@@ -743,7 +763,7 @@ STATE: research_k      (tools on, no writes)      [timer T_research]
 
 Transitions (guards):
 
-- submit_k → verify_k: now() ≥ submit_deadline.
+- submit_k → verify_k: now() ≥ submit_deadline, or every debater in the room has submitted (implemented as `round_publish_due`, which publishes directly; [#229](https://github.com/flyingrobots/db8/issues/229)).
 - verify_k → published_k: all submissions.status ∈ {'verified','forfeit'} for
   round.
 - published*k → research*{k+1}: continue vote passed.
