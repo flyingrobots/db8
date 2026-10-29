@@ -1,10 +1,21 @@
 import crypto from 'node:crypto';
+import { queryOrUnavailable } from '../database-unavailable.js';
 
 /**
  * RoomService handles room lifecycle, state aggregation, and in-memory fallback management.
  */
 export class RoomService {
-  constructor({ dbRef, memRooms, memRoomNonces, memSubmissions, memFlags, memVoteTotals, config }) {
+  constructor({
+    dbRef,
+    memRooms,
+    memRoomNonces,
+    memSubmissions,
+    memFlags,
+    memVoteTotals,
+    memFinalVotes = new Map(),
+    config
+  }) {
+    this.memFinalVotes = memFinalVotes;
     this.dbRef = dbRef;
     this.memRooms = memRooms;
     this.memRoomNonces = memRoomNonces;
@@ -50,6 +61,8 @@ export class RoomService {
         const submissionsRes = await this.pool
           .query(
             `select id,
+                    round_id,
+                    idx,
                     author_id,
                     author_anon_name,
                     content,
@@ -79,6 +92,8 @@ export class RoomService {
 
           const transcript = submissionsRes.rows.map((row) => ({
             submission_id: row.id,
+            round_id: row.round_id,
+            round_idx: row.idx,
             author_id: row.author_id,
             author_anon_name: row.author_anon_name,
             content: row.content,
@@ -144,7 +159,9 @@ export class RoomService {
     ) {
       room.round.phase = 'published';
       room.round.published_at_unix = now;
-      const continueWindow = this.config?.continueWindowSec ?? 30;
+      // The room's own window first, as round_publish_due reads it (#228).
+      const continueWindow =
+        room.config?.continue_vote_seconds ?? this.config?.continueWindowSec ?? 30;
       room.round.continue_vote_close_unix = now + continueWindow;
     } else if (
       room.round.phase === 'published' &&
@@ -154,11 +171,22 @@ export class RoomService {
       // Tally continue votes
       const tally = this.memVoteTotals.get(roomId) || { yes: 0, no: 0 };
       if (tally.yes > tally.no) {
+        // The outgoing round has published; remember it so its submissions
+        // stay visible after the room moves on.
+        room.publishedRounds = new Set(room.publishedRounds).add(room.round.round_id);
+        // Keep each round's index, so transcript entries from earlier rounds
+        // still say which round they belong to.
+        room.roundIdx = new Map(room.roundIdx).set(room.round.round_id, room.round.idx);
         room.round = {
           round_id: crypto.randomUUID(),
           idx: room.round.idx + 1,
           phase: 'submit',
-          submit_deadline_unix: now + 300
+          // submit_minutes applies to every round, as in round_open_next (#228).
+          submit_deadline_unix:
+            now +
+            (room.config?.submit_minutes
+              ? room.config.submit_minutes * 60
+              : (this.config?.submitWindowSec ?? 300))
         };
         // Reset vote totals for the next round
         this.memVoteTotals.set(roomId, { yes: 0, no: 0 });
@@ -168,13 +196,24 @@ export class RoomService {
     }
 
     const tally = this.memVoteTotals.get(roomId) || { yes: 0, no: 0 };
+    // Blind submission (#226), failing closed: a submission is visible only if
+    // its round is known to have published. That is a round this room has moved
+    // past, or the current round once it is no longer in submit. A submission
+    // naming any other round id, or a room whose round has no id, shows nothing.
+    const published = new Set(room.publishedRounds);
+    if (room.round.round_id && room.round.phase !== 'submit') published.add(room.round.round_id);
     const transcript = Array.from(this.memSubmissions.entries())
-      .filter(([key]) => key.startsWith(`${roomId}:`))
+      .filter(([key, value]) => key.startsWith(`${roomId}:`) && published.has(value.round_id))
       .map(([, value]) => {
         const flags = this.memFlags.get(value.id);
         const count = flags ? flags.size : 0;
         return {
           submission_id: value.id,
+          round_id: value.round_id,
+          round_idx:
+            value.round_id === room.round.round_id
+              ? room.round.idx
+              : room.roundIdx?.get(value.round_id),
           author_id: value.author_id,
           content: value.content,
           canonical_sha256: value.canonical_sha256,
@@ -185,10 +224,84 @@ export class RoomService {
     return {
       ok: true,
       room_id: roomId,
-      round: { ...room.round, continue_tally: tally, transcript },
+      round: {
+        ...room.round,
+        continue_tally: tally,
+        final_tally: this._memoryFinalTally(room),
+        transcript
+      },
       flags: transcript
         .filter((s) => s.flag_count > 0)
         .map((s) => ({ submission_id: s.submission_id, flag_count: s.flag_count }))
+    };
+  }
+
+  _memoryFinalTally(room) {
+    let approves = 0;
+    let rejects = 0;
+    for (const ballot of this.memFinalVotes.values()) {
+      if (ballot.round_id !== room.round.round_id) continue;
+      if (ballot.approval) approves += 1;
+      else rejects += 1;
+    }
+    return { approves, rejects };
+  }
+
+  /**
+   * getRoom returns a room's topic, status, config and seats, or null if the
+   * room does not exist. Seats are ordered by seat number (agent_2 before
+   * agent_10).
+   */
+  async getRoom(roomId) {
+    let dbError = null;
+    if (this.pool) {
+      try {
+        const roomRes = await this.pool.query(
+          'SELECT id, title, status, config FROM rooms_view WHERE id = $1',
+          [roomId]
+        );
+        const row = roomRes.rows[0];
+        // No row is not proof the room is missing: one created in memory
+        // during an outage lives only there, so check memory before saying so.
+        if (!row) return this._memoryRoom(roomId);
+        const seatsRes = await this.pool.query(
+          `SELECT id, anon_name, role FROM participants_view
+            WHERE room_id = $1
+            ORDER BY length(anon_name), anon_name, id`,
+          [roomId]
+        );
+        return {
+          room_id: row.id,
+          topic: row.title,
+          status: row.status,
+          config: row.config || {},
+          participants: seatsRes.rows
+        };
+      } catch (err) {
+        console.error('[RoomService] DB error (getRoom), falling back to memory:', err.message);
+        dbError = err;
+      }
+    }
+
+    const room = this._memoryRoom(roomId);
+    // Memory holds only rooms created while the database was unavailable.
+    // After a failed query, "not in memory" is not "does not exist": say so
+    // rather than reporting a real room as missing.
+    if (!room && dbError) throw new Error('database_unavailable', { cause: dbError });
+    return room;
+  }
+
+  _memoryRoom(roomId) {
+    // Rooms that getRoomState invents on the fly have no seats; they were never
+    // created, so they are not reported here.
+    const room = this.memRooms.get(roomId);
+    if (!room?.participants) return null;
+    return {
+      room_id: roomId,
+      topic: room.topic,
+      status: room.status,
+      config: room.config,
+      participants: room.participants.map(({ id, anon_name, role }) => ({ id, anon_name, role }))
     };
   }
 
@@ -197,32 +310,47 @@ export class RoomService {
    */
   async createRoom({ topic, cfg, client_nonce }) {
     if (this.pool) {
-      try {
-        const r = await this.pool.query('SELECT room_create($1,$2,$3) AS id', [
-          topic,
-          JSON.stringify(cfg || {}),
-          client_nonce
-        ]);
-        return { room_id: r.rows[0].id };
-      } catch (err) {
-        console.error('[RoomService] DB error (createRoom), falling back to memory:', err.message);
-      }
+      // An outage is a DatabaseUnavailableError: a room kept only in memory
+      // would vanish on restart with its seats and rounds (#257).
+      const r = await queryOrUnavailable(this.pool, 'SELECT room_create($1,$2,$3) AS id', [
+        topic,
+        JSON.stringify(cfg || {}),
+        client_nonce
+      ]);
+      return { room_id: r.rows[0].id };
     }
 
-    if (this.memRoomNonces.has(client_nonce)) {
+    // Only a real nonce makes room.create idempotent. Without one, room_create
+    // stores NULL, which never conflicts; keying memory on `undefined` made
+    // every nonce-less create return the first such room.
+    if (client_nonce && this.memRoomNonces.has(client_nonce)) {
       return { room_id: this.memRoomNonces.get(client_nonce) };
     }
 
     const roomId = crypto.randomUUID();
+    // Seed seats the way room_create does (agent_1..agent_N, all debaters), so
+    // memory mode can answer room.get with the same shape as the database.
+    const seats = cfg?.participant_count ?? 4;
     this.memRooms.set(roomId, {
       topic,
+      status: 'active',
+      // The config the room was created with, as room_create stores it (#200).
+      config: { ...cfg },
+      participants: Array.from({ length: seats }, (_, i) => ({
+        id: crypto.randomUUID(),
+        anon_name: `agent_${i + 1}`,
+        role: 'debater'
+      })),
       round: {
+        // Without an id, /state could never name this round, and the blind
+        // submission filter could never show its submissions.
+        round_id: crypto.randomUUID(),
         idx: 0,
         phase: 'submit',
         submit_deadline_unix: Math.floor(Date.now() / 1000) + (cfg?.submit_minutes || 60) * 60
       }
     });
-    this.memRoomNonces.set(client_nonce, roomId);
-    return { room_id: roomId, note: 'db_fallback' };
+    if (client_nonce) this.memRoomNonces.set(client_nonce, roomId);
+    return { room_id: roomId };
   }
 }

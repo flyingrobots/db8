@@ -12,6 +12,7 @@ import {
 } from '../schemas.js';
 import canonicalizer from '../canonicalizer.js';
 import { sha256Hex, log } from '../utils.js';
+import { sendIfDatabaseUnavailable } from '../database-unavailable.js';
 
 export function createAuthRouter({ authService, rateLimitStub, requireDbInProduction, config }) {
   const router = express.Router();
@@ -73,6 +74,7 @@ export function createAuthRouter({ authService, rateLimitStub, requireDbInProduc
       });
       return res.json({ ok: true, fingerprint });
     } catch (err) {
+      if (sendIfDatabaseUnavailable(res, err)) return;
       const msg = String(err?.message || '');
       if (/participant_not_found/.test(msg))
         return res.status(404).json({ ok: false, error: 'participant_not_found' });

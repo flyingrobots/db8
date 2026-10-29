@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-08-16
+lastUpdated: 2026-10-29
 ---
 
 # AGENTS.md

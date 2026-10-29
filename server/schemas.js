@@ -62,31 +62,39 @@ export const ContinueVote = z.object({
   client_nonce: z.string().min(8)
 });
 
-// Room configuration, as stored in `rooms.config`.
+// Room configuration, stored as `rooms.config` by room_create (#200).
 //
-// Every key here has a reader somewhere else, and each was unreachable until
-// `room_create` began persisting this object at all: Zod strips undeclared
-// properties, so a key absent from this schema could never arrive even once the
-// SQL was fixed. Adding a key here without a reader is how the column starts
-// collecting fiction, so each one names the code that consumes it.
+// Strict: an undeclared key is a 400, not a setting that is silently dropped,
+// so a typo such as `atribution_mode` is an error the caller can see. Each key
+// names the code that reads it; a key without a reader does not belong here.
 export const RoomConfig = z
   .object({
-    // Seats the roster and sets round 0's deadline — db/rpc.sql room_create.
+    // Seats the roster — db/rpc.sql room_create.
     participant_count: z.number().int().min(1).max(64).optional(),
+    // The submit window of every round, not only round 0 (#228).
     submit_minutes: z.number().int().min(1).max(1440).optional(),
-    // Masks author identity in submissions_view — db/rpc.sql.
-    attribution_mode: z.enum(['open', 'masked']).optional(),
-    // Per-round fetch budget — server/routes/research.js.
+    // The continue-vote window of every round, in seconds (#228); 30 if absent.
+    continue_vote_seconds: z.number().int().min(10).max(3600).optional(),
+    // Research fetches allowed per participant per round; 0 or absent means
+    // no limit (server/routes/research.js).
     max_fetches_per_round: z.number().int().min(0).max(1000).optional(),
-    // Strict predicate vocabulary — validateTerm(term, { predicates }).
-    // Same snake_case shape the validator enforces on a claim's predicate, so a
-    // room cannot declare a vocabulary containing predicates no claim could use.
+    // Read by submissions_view: 'masked' hides authors during submit.
+    attribution_mode: z.enum(['masked', 'real']).optional(),
+    // Opt-in strict predicate vocabulary (docs/specs/ClaimTerms.md). Same
+    // snake_case shape the validator enforces on a claim's predicate.
     predicates: z
-      .array(z.string().regex(/^[a-z][a-z0-9_]*$/, 'predicate must be snake_case'))
+      .array(z.string().regex(/^[a-z][a-z0-9_]*$/, 'predicates must be snake_case'))
       .min(1)
+      .max(256)
       .optional(),
-    // Per-tag reputation — db/rpc.sql reputation_update_round.
-    tags: z.array(z.string().min(1)).optional()
+    // Per-tag reputation — db/rpc.sql reputation_update_round. Unique: the
+    // update applies each round once per listed tag, so a repeated tag would
+    // apply it twice.
+    tags: z
+      .array(z.string().min(1).max(64))
+      .max(32)
+      .refine((tags) => new Set(tags).size === tags.length, 'tags must be unique')
+      .optional()
   })
   .strict();
 
@@ -94,6 +102,10 @@ export const RoomCreate = z.object({
   topic: z.string().min(3),
   cfg: RoomConfig.optional(),
   client_nonce: z.string().min(8).optional()
+});
+
+export const RoomGet = z.object({
+  room_id: z.guid()
 });
 
 export const SubmissionFlag = z.object({

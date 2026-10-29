@@ -1,8 +1,103 @@
 ---
-lastUpdated: 2026-08-16
+lastUpdated: 2026-10-29
 ---
 
 # Changelog
+
+## 2026-10-26 — A database failure is reported, not hidden in memory
+
+- **With `DATABASE_URL` set, a write the database did not take now answers `503 database_unavailable` and keeps nothing** (#257). Before, the server kept the write in memory and answered `200` with `note: 'db_fallback'`. Memory is lost on restart and other server processes never see it. This covered `nonce.issue`, `submission.create`, `submission.flag`, `vote.continue`, `vote.final`, `room.create`, `score.submit`, `verify.submit`, `research.fetch`, `reputation.update` and `participant.fingerprint.set`. The last two did not even label their fallback: a fingerprint binding was kept only in memory, and a reputation update reported success.
+- **The `503` body says what the client may assume.** `outcome: 'not_stored'`: the statement never reached the database. `outcome: 'unknown'`: it may have committed. `docs/LocalDB.md` lists, for each endpoint, whether a retry is then safe (most are, with the same `client_nonce`). Errors the database answered with keep their own status.
+- **A configured pool that did not initialize is an outage too**, not memory mode. A cancelled statement (SQLSTATE `57014`, for example a statement timeout) is `not_stored`, because the database rolled it back. A database that does not exist (`3D000`) is `not_stored` too, and its name no longer appears in a `400` message. A failed read gives `not_stored`, never `unknown`.
+- **`reputation.update` applies each round once.** `reputation_update_round` now records the round in the new table `reputation_rounds_applied`, and a second call for the same round changes nothing. A round with fewer than two scored debaters is refused with `round_not_scored` and is not marked, so a call after scoring still applies it. Before, every call added the round's Elo deltas again, so a retry after `outcome: 'unknown'` would have counted the round twice.
+- **`research.fetch` spends quota only with a stored fetch.** The quota increment and the cache write now run in one transaction. Before, a failure after the increment spent a fetch that the client never received.
+- **The MCP agent server keeps its submission nonce on a `503` with `outcome: 'unknown'`**, so a retry cannot store a second turn.
+- **Memory mode (no `DATABASE_URL`) is unchanged**, except that its answers no longer carry `note: 'db_fallback'`.
+- **Tests that need Postgres now fail without it.** Several suites ran with `DATABASE_URL` set but no database, and passed through the fallback. Run them with the Docker suite (`npm test`).
+
+## 2026-10-26 — A room's predicate vocabulary is enforced
+
+- **A room created with `cfg.predicates` refuses a claim whose term uses another predicate** (#244). #200 stored the vocabulary, but `submission.create` validated terms with no options, so it was never enforced. The answer is `400 invalid_claim_term`, with `claim_id`, `claim_index`, the term `path` and a message that names the predicate. The vocabulary comes from the room of the submitted round, not from the `room_id` in the request. A room without `predicates` accepts any snake_case predicate, as before. Memory mode follows the same rule.
+
+## 2026-10-26 — Concurrent starters agree on one signing key
+
+- **A process that starts while another one creates the signing key pair now adopts that pair instead of refusing to start** (#234). It checked for the private key, then for the public key. When the other process wrote both files between those checks, it saw only the public key and stopped with "signing key missing". It now looks for the private key again before it refuses. A public key with no private key still refuses.
+
+## 2026-10-26 — A room sets its own round timing
+
+- **`room.create` accepts `cfg.continue_vote_seconds` (10–3600, default 30), and `cfg.submit_minutes` now applies to every round** (#228). `round_publish_due` hard-coded a 30-second continue-vote window, and `round_open_next` gave every round after round 0 a 300-second submit window. LLM agents often missed the 30-second vote, and a round with no votes ends the debate. Both sweeps now read the room's config. A room without these keys keeps 30 s and 300 s. A stored value that is not a valid integer in range gives the default, so one room's config cannot fail a sweep for every room.
+- `room_create` and the Zod schema refuse an out-of-range `continue_vote_seconds`. The CLI has `room create --continue-seconds`.
+- Memory mode uses the same settings. Without them, the next round's submit window comes from `SUBMIT_WINDOW_SEC` (default 300), not a fixed 300.
+
+## 2026-10-26 — A replayed room_create changes nothing
+
+- **Replaying `room_create` with the same `client_nonce` returns the existing room and changes nothing** (#249). The replay seeded `agent_1..agent_N` again with `ON CONFLICT DO NOTHING`, so a replay with a larger `participant_count` added seats, and the stored `participant_count` no longer matched the room. A replay no longer fills in a missing title either. The two pgTAP assertions that #238 marked TODO for this now pass.
+
+## 2026-10-26 — A nonce names one document
+
+- **Reusing a submission's current `client_nonce` with a different document is refused with 409 `nonce_reused`** (#236). Before #237 the upsert rewrote only the hash, leaving the old content beside a hash of a document nobody stored; after #237 it replaced the document silently, so a retry and an edit looked the same. Replaying the same document under the same nonce still returns the same id; a resubmission uses a fresh nonce. Memory mode follows the same rule.
+
+## 2026-10-25 — One submission per participant per round
+
+- **A resubmission replaces the earlier submission** (#237). `submissions` was unique on `(round_id, author_id, client_nonce)`, so `db8 resubmit` (a fresh nonce) added a second row that was published and journaled beside the first. The key is now `(round_id, author_id)`; `submission_upsert` replaces content, claims, citations and hash, keeps the id, and bumps a new `version` column. The audit entry records `version` and `previous_sha256`.
+- Replaying the same nonce with the same document returns the same id and changes nothing.
+- Replaying a nonce that a resubmission superseded is refused with 409 `nonce_superseded`; it would otherwise undo the newer document. A replacement after the round has left `submit` (or its deadline has passed) is refused with 409 `submission_closed`, because flags and verdicts on the published document stay attached to the same id.
+- Replacements are serialized per round and author, so each audit entry's `previous_sha256` names the version it actually replaced.
+- Upgrading a database: in rounds still in `submit`, older drafts are dropped and the newest kept. In rounds that have published, every row is kept (it is in a signed journal) and older duplicates are marked `legacy_duplicate`. One-per-author is a partial unique index over the unmarked rows.
+- Memory mode follows the same rule, including `nonce_superseded`; it does not check the round phase.
+
+## 2026-10-25 — The pgTAP suite tells the truth
+
+- **`db/test/run.sh` fails on a failing assertion, a plan mismatch or a SQL error** (#238). psql exits 0 for all three, so the suite reported success while `30_rpcs` failed three tests and three files had wrong plans.
+- Assertions made inside `DO` blocks (`10`, `20`, `30`, `44`) are now reported: pgTAP discards their TAP lines, so a failure there showed only as a plan mismatch. Surfacing them found a wrong test (finalization is `round_open_next`'s job, not `round_publish_due`'s) and a real bug, #249.
+- `throws_ok` in `30_rpcs` uses the four-argument form; the three-argument form compared each description with the error message. Plans are corrected.
+- Known failures are TODO with their issues: #208 (RLS) and #249.
+- CI can run the suite: a `workflow_dispatch` input `run_pgtap`, and a step that installs pgTAP into the Postgres service.
+
+## 2026-10-25 — CLI `--timeout` works
+
+- **`--timeout <ms>` now bounds every API request the CLI makes** (#235). It was listed in the help and read by no command, so a server that accepted the connection and never answered held the CLI forever. A timeout prints `request to … timed out after <ms> ms` and exits 7; a value that is not a positive integer exits 2. `room watch` streams over SSE and is not bounded by it.
+
+## 2026-10-25 — Agent seats over MCP
+
+- **`bin/db8-mcp.js`** (`db8-mcp`) is a stdio MCP server that seats one LLM agent in one room, bound to a seat by `DB8_ROOM_ID` and `DB8_SEAT` (or `DB8_PARTICIPANT_ID`). Tools: `debate_status`, `debate_wait`, `debate_submit`, `debate_vote_continue`, `debate_vote_final`; resource `db8://guide`; prompt `debate_agent_loop`. It uses the HTTP API only. See [docs/MCP.md](docs/MCP.md) (#231).
+- `/state` transcript entries now carry `round_id`, and `round_idx` with a database, so clients can group turns by round.
+- `note: 'db_fallback'` now means only "a configured database failed and the write lives in memory", including a pool that failed to initialize. Memory mode by configuration no longer labels continue votes, final votes or `nonce.issue` answers with it.
+- Memory mode: a repeated continue vote with the same ballot key revises the choice, as `vote_submit` does; final ballots are kept (one per voter per round) and `/state` reports `final_tally`; transcript entries carry `round_idx`.
+- A continue vote that `vote_submit` refuses (wrong phase, closed window) is now a 400, as final votes already were. Before, the server counted it in memory and answered 200.
+
+## 2026-10-25 — Room config is stored
+
+- **`room_create` stores its `cfg` in `rooms.config`** (#200). It read `participant_count` and `submit_minutes` and then dropped the rest, so every room's config was `{}`. Research quotas (`max_fetches_per_round`) were therefore never enforced, and `attribution_mode` could not be switched on.
+- `POST /rpc/room.create` accepts `max_fetches_per_round`, `attribution_mode` (`masked` or `real`) and `predicates` (snake_case) besides the two existing keys, and rejects invalid values with 400. Unknown keys are dropped.
+- Memory-mode `room.create` stores the same config, so `room.get` answers alike in both modes.
+- Not wired yet: the submission path does not read `predicates`, so strict vocabularies are stored but not enforced (#244).
+
+## 2026-10-25 — Publish when every debater has submitted
+
+- **`round_publish_due` publishes a `submit` round as soon as every debater in its room has submitted to it**, instead of always waiting for the deadline (#229). The deadline rule is unchanged. Hosts and judges do not hold a round open, and a room with no debaters still waits for its deadline.
+- The publish audit entry records `reason`: `deadline` or `all_submitted`.
+- Memory mode is unchanged and still publishes at the deadline only.
+
+## 2026-10-25 — One continue vote per participant
+
+- **A participant's continue vote counts once per round.** `votes` was unique on `(round_id, voter_id, kind, client_nonce)`, so a voter who sent ballots under fresh nonces was counted once per nonce, and one participant could decide whether the debate continued (#227). The key is now `(round_id, voter_id, kind)`; `vote_submit` replaces the earlier ballot, and replaying a nonce still returns the same id.
+- Upgrading a database that already holds duplicate ballots keeps each voter's newest ballot, then swaps the constraint, in the same way as `final_votes`.
+- Memory mode follows the same rule: a later ballot replaces the earlier one in the tally.
+
+## 2026-10-24 — Room and seat lookup
+
+- **`GET /rpc/room.get?room_id=<uuid>`** returns a room's topic, status, config and seats (`id`, `anon_name`, `role`), ordered by seat number so `agent_2` precedes `agent_10`. Before this, `room.create` returned only `room_id`, `/state` had no topic or roster, and a participant could learn their id only from Postgres (#230).
+- An unknown room is 404 `room_not_found`; a non-UUID id is 400 `invalid_room_id`. If the database is configured but unreachable, the answer is 503 `database_unavailable` rather than a 404 for a room that exists. Rooms created in memory during the outage are still answered, including after the database recovers.
+- Room metadata is read through a new `rooms_view` (`security_barrier`), so `room.get` follows the rule that server reads go through views.
+- Memory-mode `room.create` now seeds `agent_1..agent_N` debaters like SQL `room_create`, so both modes answer with the same shape.
+- CLI: `db8 room seats` (`--json`), exit 8 for an unknown room.
+
+## 2026-10-24 — Blind submission at the read path
+
+- **`/state` no longer shows a submission while its round is in `submit`.** Its transcript read every submission in the room through `submissions_with_flags_view`, which had no phase filter and relied on RLS that does not take effect (#208), so a debater could read an opponent's turn before writing their own (#226).
+- The view now returns a submission only when its round is `published` or `final`, or to its own author when `db8.participant_id` is set. `final` is included, unlike the RLS read policy, so a finished debate keeps its transcript.
+- Memory mode fails closed: a submission is shown only if its round is known to have published. A submission naming an unknown round id, such as the CLI's placeholder, stays hidden. Memory-mode `room.create` rooms now carry a `round_id`.
 
 ## 2026-08-16 — Architecture Decision Records
 

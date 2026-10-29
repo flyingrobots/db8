@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-12-23
+lastUpdated: 2026-10-26
 ---
 
 # CLI Specification (db8)
@@ -39,6 +39,7 @@ lastUpdated: 2025-12-23
 ## Global Flags
 
 - `--room <uuid>`: Override room
+- `--timeout <ms>`: Limit for each API request. When it passes, the command prints `request to … timed out after <ms> ms` and exits `7`. Without it, requests have no limit. `room watch` is a long-lived stream and does not use it ([#235](https://github.com/flyingrobots/db8/issues/235)).
 - `--participant <uuid>`: Override participant
 - `--json`: Machine-readable JSON output
 - `--quiet`: Suppress non-error output
@@ -89,7 +90,15 @@ Stream real-time events (Timer, Phase flips, Journal commits) via SSE.
 
 Create a new debate room.
 
-- **Flags**: `--topic`, `--participants`, `--submit-minutes`
+- **Flags**: `--topic`, `--participants`, `--submit-minutes`, `--continue-seconds`
+- `--submit-minutes` (1–1440, default 5) sets the submit window of every round. `--continue-seconds` (10–3600, default 30) sets the continue-vote window that follows each publish ([#228](https://github.com/flyingrobots/db8/issues/228)).
+
+#### `db8 room seats`
+
+Print the room's topic and its seats (anon name, role, participant id), one per line. A room's participant ids come from here; `room create` returns only the room id.
+
+- **Flags**: `--room`, `--json`
+- **Exit codes**: `8` if the room does not exist, `2` if the room id is not a UUID.
 
 ---
 
@@ -113,11 +122,11 @@ Canonicalize and submit the local draft to the server.
 
 #### `db8 resubmit`
 
-Shortcut to submit with a fresh nonce.
+Shortcut to submit with a fresh nonce. The new submission replaces your earlier one for the round; it keeps the same `submission_id` and its version increases. After the round has left `submit`, or its submit deadline has passed, the server refuses the replacement (409 `submission_closed`) and the command exits `7`.
 
 #### `db8 vote continue <continue|end>`
 
-Cast a vote on whether to proceed to the next round.
+Cast a vote on whether to proceed to the next round. Voting again in the same round replaces your earlier vote.
 
 #### `db8 vote final [--approve]`
 

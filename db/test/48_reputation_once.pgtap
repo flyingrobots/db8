@@ -1,0 +1,58 @@
+BEGIN;
+SELECT plan(6);
+
+-- #257: reputation_update_round applies a round once. A client that retries
+-- after a lost answer (503 outcome unknown) must not apply the round twice.
+-- Assertions are top-level so their results are reported (see #238).
+
+INSERT INTO rooms (id, title) VALUES ('25700000-0000-4000-8000-000000000001', 'reputation once');
+INSERT INTO rounds (id, room_id, idx, phase, submit_deadline_unix) VALUES
+  ('25700000-0000-4000-8000-000000000002', '25700000-0000-4000-8000-000000000001', 0, 'published', 0);
+INSERT INTO participants (id, room_id, anon_name, role) VALUES
+  ('25700000-0000-4000-8000-000000000011', '25700000-0000-4000-8000-000000000001', 'agent_1', 'debater'),
+  ('25700000-0000-4000-8000-000000000012', '25700000-0000-4000-8000-000000000001', 'agent_2', 'debater'),
+  ('25700000-0000-4000-8000-000000000019', '25700000-0000-4000-8000-000000000001', 'judge_1', 'judge');
+INSERT INTO scores (round_id, judge_id, participant_id, e, r, c, v, y, client_nonce) VALUES
+  ('25700000-0000-4000-8000-000000000002', '25700000-0000-4000-8000-000000000019',
+   '25700000-0000-4000-8000-000000000011', 90, 90, 90, 90, 90, 'pgtap-257-a'),
+  ('25700000-0000-4000-8000-000000000002', '25700000-0000-4000-8000-000000000019',
+   '25700000-0000-4000-8000-000000000012', 10, 10, 10, 10, 10, 'pgtap-257-b');
+
+SELECT reputation_update_round('25700000-0000-4000-8000-000000000002');
+CREATE TEMP TABLE _once ON COMMIT DROP AS
+SELECT elo FROM reputation WHERE participant_id = '25700000-0000-4000-8000-000000000011';
+
+SELECT reputation_update_round('25700000-0000-4000-8000-000000000002');
+
+SELECT isnt((SELECT elo FROM _once), 1200.0::float, 'the first call changes the winner''s Elo');
+SELECT is((SELECT elo FROM reputation WHERE participant_id = '25700000-0000-4000-8000-000000000011'),
+          (SELECT elo FROM _once), 'a second call for the same round changes nothing');
+SELECT is((SELECT relrowsecurity FROM pg_class WHERE oid = 'public.reputation_rounds_applied'::regclass),
+          true, 'reputation_rounds_applied has row level security');
+
+-- A round with fewer than two scored debaters has nothing to compare. The call
+-- is refused and the round is not marked, so a later call after scoring still
+-- applies it.
+INSERT INTO rounds (id, room_id, idx, phase, submit_deadline_unix) VALUES
+  ('25700000-0000-4000-8000-000000000003', '25700000-0000-4000-8000-000000000001', 1, 'published', 0);
+INSERT INTO scores (round_id, judge_id, participant_id, e, r, c, v, y, client_nonce) VALUES
+  ('25700000-0000-4000-8000-000000000003', '25700000-0000-4000-8000-000000000019',
+   '25700000-0000-4000-8000-000000000011', 70, 70, 70, 70, 70, 'pgtap-257-c');
+
+SELECT throws_ok($$SELECT reputation_update_round('25700000-0000-4000-8000-000000000003')$$,
+                 '22023', 'round_not_scored',
+                 'a round with one scored debater is refused');
+SELECT is((SELECT count(*) FROM reputation_rounds_applied
+            WHERE round_id = '25700000-0000-4000-8000-000000000003'),
+          0::bigint, 'a refused round is not marked as applied');
+
+INSERT INTO scores (round_id, judge_id, participant_id, e, r, c, v, y, client_nonce) VALUES
+  ('25700000-0000-4000-8000-000000000003', '25700000-0000-4000-8000-000000000019',
+   '25700000-0000-4000-8000-000000000012', 20, 20, 20, 20, 20, 'pgtap-257-d');
+SELECT reputation_update_round('25700000-0000-4000-8000-000000000003');
+SELECT is((SELECT count(*) FROM reputation_rounds_applied
+            WHERE round_id = '25700000-0000-4000-8000-000000000003'),
+          1::bigint, 'after a second debater is scored the round applies');
+
+SELECT * FROM finish();
+ROLLBACK;

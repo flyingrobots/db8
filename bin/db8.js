@@ -52,7 +52,7 @@ Global options:
   --json               machine-readable output
   --quiet              suppress non-errors
   --non-interactive    fail instead of prompting
-  --timeout <ms>       RPC timeout
+  --timeout <ms>       limit for each API request; exit 7 when it passes
   --nonce <id>         client idempotency key
 
 Commands:
@@ -61,6 +61,7 @@ Commands:
   room status          show room snapshot
   room watch           stream events (WS/SSE)
   room create          create a new room
+  room seats           list the room's topic and seats
   draft open           create/open draft.json
   draft validate       validate and print canonical sha
   submit               submit current draft
@@ -93,6 +94,7 @@ async function main() {
     'room:status': './commands/room/status.js',
     'room:watch': './commands/room/watch.js',
     'room:create': './commands/room/create.js',
+    'room:seats': './commands/room/seats.js',
     'draft:open': './commands/draft/open.js',
     'draft:validate': './commands/draft/validate.js',
     submit: './commands/submit.js',
@@ -116,6 +118,49 @@ async function main() {
   if (!commandFile) {
     printerr(`Unknown command: ${cmd} ${subcmd || ''}`);
     return EXIT.NOT_FOUND;
+  }
+
+  // --timeout <ms> bounds every API request (#235). Installed once around fetch,
+  // so every command that calls the API honours it, including ones added
+  // later. A timeout surfaces as an ETIMEDOUT error, which each command's
+  // existing network handling turns into EXIT.NETWORK. `room watch` streams
+  // over node:http, not fetch, and is deliberately not bounded by this.
+  if (args.timeout !== undefined) {
+    const ms = Number(args.timeout);
+    if (!Number.isInteger(ms) || ms <= 0) {
+      printerr('--timeout must be a positive integer number of milliseconds');
+      return EXIT.VALIDATION;
+    }
+    const baseFetch = globalThis.fetch;
+    const timedOut = (url, err) =>
+      Object.assign(new Error(`request to ${url} timed out after ${ms} ms`, { cause: err }), {
+        name: 'TimeoutError',
+        code: 'ETIMEDOUT'
+      });
+    globalThis.fetch = async (url, init = {}) => {
+      try {
+        const res = await baseFetch(url, {
+          ...init,
+          signal: init.signal ?? globalThis.AbortSignal.timeout(ms)
+        });
+        // Read the whole body here, inside the same deadline. A server can send
+        // headers in time and then stall the body; commands read bodies with
+        // `res.json().catch(() => ({}))`, which would turn that timeout into an
+        // empty, successful answer.
+        const body = await res.arrayBuffer();
+        // These statuses may not carry a body, and the Response constructor
+        // throws if given one, even an empty one.
+        const nullBody = [101, 204, 205, 304].includes(res.status);
+        return new globalThis.Response(nullBody ? null : body, {
+          status: res.status,
+          statusText: res.statusText,
+          headers: res.headers
+        });
+      } catch (err) {
+        if (err?.name !== 'TimeoutError') throw err;
+        throw timedOut(url, err);
+      }
+    };
   }
 
   // Shared Context and Helpers

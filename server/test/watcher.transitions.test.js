@@ -13,6 +13,10 @@ describe('Watcher transitions (authoritative timers)', () => {
     vi.setSystemTime(new Date(1700000000000)); // fixed epoch in ms
     // Re-import server with env applied
     const m = await import('../rpc.js?' + Math.random());
+    // Memory mode by configuration. These rounds exist only in memory; with a
+    // database configured, vote_submit refuses them as unknown, and since #231 that
+    // refusal is a 400 rather than a vote quietly counted in memory.
+    m.__setDbPool(null);
     app = m.default;
   });
 

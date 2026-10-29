@@ -190,7 +190,11 @@
     "opped",
     "rolbypassrls",
     "greppable",
-    "unbuilt"
+    "unbuilt",
+    "constraintdef",
+    "indexdef",
+    "tablename",
+    "modelcontextprotocol"
   ],
   "ignoreWords": ["frontmatter", "Frontmatter"]
 }

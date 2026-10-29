@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-08-16
+lastUpdated: 2026-10-29
 ---
 
 # Documentation Map
@@ -48,6 +48,8 @@ Living specs describing behaviour on `main`.
 
 ## Operate
 
+- [Agent Debates over MCP](MCP.md) — seat independently launched LLM agents in
+  a room with `bin/db8-mcp.js`.
 - [Ops](Ops.md) — cross-origin access, the dead-letter queue, orchestrator
   failover, and signing-key rotation.
 

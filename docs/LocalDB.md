@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2025-10-05
+lastUpdated: 2026-10-26
 ---
 
 # Local Database Setup (Postgres / Supabase)
@@ -54,6 +54,19 @@ seeds a room, round 0, and a roster of anonymous participants. Defaults:
 `participant_count=4`, `submit_minutes=5`; pass a `nonce` to make the call
 idempotent.
 
+`cfg` is stored as `rooms.config` ([#200](https://github.com/flyingrobots/db8/issues/200)); a replayed nonce returns the existing room and changes nothing: not its title, config, rounds or seats, whatever `cfg` the replay carries ([#249](https://github.com/flyingrobots/db8/issues/249)). Through `POST /rpc/room.create` the accepted keys are:
+
+| Key                     | Meaning                                                                                                                                                                                 |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `participant_count`     | seats to seed, 1–64                                                                                                                                                                     |
+| `submit_minutes`        | submit window of every round, 1–1440; 5 if absent ([#228](https://github.com/flyingrobots/db8/issues/228))                                                                              |
+| `continue_vote_seconds` | continue-vote window after each publish, 10–3600; 30 if absent ([#228](https://github.com/flyingrobots/db8/issues/228))                                                                 |
+| `max_fetches_per_round` | research fetches per round; 0 or absent means no limit                                                                                                                                  |
+| `attribution_mode`      | `masked` hides authors while a round is in `submit`; `real` does not                                                                                                                    |
+| `predicates`            | opt-in strict predicate vocabulary (snake_case names); a claim with another predicate is refused with `400 invalid_claim_term` ([#244](https://github.com/flyingrobots/db8/issues/244)) |
+
+Other keys are dropped. `GET /rpc/room.get` returns the stored config in both database and memory mode.
+
 Examples:
 
 ```text
@@ -79,23 +92,19 @@ Repeating the call with the same nonce reuses the existing room.
 We include pgTAP files that assert the DB invariants (tables, uniques, RPC
 existence, idempotency). These are optional and default to off in CI.
 
-1. Ensure the `pgtap` extension is installed in your DB:
+1. Install the pgTAP package on the Postgres server. The test image does not ship it:
 
 ```text
-# Inside the container or your Postgres host; adjust version as needed
-# Example with Debian-based Postgres 16 image:
-# docker exec -it <container> bash -lc "apt-get update && apt-get install -y
-postgresql-16-pgtap"
-
-psql postgresql://postgres:test@localhost:54329/db8_test \
-  -c 'CREATE EXTENSION IF NOT EXISTS pgtap;'
+docker exec -u root db8-test-db bash -c 'apt-get update && apt-get install -y postgresql-16-pgtap'
 ```
 
-1. Run all pgTAP files:
+1. Run all pgTAP files. `run.sh` creates the extension if needed:
 
 ```text
 PGURL=postgresql://postgres:test@localhost:54329/db8_test ./db/test/run.sh
 ```
+
+`run.sh` exits non-zero on a failing assertion that is not marked TODO, on a plan mismatch, or on a SQL error; psql alone exits 0 for all of these. Assertions inside `DO` blocks are collected in a `_tap` temp table and reported at top level, because pgTAP discards the TAP line of an assertion made inside `DO` ([#238](https://github.com/flyingrobots/db8/issues/238)). Known failures are TODO with their issue: [#208](https://github.com/flyingrobots/db8/issues/208) (RLS).
 
 ## Run Node Tests with DB Backed Path
 
@@ -137,6 +146,29 @@ node server/rpc.js
 curl <http://localhost:3000/health>
 ```
 
+### When the database fails
+
+With `DATABASE_URL` set, Postgres is the only store. If a write cannot reach it, the API answers `503` and keeps nothing in memory ([#257](https://github.com/flyingrobots/db8/issues/257)):
+
+```json
+{ "ok": false, "error": "database_unavailable", "outcome": "not_stored" }
+```
+
+- `outcome: "not_stored"`: the statement never reached the database (connection refused, connect timeout, authentication failure, too many connections, or a pool that did not initialize). A new attempt may start afresh.
+- `outcome: "unknown"`: the connection failed after the statement was sent, so it may have committed. Whether a retry is safe depends on the endpoint:
+
+| Endpoint                                              | Retry after `unknown`                                                                                                                                             |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `submission.create`, `vote.continue`, `verify.submit` | Safe with the same `client_nonce`.                                                                                                                                |
+| `room.create`, `score.submit`                         | Safe only when the first request sent a `client_nonce` and the retry sends the same one. Without one, a retry can create a second row.                            |
+| `vote.final`, `submission.flag`                       | Safe: one row per voter per round, and one flag per reporter per submission.                                                                                      |
+| `participant.fingerprint.set`                         | Safe: it sets a value.                                                                                                                                            |
+| `reputation.update`                                   | Safe: each round is applied once (`reputation_rounds_applied`). A round with fewer than two scored debaters is refused with `round_not_scored` and is not marked. |
+| `nonce.issue`                                         | Safe: a retry issues another nonce, and an unused nonce expires.                                                                                                  |
+| `research.fetch`                                      | Not fully: the quota increment and the cache write run in one transaction, so only a failed COMMIT is `unknown`. A retry then can spend one more fetch.           |
+
+An error the database answered with (a rule an RPC enforces, such as `submission_closed`) keeps its own status. Before #257 the API kept the write in memory and answered `200` with `note: "db_fallback"`; that note no longer exists.
+
 ### Environment Flags (M2)
 
 These flags gate new M2 capabilities and are read by the server and CLI.
@@ -148,8 +180,8 @@ These flags gate new M2 capabilities and are read by the server and CLI.
   - When set, the API enforces single-use server-issued nonces for submissions.
   - Issue a nonce via `POST /rpc/nonce.issue` and include it as `client_nonce` in
     `POST /rpc/submission.create`.
-  - Behavior is atomic on the DB path and safely falls back to memory when the
-    DB rejects nonces due to missing rows in dev.
+  - Behavior is atomic on the DB path. Memory mode (no `DATABASE_URL`) keeps
+    issued nonces in memory.
 - `SIGNING_PRIVATE_KEY` / `SIGNING_PUBLIC_KEY`
   - PEM-encoded Ed25519 keypair used to sign journals.
   - If unset, the server generates an in-memory dev keypair at startup (for dev
@@ -219,9 +251,7 @@ DB8_API_URL=<http://localhost:3000> db8 room watch  --room
 
 ## Notes
 
-- CI applies `db/schema.sql` and `db/rpc.sql`. pgTAP runs only when enabled (set
-  RUN_PGTAP=1 in workflow dispatch or run `db/test/run.sh` locally).
-- The server falls back to in-memory idempotent storage if `DATABASE_URL` is not
-  set.
+- CI applies `db/schema.sql` and `db/rpc.sql`. pgTAP runs only when enabled: run the `ci` workflow by hand with `run_pgtap=1`, or set the repository variable `RUN_PGTAP=1`. CI installs pgTAP into the Postgres service and runs the suite against a freshly prepared `db8_pgtap_test`, not the `db8_test` database the Vitest passes have just filled with fixtures. Run it locally against a fresh database for the same reason.
+- Without `DATABASE_URL`, the server runs in memory mode: idempotent, but nothing survives a restart. With it, a database failure is a `503` (see [When the database fails](#when-the-database-fails)).
 - Configuration uses `SecretSource` + `ConfigBuilder`; only the EnvSecretSource
   module reads environment variables.

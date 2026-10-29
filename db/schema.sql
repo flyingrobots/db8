@@ -83,8 +83,85 @@ CREATE TABLE IF NOT EXISTS submissions (
   signer_fingerprint  text,
   jwt_sub             text,
   client_nonce        text        NOT NULL,
-  UNIQUE (round_id, author_id, client_nonce)
+  -- Bumped each time a resubmission replaces the document.
+  version             integer     NOT NULL DEFAULT 1,
+  -- Set only by the upgrade below, on an older duplicate in a round that had
+  -- already published: that row is in a signed journal, so it is kept.
+  legacy_duplicate    boolean     NOT NULL DEFAULT false
 );
+
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS legacy_duplicate boolean NOT NULL DEFAULT false;
+
+-- Every nonce a submission was stored under. A retry of a superseded nonce is
+-- recognised and refused instead of overwriting the newer document (#237).
+CREATE TABLE IF NOT EXISTS submission_nonce_log (
+  submission_id     uuid        NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+  client_nonce      text        NOT NULL,
+  canonical_sha256  char(64)    NOT NULL,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (submission_id, client_nonce)
+);
+
+-- Upgrade path for databases carrying the nonce in the key (#237).
+-- A round still in submit was never published, so its older drafts are dropped
+-- and the newest kept. A round that has published keeps every row, because its
+-- transcript is signed in a journal; older duplicates there are only marked.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'submissions'::regclass
+       AND contype = 'u'
+       AND pg_get_constraintdef(oid) = 'UNIQUE (round_id, author_id, client_nonce)'
+  ) THEN
+    LOCK TABLE submissions IN ACCESS EXCLUSIVE MODE;
+    -- Carry each dropped draft's nonce over to the draft that survives, before
+    -- the delete cascades its log rows away. Otherwise a delayed retry of a
+    -- dropped nonce would pass the superseded check and replace the newer draft.
+    INSERT INTO submission_nonce_log (submission_id, client_nonce, canonical_sha256)
+    SELECT keep.id, s.client_nonce, s.canonical_sha256
+      FROM submissions s
+      JOIN rounds r ON r.id = s.round_id AND r.phase = 'submit'
+      JOIN LATERAL (
+        SELECT n.id FROM submissions n
+         WHERE n.round_id = s.round_id AND n.author_id = s.author_id
+         ORDER BY n.submitted_at DESC, n.id DESC
+         LIMIT 1
+      ) keep ON keep.id <> s.id
+    ON CONFLICT DO NOTHING;
+    DELETE FROM submissions s
+     USING rounds r
+     WHERE r.id = s.round_id AND r.phase = 'submit'
+       AND EXISTS (
+         SELECT 1 FROM submissions newer
+          WHERE newer.round_id = s.round_id
+            AND newer.author_id = s.author_id
+            AND (newer.submitted_at, newer.id) > (s.submitted_at, s.id)
+       );
+    UPDATE submissions s
+       SET legacy_duplicate = true
+      FROM rounds r
+     WHERE r.id = s.round_id AND r.phase <> 'submit'
+       AND EXISTS (
+         SELECT 1 FROM submissions newer
+          WHERE newer.round_id = s.round_id
+            AND newer.author_id = s.author_id
+            AND (newer.submitted_at, newer.id) > (s.submitted_at, s.id)
+       );
+    ALTER TABLE submissions
+      DROP CONSTRAINT submissions_round_id_author_id_client_nonce_key;
+  END IF;
+END $$;
+
+-- One current submission per participant per round (#237). Partial, so the
+-- marked legacy rows above can stay.
+CREATE UNIQUE INDEX IF NOT EXISTS submissions_one_per_author_round
+  ON submissions (round_id, author_id) WHERE NOT legacy_duplicate;
+
+INSERT INTO submission_nonce_log (submission_id, client_nonce, canonical_sha256)
+SELECT id, client_nonce, canonical_sha256 FROM submissions
+ON CONFLICT DO NOTHING;
 
 -- Votes: idempotent by (round_id, voter_id, kind, client_nonce)
 CREATE TABLE IF NOT EXISTS votes (
@@ -95,8 +172,40 @@ CREATE TABLE IF NOT EXISTS votes (
   ballot        jsonb       NOT NULL DEFAULT '{}'::jsonb,
   client_nonce  text        NOT NULL,
   created_at    timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (round_id, voter_id, kind, client_nonce)
+  -- One ballot per voter per round and kind (#227). With the nonce in the key, a
+  -- voter sending N ballots under N fresh nonces was counted N times, and one
+  -- participant could decide whether the debate continues. Same fix as
+  -- final_votes below.
+  UNIQUE (round_id, voter_id, kind)
 );
+
+-- Upgrade path for databases carrying the nonce in the key: keep each voter's
+-- newest ballot, the one a revising voter meant to stand.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'votes'::regclass
+       AND contype = 'u'
+       AND pg_get_constraintdef(oid) = 'UNIQUE (round_id, voter_id, kind, client_nonce)'
+  ) THEN
+    -- Exclusive against writers too, as for final_votes: a fresh-nonce ballot
+    -- committed between the DELETE and ADD CONSTRAINT would roll the upgrade back.
+    LOCK TABLE votes IN ACCESS EXCLUSIVE MODE;
+    DELETE FROM votes v
+     WHERE EXISTS (
+       SELECT 1 FROM votes newer
+        WHERE newer.round_id = v.round_id
+          AND newer.voter_id = v.voter_id
+          AND newer.kind = v.kind
+          AND (newer.created_at, newer.id) > (v.created_at, v.id)
+     );
+    ALTER TABLE votes
+      DROP CONSTRAINT votes_round_id_voter_id_kind_client_nonce_key;
+    ALTER TABLE votes
+      ADD CONSTRAINT votes_round_id_voter_id_kind_key UNIQUE (round_id, voter_id, kind);
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_votes_round_kind ON votes (round_id, kind);
 
@@ -213,6 +322,13 @@ CREATE TABLE IF NOT EXISTS reputation_tag (
   elo             float       NOT NULL DEFAULT 1200.0,
   updated_at      timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (participant_id, tag)
+);
+
+-- Rounds whose Elo deltas reputation_update_round has applied. A second call for
+-- the same round (a retry after a lost answer, #257) changes nothing.
+CREATE TABLE IF NOT EXISTS reputation_rounds_applied (
+  round_id    uuid        PRIMARY KEY REFERENCES rounds(id) ON DELETE CASCADE,
+  applied_at  timestamptz NOT NULL DEFAULT now()
 );
 
 -- Research Cache (M6)
