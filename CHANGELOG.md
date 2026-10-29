@@ -8,6 +8,7 @@ lastUpdated: 2026-10-29
 
 - **A delayed retry of a score cannot roll back a later revision.** `score_submit` records every nonce in the new table `score_nonces`; a nonce seen before returns the stored score and changes nothing. Before, a judge who scored 10 under nonce A and revised to 90 under nonce B went back to 10 when A was retried.
 - **The scores key upgrade refuses to guess.** On a database created before the nonce left the `scores` key, the upgrade keeps the newest score per judge, participant and round. When the newest scores tie on `created_at` and differ, it now stops with `scores_upgrade_ambiguous` instead of keeping one at random.
+- **The upgrade keeps the nonces of the scores it deletes.** `score_nonces` is filled before older scores are removed, so a delayed retry of a deleted revision cannot overwrite the score that was kept.
 
 ## 2026-10-26 — A database failure is reported, not hidden in memory
 

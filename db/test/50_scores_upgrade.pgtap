@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(4);
+SELECT plan(6);
 
 -- scores_upgrade_unique_key() moves a legacy database to one score per judge
 -- per participant per round. It keeps the newest score. When the newest scores
@@ -41,6 +41,16 @@ SELECT is((SELECT e FROM scores WHERE participant_id = '21900000-0000-4000-8000-
 SELECT is((SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'scores'::regclass
              AND pg_get_constraintdef(oid) = 'UNIQUE (round_id, judge_id, participant_id)'),
           1, 'the key no longer includes the nonce');
+
+-- The nonce of a deleted older score is still known, so a delayed retry of it
+-- is a retry and cannot overwrite the score that was kept.
+SELECT is((SELECT count(*)::int FROM score_nonces
+            WHERE participant_id = '21900000-0000-4000-8000-000000000111' AND client_nonce = 'old'),
+          1, 'the upgrade records the nonce of a score it deletes');
+SELECT score_submit('21900000-0000-4000-8000-000000000102', '21900000-0000-4000-8000-000000000119',
+                    '21900000-0000-4000-8000-000000000111', 10, 10, 10, 10, 10, 'old');
+SELECT is((SELECT e FROM scores WHERE participant_id = '21900000-0000-4000-8000-000000000111'),
+          90, 'a retry of a deleted revision does not overwrite the kept score');
 
 SELECT * FROM finish();
 ROLLBACK;

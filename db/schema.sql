@@ -276,6 +276,24 @@ CREATE TABLE IF NOT EXISTS scores (
   UNIQUE (round_id, judge_id, participant_id)
 );
 
+-- Every nonce a judge has scored a participant under. score_submit treats a
+-- nonce seen before as a retry of a request it already applied and changes
+-- nothing. Keeping only the latest nonce on the score row was not enough: a
+-- delayed retry of an earlier revision then overwrote a later one.
+CREATE TABLE IF NOT EXISTS score_nonces (
+  round_id        uuid        NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+  judge_id        uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  participant_id  uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  client_nonce    text        NOT NULL,
+  PRIMARY KEY (round_id, judge_id, participant_id, client_nonce)
+);
+
+-- Nonces of scores stored before score_nonces existed. This runs before the
+-- key upgrade below, which deletes older scores; their nonces stay known.
+INSERT INTO score_nonces (round_id, judge_id, participant_id, client_nonce)
+SELECT round_id, judge_id, participant_id, client_nonce FROM scores
+ON CONFLICT DO NOTHING;
+
 -- Upgrade path for databases created before the nonce left the scores key.
 -- Same shape as the final_votes upgrade above and for the same reasons: an
 -- ACCESS EXCLUSIVE lock so a concurrent insert cannot slip a duplicate in
@@ -315,6 +333,11 @@ BEGIN
     RAISE EXCEPTION 'scores_upgrade_ambiguous: % (round, judge, participant) with differing newest scores', v_ambiguous
       USING HINT = 'Delete all but the intended score of each, then apply schema.sql again.';
   END IF;
+  -- Record every row's nonce before the older rows go, so a delayed retry of a
+  -- deleted revision is still a retry and cannot overwrite the kept score.
+  INSERT INTO score_nonces (round_id, judge_id, participant_id, client_nonce)
+  SELECT round_id, judge_id, participant_id, client_nonce FROM scores
+  ON CONFLICT DO NOTHING;
   DELETE FROM scores s
    WHERE EXISTS (
      SELECT 1 FROM scores newer
@@ -332,23 +355,6 @@ END;
 $$;
 REVOKE ALL ON FUNCTION scores_upgrade_unique_key() FROM PUBLIC;
 SELECT scores_upgrade_unique_key();
-
--- Every nonce a judge has scored a participant under. score_submit treats a
--- nonce seen before as a retry of a request it already applied and changes
--- nothing. Keeping only the latest nonce on the score row was not enough: a
--- delayed retry of an earlier revision then overwrote a later one.
-CREATE TABLE IF NOT EXISTS score_nonces (
-  round_id        uuid        NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
-  judge_id        uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-  participant_id  uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-  client_nonce    text        NOT NULL,
-  PRIMARY KEY (round_id, judge_id, participant_id, client_nonce)
-);
-
--- Nonces of scores stored before score_nonces existed.
-INSERT INTO score_nonces (round_id, judge_id, participant_id, client_nonce)
-SELECT round_id, judge_id, participant_id, client_nonce FROM scores
-ON CONFLICT DO NOTHING;
 
 CREATE INDEX IF NOT EXISTS idx_scores_round ON scores (round_id);
 CREATE INDEX IF NOT EXISTS idx_scores_participant ON scores (participant_id);
