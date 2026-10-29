@@ -3,9 +3,9 @@ import request from 'supertest';
 import { VoteService } from '../services/VoteService.js';
 import app, { __setDbPool } from '../rpc.js';
 
-// `note: 'db_fallback'` tells a client that a configured database failed and the
-// write lives only in memory. The MCP agent server (#231) reports it as a failed
-// write, so the note must mean exactly that.
+// Memory mode (no database configured) answers without a note. A configured
+// database that cannot be reached is an outage (#257): the vote is refused with
+// database_unavailable and nothing is counted in memory.
 
 const ids = {
   room_id: '31000000-0000-4000-8000-000000000001',
@@ -26,7 +26,7 @@ const failingPool = (err) => ({
 // What pg raises for a RAISE EXCEPTION: the server answered, so it has a severity.
 const ruleError = (message) => Object.assign(new Error(message), { severity: 'ERROR' });
 
-describe('VoteService db_fallback note', () => {
+describe('VoteService with a failing or absent database', () => {
   it('memory mode by configuration carries no fallback note', async () => {
     const svc = service(null);
     const c = await svc.castContinueVote({
@@ -40,12 +40,28 @@ describe('VoteService db_fallback note', () => {
     expect(f.note).toBeUndefined();
   });
 
-  it('an unreachable database still falls back, with the note', async () => {
-    const svc = service(failingPool(new Error('connect ECONNREFUSED')));
-    const c = await svc.castContinueVote({ ...ids, choice: 'end', client_nonce: 'nonce-0003' });
-    expect(c.note).toBe('db_fallback');
-    const again = await svc.castContinueVote({ ...ids, choice: 'end', client_nonce: 'nonce-0003' });
-    expect(again).toEqual(c);
+  it('an unreachable database refuses the vote and counts nothing in memory', async () => {
+    const memVoteTotals = new Map();
+    const memFinalVotes = new Map();
+    const svc = new VoteService({
+      dbRef: {
+        pool: failingPool(
+          Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })
+        ),
+        configured: true
+      },
+      memVotes: new Map(),
+      memVoteTotals,
+      memFinalVotes
+    });
+    await expect(
+      svc.castContinueVote({ ...ids, choice: 'end', client_nonce: 'nonce-0003' })
+    ).rejects.toMatchObject({ message: 'database_unavailable', outcome: 'not_stored' });
+    await expect(
+      svc.castFinalVote({ ...ids, approval: true, client_nonce: 'nonce-0005' })
+    ).rejects.toMatchObject({ message: 'database_unavailable', outcome: 'not_stored' });
+    expect(memVoteTotals.size).toBe(0);
+    expect(memFinalVotes.size).toBe(0);
   });
 
   it('a continue vote the database refused is an error, not a memory vote', async () => {
@@ -57,7 +73,7 @@ describe('VoteService db_fallback note', () => {
 });
 
 describe('POST /rpc/nonce.issue in memory mode', () => {
-  it('issues a nonce without a fallback note', async () => {
+  it('issues a nonce without a note', async () => {
     __setDbPool(null);
     const res = await request(app)
       .post('/rpc/nonce.issue')

@@ -2,6 +2,11 @@ import crypto from 'node:crypto';
 import canonicalizer from '../canonicalizer.js';
 import { sha256Hex } from '../utils.js';
 import { validateTerm } from '../claims/terms.js';
+import {
+  DatabaseUnavailableError,
+  databaseFailure,
+  queryOrUnavailable
+} from '../database-unavailable.js';
 
 /**
  * SubmissionService handles the business logic for debate submissions,
@@ -36,7 +41,7 @@ export class SubmissionService {
 
     // Before the nonce is consumed, so a refused claim can be corrected and
     // retried under the same issued nonce.
-    const lookupError = await this._enforceVocabulary(input);
+    await this._enforceVocabulary(input);
 
     // Optional server nonce enforcement when enabled
     if (!this.db && this.config.enforceServerNonces) {
@@ -68,24 +73,14 @@ export class SubmissionService {
     // resubmission replaces the stored one under the same id.
     const key = `${input.room_id}:${input.round_id}:${input.author_id}`;
 
-    // The database could not say which vocabulary the room declared. Storing
-    // there would persist a claim nobody checked, so this is a fallback.
-    if (this.db && lookupError) {
-      console.error('[SubmissionService] DB error, falling back to memory:', lookupError);
-      if (this.config.enforceServerNonces && !this.validateAndConsumeNonceMemory(input)) {
-        throw new Error('invalid_nonce');
-      }
-      return this._createInMemory(key, input, canonical_sha256, lookupError);
-    }
-
     if (this.db) {
+      // Use atomic RPC when enforcing server nonces; otherwise plain upsert
+      const upsertSql = this.config.enforceServerNonces
+        ? 'select submission_upsert_with_nonce($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id'
+        : 'select submission_upsert($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id';
+      let r;
       try {
-        // Use atomic RPC when enforcing server nonces; otherwise plain upsert
-        const upsertSql = this.config.enforceServerNonces
-          ? 'select submission_upsert_with_nonce($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id'
-          : 'select submission_upsert($1::uuid,$2::uuid,$3::text,$4::jsonb,$5::jsonb,$6::text,$7::text) as id';
-
-        const r = await this.db.query(upsertSql, [
+        r = await this.db.query(upsertSql, [
           input.round_id,
           input.author_id,
           input.content,
@@ -94,48 +89,38 @@ export class SubmissionService {
           canonical_sha256,
           input.client_nonce
         ]);
-
-        const submission_id = r.rows?.[0]?.id;
-        if (!submission_id) throw new Error('submission_upsert_missing_id');
-
-        return { submission_id, canonical_sha256 };
       } catch (e) {
-        const msg = typeof e === 'string' ? e : e?.message || String(e) || 'db_error';
+        const failure = databaseFailure(e);
+        // An outage: nothing is kept in memory, because memory is lost on
+        // restart (#257). The client retries with the same nonce.
+        if (failure instanceof DatabaseUnavailableError) {
+          console.error('[SubmissionService] database unavailable:', e?.message);
+          throw failure;
+        }
+        const msg = e?.message || String(e);
         if (/invalid_nonce/i.test(msg)) throw new Error('invalid_nonce', { cause: e });
-        // Rules submission_upsert enforced (#237). Falling back to memory would
-        // answer 200 for a document the database refused.
+        // Rules submission_upsert enforced (#237).
         if (msg === 'nonce_superseded' || msg === 'submission_closed' || msg === 'nonce_reused') {
           throw new Error(msg, { cause: e });
         }
-
-        // Log DB error and fall back to memory (except invalid_nonce handled above)
-        console.error('[SubmissionService] DB error, falling back to memory:', msg);
-
-        if (this.config.enforceServerNonces && !this.validateAndConsumeNonceMemory(input)) {
-          throw new Error('invalid_nonce', { cause: e });
-        }
-
-        return this._createInMemory(key, input, canonical_sha256, msg);
+        throw e;
       }
+
+      const submission_id = r.rows?.[0]?.id;
+      if (!submission_id) throw new Error('submission_upsert_missing_id');
+      return { submission_id, canonical_sha256 };
     }
 
-    // A configured database whose pool failed to initialize also lands here.
-    // That is a fallback, so say so rather than presenting it as persisted.
-    return this._createInMemory(
-      key,
-      input,
-      canonical_sha256,
-      this.dbRef.configured ? 'database_unavailable' : null
-    );
+    // Memory mode: no database is configured.
+    return this._createInMemory(key, input, canonical_sha256);
   }
 
   // A room created with cfg.predicates declares its vocabulary; a claim whose
   // term uses a predicate outside it is refused (#244). The vocabulary is read
-  // from the round's room, not from the room_id the request names. Returns the
-  // database error when the lookup failed and the memory room was used instead.
+  // from the round's room, not from the room_id the request names.
   async _enforceVocabulary(input) {
-    const { predicates, lookupError } = await this._roomPredicates(input);
-    if (!Array.isArray(predicates)) return lookupError;
+    const predicates = await this._roomPredicates(input);
+    if (!Array.isArray(predicates)) return;
     const details = [];
     for (const [index, claim] of (input.claims ?? []).entries()) {
       const result = validateTerm(claim.term, { predicates });
@@ -146,32 +131,30 @@ export class SubmissionService {
     if (details.length > 0) {
       throw Object.assign(new Error('invalid_claim_term'), { details });
     }
-    return lookupError;
   }
 
   async _roomPredicates(input) {
-    let lookupError = null;
     if (this.db) {
-      try {
-        const r = await this.db.query(
-          `select rm.config->'predicates' as predicates
-             from rounds rd join rooms rm on rm.id = rd.room_id
-            where rd.id = $1`,
-          [input.round_id]
-        );
-        if (r.rows.length > 0) return { predicates: r.rows[0].predicates, lookupError };
-      } catch (e) {
-        // The caller then stores in memory, so the memory room's vocabulary
-        // applies, as it would to any other memory fallback.
-        lookupError = e?.message || String(e) || 'db_error';
-      }
+      // A failed lookup refuses the request (#257): storing without it would
+      // persist a claim nobody checked. Nothing is written yet, so the outcome
+      // is never unknown.
+      const r = await queryOrUnavailable(
+        this.db,
+        `select rm.config->'predicates' as predicates
+           from rounds rd join rooms rm on rm.id = rd.room_id
+          where rd.id = $1`,
+        [input.round_id],
+        { wrote: false }
+      );
+      // A round the database does not know: submission_upsert refuses it.
+      return r.rows[0]?.predicates;
     }
     for (const room of this.memRooms.values()) {
       if (room?.round?.round_id === input.round_id || room?.publishedRounds?.has(input.round_id)) {
-        return { predicates: room.config?.predicates, lookupError };
+        return room.config?.predicates;
       }
     }
-    return { predicates: this.memRooms.get(input.room_id)?.config?.predicates, lookupError };
+    return this.memRooms.get(input.room_id)?.config?.predicates;
   }
 
   // The memory room's own view of the round: a round it has moved past, or the
@@ -187,7 +170,7 @@ export class SubmissionService {
     return deadline > 0 && Math.floor(Date.now() / 1000) > deadline;
   }
 
-  _createInMemory(key, input, canonical_sha256, dbError = null) {
+  _createInMemory(key, input, canonical_sha256) {
     const previous = this.memSubmissions.get(key);
     // As in the database: replaying a nonce a resubmission superseded would
     // undo the newer document, so it is refused.
@@ -206,12 +189,7 @@ export class SubmissionService {
       previous.client_nonce === input.client_nonce &&
       previous.canonical_sha256 === canonical_sha256
     ) {
-      return {
-        submission_id: previous.id,
-        canonical_sha256,
-        note: dbError ? 'db_fallback' : undefined,
-        db_error: dbError || undefined
-      };
+      return { submission_id: previous.id, canonical_sha256 };
     }
     // The same nonce with a different document is refused, as submission_upsert
     // refuses it (#236).
@@ -244,11 +222,6 @@ export class SubmissionService {
     // the same way the database path does.
     this.memSubmissionIndex.set(submission_id, { room_id: input.room_id, claims: input.claims });
 
-    return {
-      submission_id,
-      canonical_sha256,
-      note: dbError ? 'db_fallback' : undefined,
-      db_error: dbError || undefined
-    };
+    return { submission_id, canonical_sha256 };
   }
 }

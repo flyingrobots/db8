@@ -1,5 +1,6 @@
 import express from 'express';
 import { RoomCreate, RoomGet } from '../schemas.js';
+import { sendIfDatabaseUnavailable } from '../database-unavailable.js';
 
 export function createRoomRouter({ roomService, requireDbInProduction }) {
   const router = express.Router();
@@ -36,6 +37,7 @@ export function createRoomRouter({ roomService, requireDbInProduction }) {
       const result = await roomService.createRoom(input);
       return res.json({ ok: true, ...result });
     } catch (err) {
+      if (sendIfDatabaseUnavailable(res, err)) return;
       return res.status(400).json({ ok: false, error: err?.message || String(err) });
     }
   });

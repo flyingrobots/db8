@@ -1098,6 +1098,25 @@ DECLARE
   v_delta float;
 BEGIN
   SELECT room_id INTO v_room_id FROM rounds WHERE id = p_round_id;
+  IF v_room_id IS NULL THEN
+    RETURN;
+  END IF;
+
+  -- Elo compares debaters, so a round needs at least two scored ones. Refused
+  -- before the round is marked, so a call after scoring still applies it.
+  IF (SELECT count(*) FROM view_score_aggregates WHERE round_id = p_round_id) < 2 THEN
+    RAISE EXCEPTION 'round_not_scored' USING ERRCODE = '22023';
+  END IF;
+
+  -- Apply each round once (#257). A retry after a lost answer, or a second
+  -- caller, would otherwise add the same deltas again. A concurrent caller
+  -- waits on this row and then does nothing.
+  INSERT INTO reputation_rounds_applied (round_id) VALUES (p_round_id)
+  ON CONFLICT (round_id) DO NOTHING;
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+
   SELECT config->'tags' INTO v_tags FROM rooms WHERE id = v_room_id;
 
   -- For each debater in the round

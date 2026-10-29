@@ -1,5 +1,6 @@
 import express from 'express';
 import { VerifySubmit } from '../schemas.js';
+import { sendIfDatabaseUnavailable } from '../database-unavailable.js';
 
 export function createVerificationRouter({ verificationService, requireDbInProduction }) {
   const router = express.Router();
@@ -13,7 +14,8 @@ export function createVerificationRouter({ verificationService, requireDbInProdu
     } catch (err) {
       // A configured database that failed is not the caller's fault, and the
       // verdict was not recorded. 503 says both.
-      if (err?.message === 'database_unavailable' || err?.message === 'verdict_capacity_reached')
+      if (sendIfDatabaseUnavailable(res, err)) return;
+      if (err?.message === 'verdict_capacity_reached')
         return res.status(503).json({ ok: false, error: err.message });
       return res.status(400).json({ ok: false, error: err?.message || String(err) });
     }
@@ -26,8 +28,7 @@ export function createVerificationRouter({ verificationService, requireDbInProdu
       const rows = await verificationService.getSummary(roundId);
       return res.json({ ok: true, rows });
     } catch (err) {
-      if (err?.message === 'database_unavailable')
-        return res.status(503).json({ ok: false, error: err.message });
+      if (sendIfDatabaseUnavailable(res, err)) return;
       return res.status(400).json({ ok: false, error: err?.message || String(err) });
     }
   });

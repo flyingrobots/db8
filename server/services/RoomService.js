@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { queryOrUnavailable } from '../database-unavailable.js';
 
 /**
  * RoomService handles room lifecycle, state aggregation, and in-memory fallback management.
@@ -302,16 +303,14 @@ export class RoomService {
    */
   async createRoom({ topic, cfg, client_nonce }) {
     if (this.pool) {
-      try {
-        const r = await this.pool.query('SELECT room_create($1,$2,$3) AS id', [
-          topic,
-          JSON.stringify(cfg || {}),
-          client_nonce
-        ]);
-        return { room_id: r.rows[0].id };
-      } catch (err) {
-        console.error('[RoomService] DB error (createRoom), falling back to memory:', err.message);
-      }
+      // An outage is a DatabaseUnavailableError: a room kept only in memory
+      // would vanish on restart with its seats and rounds (#257).
+      const r = await queryOrUnavailable(this.pool, 'SELECT room_create($1,$2,$3) AS id', [
+        topic,
+        JSON.stringify(cfg || {}),
+        client_nonce
+      ]);
+      return { room_id: r.rows[0].id };
     }
 
     // Only a real nonce makes room.create idempotent. Without one, room_create
@@ -345,6 +344,6 @@ export class RoomService {
       }
     });
     if (client_nonce) this.memRoomNonces.set(client_nonce, roomId);
-    return { room_id: roomId, note: 'db_fallback' };
+    return { room_id: roomId };
   }
 }

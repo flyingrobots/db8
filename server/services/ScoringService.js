@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { queryOrUnavailable } from '../database-unavailable.js';
 
 /**
  * ScoringService handles judge scores and reputation.
@@ -14,27 +15,25 @@ export class ScoringService {
 
   async submitScore(input) {
     if (this.pool) {
-      try {
-        const r = await this.pool.query(
-          'SELECT score_submit($1::uuid,$2::uuid,$3::uuid,$4::int,$5::int,$6::int,$7::int,$8::int,$9::text) AS id',
-          [
-            input.round_id,
-            input.judge_id,
-            input.participant_id,
-            input.e,
-            input.r,
-            input.c,
-            input.v,
-            input.y,
-            input.client_nonce
-          ]
-        );
-        return { score_id: r.rows[0].id };
-      } catch (err) {
-        console.error('[ScoringService] DB error, falling back to memory:', err.message);
-      }
+      const r = await queryOrUnavailable(
+        this.pool,
+        'SELECT score_submit($1::uuid,$2::uuid,$3::uuid,$4::int,$5::int,$6::int,$7::int,$8::int,$9::text) AS id',
+        [
+          input.round_id,
+          input.judge_id,
+          input.participant_id,
+          input.e,
+          input.r,
+          input.c,
+          input.v,
+          input.y,
+          input.client_nonce
+        ]
+      );
+      return { score_id: r.rows[0].id };
     }
-    return { score_id: crypto.randomUUID(), note: 'db_fallback' };
+    // Memory mode keeps no scores; the id only acknowledges the request.
+    return { score_id: crypto.randomUUID() };
   }
 
   async getScores(roundId) {
@@ -89,15 +88,8 @@ export class ScoringService {
 
   async updateReputations(roundId) {
     if (this.pool) {
-      try {
-        await this.pool.query('SELECT reputation_update_round($1::uuid)', [roundId]);
-        return true;
-      } catch (err) {
-        console.error(
-          '[ScoringService] DB error (updateReputations), falling back to memory:',
-          err.message
-        );
-      }
+      // An outage is reported, not answered as done (#257).
+      await queryOrUnavailable(this.pool, 'SELECT reputation_update_round($1::uuid)', [roundId]);
     }
     return true;
   }

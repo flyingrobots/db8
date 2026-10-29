@@ -187,7 +187,7 @@ describe('SubmissionService checks the vocabulary before it commits to a path', 
     expect(consume).not.toHaveBeenCalled();
   });
 
-  it('a failed vocabulary lookup does not let the database store an unchecked claim', async () => {
+  it('a failed vocabulary lookup refuses the request and stores nothing (#257)', async () => {
     const queries = [];
     const pool = {
       async query(sql) {
@@ -196,9 +196,13 @@ describe('SubmissionService checks the vocabulary before it commits to a path', 
         return { rows: [{ id: crypto.randomUUID() }] };
       }
     };
-    const svc = service({ dbRef: { pool, configured: true }, memRooms: new Map() });
-    const result = await svc.create(input('causes'));
+    const memSubmissions = new Map();
+    const svc = service({ dbRef: { pool, configured: true }, memRooms: new Map(), memSubmissions });
+    await expect(svc.create(input('causes'))).rejects.toMatchObject({
+      message: 'database_unavailable',
+      outcome: 'not_stored'
+    });
     expect(queries.some((q) => q.includes('submission_upsert'))).toBe(false);
-    expect(result.note).toBe('db_fallback');
+    expect(memSubmissions.size).toBe(0);
   });
 });

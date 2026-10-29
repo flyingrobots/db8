@@ -4,6 +4,17 @@ lastUpdated: 2026-10-26
 
 # Changelog
 
+## 2026-10-26 — A database failure is reported, not hidden in memory
+
+- **With `DATABASE_URL` set, a write the database did not take now answers `503 database_unavailable` and keeps nothing** (#257). Before, the server kept the write in memory and answered `200` with `note: 'db_fallback'`. Memory is lost on restart and other server processes never see it. This covered `nonce.issue`, `submission.create`, `submission.flag`, `vote.continue`, `vote.final`, `room.create`, `score.submit`, `verify.submit`, `research.fetch`, `reputation.update` and `participant.fingerprint.set`. The last two did not even label their fallback: a fingerprint binding was kept only in memory, and a reputation update reported success.
+- **The `503` body says what the client may assume.** `outcome: 'not_stored'`: the statement never reached the database. `outcome: 'unknown'`: it may have committed. `docs/LocalDB.md` lists, for each endpoint, whether a retry is then safe (most are, with the same `client_nonce`). Errors the database answered with keep their own status.
+- **A configured pool that did not initialize is an outage too**, not memory mode. A cancelled statement (SQLSTATE `57014`, for example a statement timeout) is `not_stored`, because the database rolled it back. A database that does not exist (`3D000`) is `not_stored` too, and its name no longer appears in a `400` message. A failed read gives `not_stored`, never `unknown`.
+- **`reputation.update` applies each round once.** `reputation_update_round` now records the round in the new table `reputation_rounds_applied`, and a second call for the same round changes nothing. A round with fewer than two scored debaters is refused with `round_not_scored` and is not marked, so a call after scoring still applies it. Before, every call added the round's Elo deltas again, so a retry after `outcome: 'unknown'` would have counted the round twice.
+- **`research.fetch` spends quota only with a stored fetch.** The quota increment and the cache write now run in one transaction. Before, a failure after the increment spent a fetch that the client never received.
+- **The MCP agent server keeps its submission nonce on a `503` with `outcome: 'unknown'`**, so a retry cannot store a second turn.
+- **Memory mode (no `DATABASE_URL`) is unchanged**, except that its answers no longer carry `note: 'db_fallback'`.
+- **Tests that need Postgres now fail without it.** Several suites ran with `DATABASE_URL` set but no database, and passed through the fallback. Run them with the Docker suite (`npm test`).
+
 ## 2026-10-26 — A room's predicate vocabulary is enforced
 
 - **A room created with `cfg.predicates` refuses a claim whose term uses another predicate** (#244). #200 stored the vocabulary, but `submission.create` validated terms with no options, so it was never enforced. The answer is `400 invalid_claim_term`, with `claim_id`, `claim_index`, the term `path` and a message that names the predicate. The vocabulary comes from the room of the submitted round, not from the `room_id` in the request. A room without `predicates` accepts any snake_case predicate, as before. Memory mode follows the same rule.
