@@ -48,7 +48,7 @@ explicitly that they are not current behaviour.
 
 **Better.** Every page under `docs/` describes `main`. There is no category of
 document a reader must first classify before trusting. The corpus shrank from 24
-Markdown files to 17, and `AGENTS.md` from 1429 lines to 121 — which makes the
+Markdown files to 17, and `AGENTS.md` from 1429 lines to about 125 — which makes the
 standards it links to considerably more likely to be read.
 
 **Worse.** Finding old context now requires `git log`, `git show`, or
