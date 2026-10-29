@@ -1,12 +1,13 @@
 ---
-lastUpdated: 2026-08-16
+lastUpdated: 2026-10-29
 ---
 
 # Architecture Decision Records
 
 An ADR records **one decision, the context that forced it, and what it costs**.
 It is written when the decision is made and never edited afterwards except to
-change its status. If the decision is reversed, a new ADR supersedes the old one
+change its status, together with its `lastUpdated` date, which records when that
+change was made. If the decision is reversed, a new ADR supersedes the old one
 and the old one stays exactly as it was.
 
 That immutability is the whole point. A living document tells you what is true;
