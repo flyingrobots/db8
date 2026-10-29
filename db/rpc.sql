@@ -1065,8 +1065,8 @@ BEGIN
   -- Conflict target must match the table's uniqueness key exactly. The nonce is
   -- not in it: a judge resubmitting revises their score rather than adding a
   -- second one that the aggregate would average in and count as another judge.
-  -- created_at is refreshed so the dedup in schema.sql's upgrade block, which
-  -- orders by (created_at, id), agrees with which row this considers current.
+  -- created_at is refreshed so scores_upgrade_unique_key() in schema.sql, which
+  -- keeps the newest row by created_at, agrees with which row is current.
   ON CONFLICT (round_id, judge_id, participant_id)
   DO UPDATE SET e = EXCLUDED.e, r = EXCLUDED.r, c = EXCLUDED.c, v = EXCLUDED.v,
                 y = EXCLUDED.y, client_nonce = EXCLUDED.client_nonce,
