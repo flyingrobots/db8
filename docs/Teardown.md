@@ -820,16 +820,16 @@ gets exactly one implementation.
 
 ## 9. The round lifecycle and the watcher
 
-Rounds advance on deadlines, not on user action. In DB mode the authority is a
-separate process.
+Rounds advance on deadlines and on submissions, not on someone pressing a
+button. In DB mode the authority is a separate process.
 
 ```mermaid
 stateDiagram-v2
     [*] --> submit
-    submit --> published : "submit deadline passes - round_publish_due"
-    published --> submit : "continue vote wins - round_open_next"
-    published --> final : "continue window closes without continuing"
-    final --> [*] : "final votes tallied"
+    submit --> published : "deadline passes or all debaters submitted - round_publish_due"
+    published --> [*] : "continue vote wins - round_open_next opens the next round"
+    published --> final : "continue window closes otherwise - room closes"
+    final --> [*]
 ```
 
 <details>
@@ -841,12 +841,15 @@ is irreversible.
 
 </details>
 
-| From        | To                    | Trigger                       | Actor                           |
-| ----------- | --------------------- | ----------------------------- | ------------------------------- |
-| `submit`    | `published`           | `submit_deadline_unix` passes | watcher → `round_publish_due()` |
-| `published` | `submit` (next round) | continue vote passes          | watcher → `round_open_next()`   |
-| `published` | `final`               | continue window closes        | watcher → `round_open_next()`   |
-| `final`     | closed                | final votes tallied           | watcher                         |
+| From        | To                        | Trigger                                                              | Actor                           |
+| ----------- | ------------------------- | -------------------------------------------------------------------- | ------------------------------- |
+| `submit`    | `published`               | `submit_deadline_unix` passes, or every debater has submitted (#229) | watcher → `round_publish_due()` |
+| `published` | next round opens `submit` | continue window closes with more `continue` than `end`               | watcher → `round_open_next()`   |
+| `published` | `final`                   | continue window closes otherwise                                     | watcher → `round_open_next()`   |
+
+Room status is a separate column with its own transition. When
+`round_open_next()` sets a round to `final`, it sets `rooms.status` from `active`
+to `closed` in the same call. Nothing waits for final votes to be tallied.
 
 The watcher also signs journals for any published round that lacks one, and
 attempts to recover an abandoned barrier — though that recovery is currently
