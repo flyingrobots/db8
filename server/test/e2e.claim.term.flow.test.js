@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import pg from 'pg';
+import { createHash, randomUUID } from 'node:crypto';
 import app, { __setDbPool } from '../rpc.js';
+
+// Ids carry a per-run prefix, so two copies of the suite against one database
+// neither collide on keys nor delete each other's rows (E10).
+const RUN = randomUUID().slice(0, 8);
+const rid = (n) => `${RUN}-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 // The whole feature, driven the way a client meets it: over HTTP, against a
 // real database, through the actual routes.
@@ -48,10 +54,9 @@ for (const mode of MODES) {
 
   run(`end to end (${mode.name}): a structured claim, and a verdict on one of its nodes`, () => {
     let pool;
-    const roomId = '9e2e0000-0000-0000-0000-000000000001';
-    const roundId = '9e2e0000-0000-0000-0000-000000000002';
-    const authorId = '9e2e0000-0000-0000-0000-000000000003';
-    const judgeId = '9e2e0000-0000-0000-0000-000000000004';
+    const roomId = rid(1);
+    const roundId = rid(2);
+    const judgeId = rid(4);
 
     beforeAll(async () => {
       if (!mode.durable) {
@@ -69,8 +74,8 @@ for (const mode of MODES) {
         [roundId, roomId, Math.floor(Date.now() / 1000) + 3600]
       );
       await pool.query(
-        'insert into participants(id, room_id, anon_name, role) values ($1,$2,$3,$4), ($5,$2,$6,$7)',
-        [authorId, roomId, 'e2e_author', 'debater', judgeId, 'e2e_judge', 'judge']
+        'insert into participants(id, room_id, anon_name, role) values ($1,$2,$3,$4)',
+        [judgeId, roomId, 'e2e_judge', 'judge']
       );
     });
 
@@ -81,31 +86,86 @@ for (const mode of MODES) {
       await pool.end();
     });
 
-    const submission = (term) => ({
+    // Nonces are derived from the test's own name rather than Math.random().
+    // Ambient randomness made a failure here unreproducible, and it bought
+    // nothing: submission.create is idempotent on (room, round, author, nonce),
+    // and beforeAll drops the room, so a stable nonce is safe across reruns and
+    // is exactly what the second `npm test` pass exercises (E3, E4).
+    // Each submission has its own author, derived from the run and its nonce.
+    // A participant has one submission per round, so a shared author would turn
+    // every test after the first into a 409; and without the run, two copies of
+    // the suite would share participants and cascade-delete each other's rows.
+    const authorFor = (nonce) => {
+      const h = createHash('sha256').update(`e2e-author-${RUN}-${nonce}`).digest('hex');
+      return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+    };
+    const seatAuthor = async (nonce) => {
+      if (!mode.durable) return;
+      await pool.query(
+        `insert into participants(id, room_id, anon_name, role)
+         values ($1, $2, $3, 'debater') on conflict (id) do nothing`,
+        [authorFor(nonce), roomId, `e2e_author_${nonce}`]
+      );
+    };
+
+    // One deadline for the whole suite. A nonce names one document, and the
+    // deadline is part of its digest: a deadline recomputed per request would
+    // make a replay that crosses a second boundary a different document (409).
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+    const submission = (term, nonce) => ({
       room_id: roomId,
       round_id: roundId,
-      author_id: authorId,
+      author_id: authorFor(nonce),
       phase: 'submit',
-      deadline_unix: Math.floor(Date.now() / 1000) + 3600,
+      deadline_unix: deadline,
       content: 'The evidence on remote work is contested.',
       claims: [
         { id: 'c1', term, support: [{ kind: 'citation', ref: 'https://example.com/study' }] }
       ],
       citations: [{ url: 'https://example.com/a' }, { url: 'https://example.com/b' }],
-      client_nonce: `e2e-${Math.random().toString(36).slice(2)}`
+      client_nonce: `e2e-${mode.name}-${nonce}`
     });
 
-    let submissionId;
-
-    it('accepts a submission carrying a structured claim term', async () => {
+    // Each test that needs a submission makes its own.
+    //
+    // This used to be a `let submissionId` at describe scope, written by the
+    // first test and read by three later ones. That is shared mutable fixture
+    // state (E12): the suite only passed in declaration order, and under
+    // `--sequence.shuffle.tests` the later tests failed with
+    // `submission_id: undefined` because the writer had not run yet (E11).
+    const createSubmission = async (nonce, term = ATTRIBUTED) => {
+      await seatAuthor(nonce);
       const res = await request(app)
         .post('/rpc/submission.create')
-        .send(submission(ATTRIBUTED))
+        .send(submission(term, nonce))
         .expect(200);
 
-      expect(res.body.ok).toBe(true);
-      submissionId = res.body.submission_id;
-      expect(submissionId).toBeTruthy();
+      expect(res.body.ok, `submission.create -> ${JSON.stringify(res.body)}`).toBe(true);
+      expect(res.body.submission_id, 'submission.create must return an id').toBeTruthy();
+      return res.body.submission_id;
+    };
+
+    it('accepts a submission carrying a structured claim term', async () => {
+      const submissionId = await createSubmission('accepts-structured-term');
+
+      // Not just an id: the submission was stored. Replaying the same request
+      // returns the stored row's id rather than making a second one.
+      const replay = await request(app)
+        .post('/rpc/submission.create')
+        .send(submission(ATTRIBUTED, 'accepts-structured-term'))
+        .expect(200);
+      expect(replay.body.submission_id).toBe(submissionId);
+
+      // The transcript shows it only once its round is published (#226). The
+      // durable round is published; the memory round is still in submit.
+      const res = await request(app).get(`/state?room_id=${roomId}`).expect(200);
+      const transcript = res.body.round?.transcript ?? [];
+      const mine = transcript.filter((t) => t.submission_id === submissionId);
+      expect(
+        mine,
+        `submission ${submissionId} in a transcript of ${transcript.length} entries`
+      ).toHaveLength(mode.durable ? 1 : 0);
     });
 
     // The gate that was unreachable for the whole of the previous PR. A route
@@ -119,7 +179,7 @@ for (const mode of MODES) {
 
       const res = await request(app)
         .post('/rpc/submission.create')
-        .send(submission(overDeep))
+        .send(submission(overDeep, 'malformed-term'))
         .expect(400);
 
       expect(res.body.error).toBe('invalid_claim_term');
@@ -139,6 +199,8 @@ for (const mode of MODES) {
     };
 
     it('rules on the attribution and the proposition as separate findings', async () => {
+      const submissionId = await createSubmission('separate-findings');
+
       await postVerdict({
         round_id: roundId,
         reporter_id: judgeId,
@@ -172,6 +234,7 @@ for (const mode of MODES) {
     });
 
     it('refuses a verdict aimed at a node the claim does not have', async () => {
+      const submissionId = await createSubmission('node-not-present');
       const res = await request(app)
         .post('/rpc/verify.submit')
         .send({
@@ -190,6 +253,7 @@ for (const mode of MODES) {
     });
 
     it('refuses a path with no claim to anchor it', async () => {
+      const submissionId = await createSubmission('unanchored-path');
       await request(app)
         .post('/rpc/verify.submit')
         .send({

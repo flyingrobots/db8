@@ -22,6 +22,14 @@ export async function run(args, context) {
     }
     cfg.submit_minutes = m;
   }
+  if (args['continue-seconds'] !== undefined) {
+    const c = Number(args['continue-seconds']);
+    if (!Number.isInteger(c) || c < 10 || c > 3600) {
+      printerr('--continue-seconds must be an integer between 10 and 3600');
+      return EXIT.VALIDATION;
+    }
+    cfg.continue_vote_seconds = c;
+  }
   const payload = {
     topic,
     ...(Object.keys(cfg).length ? { cfg } : {}),

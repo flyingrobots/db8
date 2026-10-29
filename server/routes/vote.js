@@ -1,5 +1,6 @@
 import express from 'express';
 import { ContinueVote, FinalVote } from '../schemas.js';
+import { sendIfDatabaseUnavailable } from '../database-unavailable.js';
 
 export function createVoteRouter({ voteService, requireDbInProduction }) {
   const router = express.Router();
@@ -11,6 +12,7 @@ export function createVoteRouter({ voteService, requireDbInProduction }) {
       const result = await voteService.castContinueVote(input);
       return res.json({ ok: true, ...result });
     } catch (err) {
+      if (sendIfDatabaseUnavailable(res, err)) return;
       console.error('[vote.continue] error:', err);
       return res.status(400).json({ ok: false, error: err?.message || String(err) });
     }
@@ -23,6 +25,7 @@ export function createVoteRouter({ voteService, requireDbInProduction }) {
       const result = await voteService.castFinalVote(input);
       return res.json({ ok: true, ...result });
     } catch (err) {
+      if (sendIfDatabaseUnavailable(res, err)) return;
       const msg = String(err?.message || '');
       console.error('[vote.final] error:', err);
       if (/not a participant/.test(msg)) return res.status(403).json({ ok: false, error: msg });

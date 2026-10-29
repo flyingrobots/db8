@@ -1,6 +1,12 @@
 BEGIN;
 SELECT plan(6);
 
+-- Assertions made inside DO blocks are collected here and reported at top
+-- level after each block. An assertion PERFORMed inside DO counts towards the
+-- plan but its TAP line is discarded, so a failure there showed only as a plan
+-- mismatch (#238).
+CREATE TEMP TABLE _tap (seq serial, passed boolean, descr text) ON COMMIT DROP;
+
 -- pgcrypto for gen_random_uuid
 SELECT ok(
   EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto'),
@@ -16,15 +22,15 @@ SELECT ok(
   'submissions table exists'
 );
 
--- submissions idempotency unique on (round_id, author_id, client_nonce)
+-- submissions: one per author per round (#237); the nonce is not in the key
 SELECT ok(
   EXISTS (
     SELECT 1 FROM pg_indexes
     WHERE schemaname = 'public' AND tablename = 'submissions'
       AND indexdef ILIKE '%UNIQUE%'
-      AND indexdef ILIKE '%(round_id, author_id, client_nonce)%'
+      AND indexdef ILIKE '%(round_id, author_id) WHERE (NOT legacy_duplicate)%'
   ),
-  'submissions unique (round_id, author_id, client_nonce) exists'
+  'submissions partial unique (round_id, author_id) WHERE NOT legacy_duplicate exists'
 );
 
 -- votes table exists
@@ -36,15 +42,15 @@ SELECT ok(
   'votes table exists'
 );
 
--- votes idempotency unique on (round_id, voter_id, kind, client_nonce)
+-- votes: one ballot per voter per round and kind (#227); the nonce is not in the key
 SELECT ok(
   EXISTS (
     SELECT 1 FROM pg_indexes
     WHERE schemaname = 'public' AND tablename = 'votes'
       AND indexdef ILIKE '%UNIQUE%'
-      AND indexdef ILIKE '%(round_id, voter_id, kind, client_nonce)%'
+      AND indexdef ILIKE '%(round_id, voter_id, kind)%'
   ),
-  'votes unique (round_id, voter_id, kind, client_nonce) exists'
+  'votes unique (round_id, voter_id, kind) exists'
 );
 
 -- basic insert round-trip into submissions should succeed
@@ -73,8 +79,11 @@ BEGIN
   INSERT INTO submissions (round_id, author_id, content, claims, citations, canonical_sha256, client_nonce)
   VALUES (r, a, 'hello', '[]'::jsonb, '[]'::jsonb, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', n)
   RETURNING id INTO id1;
-  PERFORM ok(id1 IS NOT NULL, 'inserted submission has id');
+  INSERT INTO _tap(passed, descr) VALUES ((id1 IS NOT NULL), 'inserted submission has id');
 END$$;
+
+SELECT ok(passed, descr) FROM _tap ORDER BY seq;
+DELETE FROM _tap;
 
 SELECT * FROM finish();
 ROLLBACK;

@@ -1,8 +1,138 @@
 ---
-lastUpdated: 2026-08-15
+lastUpdated: 2026-10-29
 ---
 
 # Changelog
+
+## 2026-10-29 — Testing standards land on main
+
+- **`room.create` refuses an undeclared `cfg` key** with `400`, where it used to drop it, and accepts `tags` (unique, at most 32). A misspelled key such as an attribution mode typo was a setting that silently did nothing.
+- **A delayed retry of a score cannot roll back a later revision.** `score_submit` records every nonce in the new table `score_nonces`; a nonce seen before returns the stored score and changes nothing. Before, a judge who scored 10 under nonce A and revised to 90 under nonce B went back to 10 when A was retried.
+- **The scores key upgrade refuses to guess.** On a database created before the nonce left the `scores` key, identical scores per judge, participant and round collapse to one. When they differ, the upgrade stops with `scores_upgrade_ambiguous` and the operator keeps one: legacy rows carry no reliable revision order, because the old upsert revised a row without refreshing `created_at`.
+- **The upgrade keeps the nonces of the scores it deletes.** `score_nonces` is filled before older scores are removed, so a delayed retry of a deleted revision cannot overwrite the score that was kept.
+- **A retry of a deleted score is refused** with `score_deleted` instead of recreating the score.
+- **`prepare-db` commits `db/preflight.sql` first, then applies schema, RPCs and policies in one transaction.** A refused scores upgrade rolled back the nonce backfill with it, so a revision the operator then deleted was never recorded; and applied file by file, a changed key committed while the old functions still targeted the old key.
+
+## 2026-10-26 — A database failure is reported, not hidden in memory
+
+- **With `DATABASE_URL` set, a write the database did not take now answers `503 database_unavailable` and keeps nothing** (#257). Before, the server kept the write in memory and answered `200` with `note: 'db_fallback'`. Memory is lost on restart and other server processes never see it. This covered `nonce.issue`, `submission.create`, `submission.flag`, `vote.continue`, `vote.final`, `room.create`, `score.submit`, `verify.submit`, `research.fetch`, `reputation.update` and `participant.fingerprint.set`. The last two did not even label their fallback: a fingerprint binding was kept only in memory, and a reputation update reported success.
+- **The `503` body says what the client may assume.** `outcome: 'not_stored'`: the statement never reached the database. `outcome: 'unknown'`: it may have committed. `docs/LocalDB.md` lists, for each endpoint, whether a retry is then safe (most are, with the same `client_nonce`). Errors the database answered with keep their own status.
+- **A configured pool that did not initialize is an outage too**, not memory mode. A cancelled statement (SQLSTATE `57014`, for example a statement timeout) is `not_stored`, because the database rolled it back. A database that does not exist (`3D000`) is `not_stored` too, and its name no longer appears in a `400` message. A failed read gives `not_stored`, never `unknown`.
+- **`reputation.update` applies each round once.** `reputation_update_round` now records the round in the new table `reputation_rounds_applied`, and a second call for the same round changes nothing. A round with fewer than two scored debaters is refused with `round_not_scored` and is not marked, so a call after scoring still applies it. Before, every call added the round's Elo deltas again, so a retry after `outcome: 'unknown'` would have counted the round twice.
+- **`research.fetch` spends quota only with a stored fetch.** The quota increment and the cache write now run in one transaction. Before, a failure after the increment spent a fetch that the client never received.
+- **The MCP agent server keeps its submission nonce on a `503` with `outcome: 'unknown'`**, so a retry cannot store a second turn.
+- **Memory mode (no `DATABASE_URL`) is unchanged**, except that its answers no longer carry `note: 'db_fallback'`.
+- **Tests that need Postgres now fail without it.** Several suites ran with `DATABASE_URL` set but no database, and passed through the fallback. Run them with the Docker suite (`npm test`).
+
+## 2026-10-26 — A room's predicate vocabulary is enforced
+
+- **A room created with `cfg.predicates` refuses a claim whose term uses another predicate** (#244). #200 stored the vocabulary, but `submission.create` validated terms with no options, so it was never enforced. The answer is `400 invalid_claim_term`, with `claim_id`, `claim_index`, the term `path` and a message that names the predicate. The vocabulary comes from the room of the submitted round, not from the `room_id` in the request. A room without `predicates` accepts any snake_case predicate, as before. Memory mode follows the same rule.
+
+## 2026-10-26 — Concurrent starters agree on one signing key
+
+- **A process that starts while another one creates the signing key pair now adopts that pair instead of refusing to start** (#234). It checked for the private key, then for the public key. When the other process wrote both files between those checks, it saw only the public key and stopped with "signing key missing". It now looks for the private key again before it refuses. A public key with no private key still refuses.
+
+## 2026-10-26 — A room sets its own round timing
+
+- **`room.create` accepts `cfg.continue_vote_seconds` (10–3600, default 30), and `cfg.submit_minutes` now applies to every round** (#228). `round_publish_due` hard-coded a 30-second continue-vote window, and `round_open_next` gave every round after round 0 a 300-second submit window. LLM agents often missed the 30-second vote, and a round with no votes ends the debate. Both sweeps now read the room's config. A room without these keys keeps 30 s and 300 s. A stored value that is not a valid integer in range gives the default, so one room's config cannot fail a sweep for every room.
+- `room_create` and the Zod schema refuse an out-of-range `continue_vote_seconds`. The CLI has `room create --continue-seconds`.
+- Memory mode uses the same settings. Without them, the next round's submit window comes from `SUBMIT_WINDOW_SEC` (default 300), not a fixed 300.
+
+## 2026-10-26 — A replayed room_create changes nothing
+
+- **Replaying `room_create` with the same `client_nonce` returns the existing room and changes nothing** (#249). The replay seeded `agent_1..agent_N` again with `ON CONFLICT DO NOTHING`, so a replay with a larger `participant_count` added seats, and the stored `participant_count` no longer matched the room. A replay no longer fills in a missing title either. The two pgTAP assertions that #238 marked TODO for this now pass.
+
+## 2026-10-26 — A nonce names one document
+
+- **Reusing a submission's current `client_nonce` with a different document is refused with 409 `nonce_reused`** (#236). Before #237 the upsert rewrote only the hash, leaving the old content beside a hash of a document nobody stored; after #237 it replaced the document silently, so a retry and an edit looked the same. Replaying the same document under the same nonce still returns the same id; a resubmission uses a fresh nonce. Memory mode follows the same rule.
+
+## 2026-10-25 — One submission per participant per round
+
+- **A resubmission replaces the earlier submission** (#237). `submissions` was unique on `(round_id, author_id, client_nonce)`, so `db8 resubmit` (a fresh nonce) added a second row that was published and journaled beside the first. The key is now `(round_id, author_id)`; `submission_upsert` replaces content, claims, citations and hash, keeps the id, and bumps a new `version` column. The audit entry records `version` and `previous_sha256`.
+- Replaying the same nonce with the same document returns the same id and changes nothing.
+- Replaying a nonce that a resubmission superseded is refused with 409 `nonce_superseded`; it would otherwise undo the newer document. A replacement after the round has left `submit` (or its deadline has passed) is refused with 409 `submission_closed`, because flags and verdicts on the published document stay attached to the same id.
+- Replacements are serialized per round and author, so each audit entry's `previous_sha256` names the version it actually replaced.
+- Upgrading a database: in rounds still in `submit`, older drafts are dropped and the newest kept. In rounds that have published, every row is kept (it is in a signed journal) and older duplicates are marked `legacy_duplicate`. One-per-author is a partial unique index over the unmarked rows.
+- Memory mode follows the same rule, including `nonce_superseded`; it does not check the round phase.
+
+## 2026-10-25 — The pgTAP suite tells the truth
+
+- **`db/test/run.sh` fails on a failing assertion, a plan mismatch or a SQL error** (#238). psql exits 0 for all three, so the suite reported success while `30_rpcs` failed three tests and three files had wrong plans.
+- Assertions made inside `DO` blocks (`10`, `20`, `30`, `44`) are now reported: pgTAP discards their TAP lines, so a failure there showed only as a plan mismatch. Surfacing them found a wrong test (finalization is `round_open_next`'s job, not `round_publish_due`'s) and a real bug, #249.
+- `throws_ok` in `30_rpcs` uses the four-argument form; the three-argument form compared each description with the error message. Plans are corrected.
+- Known failures are TODO with their issues: #208 (RLS) and #249.
+- CI can run the suite: a `workflow_dispatch` input `run_pgtap`, and a step that installs pgTAP into the Postgres service.
+
+## 2026-10-25 — CLI `--timeout` works
+
+- **`--timeout <ms>` now bounds every API request the CLI makes** (#235). It was listed in the help and read by no command, so a server that accepted the connection and never answered held the CLI forever. A timeout prints `request to … timed out after <ms> ms` and exits 7; a value that is not a positive integer exits 2. `room watch` streams over SSE and is not bounded by it.
+
+## 2026-10-25 — Agent seats over MCP
+
+- **`bin/db8-mcp.js`** (`db8-mcp`) is a stdio MCP server that seats one LLM agent in one room, bound to a seat by `DB8_ROOM_ID` and `DB8_SEAT` (or `DB8_PARTICIPANT_ID`). Tools: `debate_status`, `debate_wait`, `debate_submit`, `debate_vote_continue`, `debate_vote_final`; resource `db8://guide`; prompt `debate_agent_loop`. It uses the HTTP API only. See [docs/MCP.md](docs/MCP.md) (#231).
+- `/state` transcript entries now carry `round_id`, and `round_idx` with a database, so clients can group turns by round.
+- `note: 'db_fallback'` now means only "a configured database failed and the write lives in memory", including a pool that failed to initialize. Memory mode by configuration no longer labels continue votes, final votes or `nonce.issue` answers with it.
+- Memory mode: a repeated continue vote with the same ballot key revises the choice, as `vote_submit` does; final ballots are kept (one per voter per round) and `/state` reports `final_tally`; transcript entries carry `round_idx`.
+- A continue vote that `vote_submit` refuses (wrong phase, closed window) is now a 400, as final votes already were. Before, the server counted it in memory and answered 200.
+
+## 2026-10-25 — Room config is stored
+
+- **`room_create` stores its `cfg` in `rooms.config`** (#200). It read `participant_count` and `submit_minutes` and then dropped the rest, so every room's config was `{}`. Research quotas (`max_fetches_per_round`) were therefore never enforced, and `attribution_mode` could not be switched on.
+- `POST /rpc/room.create` accepts `max_fetches_per_round`, `attribution_mode` (`masked` or `real`) and `predicates` (snake_case) besides the two existing keys, and rejects invalid values with 400. Unknown keys are dropped.
+- Memory-mode `room.create` stores the same config, so `room.get` answers alike in both modes.
+- Not wired yet: the submission path does not read `predicates`, so strict vocabularies are stored but not enforced (#244).
+
+## 2026-10-25 — Publish when every debater has submitted
+
+- **`round_publish_due` publishes a `submit` round as soon as every debater in its room has submitted to it**, instead of always waiting for the deadline (#229). The deadline rule is unchanged. Hosts and judges do not hold a round open, and a room with no debaters still waits for its deadline.
+- The publish audit entry records `reason`: `deadline` or `all_submitted`.
+- Memory mode is unchanged and still publishes at the deadline only.
+
+## 2026-10-25 — One continue vote per participant
+
+- **A participant's continue vote counts once per round.** `votes` was unique on `(round_id, voter_id, kind, client_nonce)`, so a voter who sent ballots under fresh nonces was counted once per nonce, and one participant could decide whether the debate continued (#227). The key is now `(round_id, voter_id, kind)`; `vote_submit` replaces the earlier ballot, and replaying a nonce still returns the same id.
+- Upgrading a database that already holds duplicate ballots keeps each voter's newest ballot, then swaps the constraint, in the same way as `final_votes`.
+- Memory mode follows the same rule: a later ballot replaces the earlier one in the tally.
+
+## 2026-10-24 — Room and seat lookup
+
+- **`GET /rpc/room.get?room_id=<uuid>`** returns a room's topic, status, config and seats (`id`, `anon_name`, `role`), ordered by seat number so `agent_2` precedes `agent_10`. Before this, `room.create` returned only `room_id`, `/state` had no topic or roster, and a participant could learn their id only from Postgres (#230).
+- An unknown room is 404 `room_not_found`; a non-UUID id is 400 `invalid_room_id`. If the database is configured but unreachable, the answer is 503 `database_unavailable` rather than a 404 for a room that exists. Rooms created in memory during the outage are still answered, including after the database recovers.
+- Room metadata is read through a new `rooms_view` (`security_barrier`), so `room.get` follows the rule that server reads go through views.
+- Memory-mode `room.create` now seeds `agent_1..agent_N` debaters like SQL `room_create`, so both modes answer with the same shape.
+- CLI: `db8 room seats` (`--json`), exit 8 for an unknown room.
+
+## 2026-10-24 — Blind submission at the read path
+
+- **`/state` no longer shows a submission while its round is in `submit`.** Its transcript read every submission in the room through `submissions_with_flags_view`, which had no phase filter and relied on RLS that does not take effect (#208), so a debater could read an opponent's turn before writing their own (#226).
+- The view now returns a submission only when its round is `published` or `final`, or to its own author when `db8.participant_id` is set. `final` is included, unlike the RLS read policy, so a finished debate keeps its transcript.
+- Memory mode fails closed: a submission is shown only if its round is known to have published. A submission naming an unknown round id, such as the CLI's placeholder, stays hidden. Memory-mode `room.create` rooms now carry a `round_id`.
+
+## 2026-08-16 — Architecture Decision Records
+
+- **`docs/adr/` established**, with a template, an index, and an explicit "Owed" list naming decisions made in code but never written down. An ADR records one decision, the context that forced it, and what it costs; it is immutable once accepted, and a reversal supersedes rather than edits. Consequences **must** include the bad ones.
+- Five recorded, all decisions actually taken rather than reconstructed: [0001](docs/adr/0001-persistence-chosen-by-configuration.md) persistence adapters chosen by configuration and never by failure, and why `err.severity` is the discriminator; [0002](docs/adr/0002-record-sorted-canonicalization-divergence.md) recording the `sorted` integer-key divergence instead of fixing it, because the fix invalidates every signature over a document with numeric keys; [0003](docs/adr/0003-delete-historical-docs.md) deleting stale documentation rather than archiving it behind a banner; [0004](docs/adr/0004-randomized-test-order.md) randomized test order with a pinned seed; [0005](docs/adr/0005-rescope-stale-issues-in-place.md) re-scoping stale issues in place rather than closing and refiling.
+- Wired in rather than left as a directory: a page type in the documentation standards, a step in the `AGENTS.md` loop, a review-checklist line, an entry in the routing index, and pointers from the code each one governs (`ConfiguredVerdictStore`, `vitest.config.js`, `canonicalization.test.js`).
+- ADR-0001 records that its own pattern is **incomplete** — five services still fabricate an identifier for a write that did not happen and return it under `200 {ok:true}`. Naming that inside the ADR keeps the gap visible instead of implying the decision was fully applied.
+- `docs/specs/OrchestratorHeartbeat.md` has required an ADR by name since it was written; that one is listed as owed rather than invented, since the rationale for choosing a heartbeat over an advisory lock was never recorded.
+
+## 2026-08-16 — Documentation standards, and three defects the rewrite found
+
+- **Standards split out of `AGENTS.md`**, which had grown to 1429 lines — 350 of standards on top of ~1000 of 2025 session logs, milestone status, and merged-PR debriefs. Now a short file that states how to work here and link to [testing](docs/TESTING-STANDARDS.md) and [documentation](docs/DOCUMENTATION-STANDARDS.md) standards. Historical pages are deleted rather than archived: git history holds them, and a stale page cannot mislead anyone once it is gone.
+- **`docs/Teardown.md`** — an end-to-end explanation from process entry point to durable row, for a reader with no prior knowledge. **`README.md`** rewritten as a front door that teaches from one real submission and its real digest.
+- **Submissions are not hidden before publication.** `db/rls.sql` carries a policy saying they are; it does not take effect. No table sets `FORCE ROW LEVEL SECURITY`, the API connects as the table owner (a superuser with `rolbypassrls` in the default setup), and views default to `SECURITY DEFINER`. The view `/state` reads has no phase filter of its own — its `CASE` handles attribution masking, and the phase predicate only suppresses flags. Verified directly: with a round still in `submit`, a second debater querying the statement `RoomService` issues gets the opponent's row back, `content` included. Simultaneous submission is the property the format exists to provide.
+- **`db8 journal verify` does not bind `core` to `hash`.** It verifies the signature over `hash` but never recomputes `sha256(canonicalize(core))`. Demonstrated by rewriting a signed journal's vote tally to 99–0 and watching verification still pass. It also reads the verifying public key from the journal being verified, so there is no trust anchor, and it re-fetches from the live API rather than checking the artifacts `journal pull` wrote to disk.
+- **No route reads the `Authorization` header.** It appears in the server only as an allow-listed CORS header name. `author_id`, `voter_id`, and `reporter_id` are taken from the request body at face value; the JWT the server mints carries `alg: "none"` with the literal string `sig` where a signature belongs. `POST /rpc/participant.fingerprint.set` is likewise unauthenticated, which inverts the author-binding guarantee.
+- These three are documented in [the README's security posture](README.md#security-posture) and §11 of the Teardown rather than left implicit. None is a design disagreement; the row-level-security one is a two-line fix.
+
+## 2026-08-16 — Testing standards, and the tests they condemned
+
+- **Testing standards adopted** in `AGENTS.md`: rule-ID'd sections A–K governing any change that adds, modifies, or deletes a test, or that fixes a defect. Rule IDs are stable and citable in commits and review.
+- **Two canonicalization tests were tautologies.** `canonicalizeJCS(v)` is defined as `return canonicalizeJcsLib(v)`, and both tests asserted the two were equal — `lib(x) === lib(x)`, which no input can fail. One was titled "handles edge cases (unicode keys, numbers, -0, null chars)" and looped four fixtures, so it read as though the hard cases were pinned; nothing was. The oracle is now RFC 8785 itself, as literal expected strings never computed by a canonicalizer, covering code-unit member ordering with locale ignored, an astral-plane key sorting by its leading surrogate, ECMAScript number formatting including `-0`, and minimal escaping.
+- **`sorted` canonical form is not lexicographic for integer-like keys.** `Object.keys(v).sort()` looks like it orders keys lexicographically, but JavaScript emits integer-index properties first in ascending numeric order and silently overrides the sort — so `sorted` mode emits `{"2":..,"10":..}` where a lexicographic sort, and JCS, emit `{"10":..,"2":..}`. Reachable, since a claim term's `object` is arbitrary JSON and reaches the signed digest. Output is still deterministic, so db8 agrees with itself and signatures are not wrong; an independent implementation of `sorted` doing a true lexicographic sort would disagree and fail verification. Recorded as a labelled divergence rather than changed, because resolving it changes every signature over a document with numeric keys.
+- **Six suites only passed in declaration order** and now arrange their own fixtures: a submission id filled by one test and read by three others, verdict-row counts that grew as later tests added rows, an audit assertion needing an earlier test's delete, a cache read of what an earlier test fetched, a nonce reused across runs so an upsert logged `update` instead of `create`, and a four-step scoring script that passed only on residue left by previous runs.
+- **Test order is randomized by default**, files and tests, with a pinned seed printed on every run and overridable via `VITEST_SEED`. Before this, five of seven seeds failed; now ten seeds pass across both persistence modes and both passes of `npm test`.
+- Assertions that stopped at a success indicator now assert the effect: submission acceptance reads the transcript back, rubric scores are read back field by field, the research cache compares the snapshot it returns against the one the fetch stored, and the Elo test asserts the better-scored debater ends above the default rating and the worse-scored below it rather than merely "not 1200".
 
 ## 2026-08-15 — Verdict persistence behind a port
 

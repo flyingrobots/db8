@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFile as _execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import crypto from 'node:crypto';
@@ -139,6 +139,37 @@ describe('persistent signing keys', () => {
     // pair here would silently invalidate everything ever signed under the
     // published key, which is the failure mode worth being loud about.
     expect(() => getPersistentSigningKeys()).toThrow(/private/i);
+  });
+
+  // #234: a starter that saw no private key, then saw the public key another
+  // starter had just published, refused to start although the private key it
+  // needed was already on disk. It now looks for the private key again.
+  it('adopts the pair another starter publishes between its existence checks', () => {
+    const winner = crypto.generateKeyPairSync('ed25519', {
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+    });
+    const realExists = fs.existsSync.bind(fs);
+    let raced = false;
+    const spy = vi.spyOn(fs, 'existsSync').mockImplementation((p) => {
+      const seen = realExists(p);
+      if (p === privPath && !raced) {
+        // The other starter links its private key and publishes the public
+        // half right after this check returns false.
+        raced = true;
+        fs.writeFileSync(privPath, winner.privateKey, { mode: 0o600 });
+        fs.writeFileSync(pubPath, winner.publicKey);
+      }
+      return seen;
+    });
+    try {
+      const keys = getPersistentSigningKeys();
+      expect(raced).toBe(true);
+      expect(keys.privateKeyPem).toBe(winner.privateKey);
+      expect(pairMatches(keys.privateKeyPem, keys.publicKeyPem)).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('rejects a persisted pair whose halves do not correspond', () => {

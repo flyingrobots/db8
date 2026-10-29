@@ -18,7 +18,7 @@
     "test": "if [ \"$CI\" = \"true\" ]; then npm run test:inner; else npm run test:docker; fi",
     "test:docker": "bash ./scripts/test-docker.sh",
     "test:prepare-db": "node ./scripts/prepare-db.js",
-    "test:inner": "vitest run",
+    "test:inner": "node scripts/vitest-run.js",
     "typecheck": "echo 'No TypeScript. \u2705'",
     "bootstrap": "bash ./scripts/bootstrap.sh",
     "dev:db": "docker compose up -d db && sleep 2 && echo 'DB on :54329'",
@@ -40,7 +40,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "cspell": "^8.13.2",
+    "cspell": "^10.4.0",
     "eslint": "^10.8.1",
     "eslint-import-resolver-alias": "^1.1.2",
     "eslint-plugin-import": "^2.29.1",
@@ -55,19 +55,21 @@
     "markdownlint": "^0.41.1",
     "markdownlint-cli": "^0.45.0",
     "prettier": "^3.9.6",
-    "supertest": "^7.0.0",
+    "supertest": "^7.3.1",
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "canonicalize": "2.1.0",
     "express": "^5.1.0",
     "zod": "^4.4.3"
   },
   "optionalDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "^4.54.0",
+    "@rollup/rollup-linux-x64-gnu": "^4.65.1",
     "pg": "^8.13.1"
   },
   "bin": {
-    "db8": "./bin/db8.js"
+    "db8": "./bin/db8.js",
+    "db8-mcp": "./bin/db8-mcp.js"
   }
 }

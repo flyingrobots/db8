@@ -132,8 +132,9 @@ describeDb('final vote integrity', () => {
       ).rejects.toThrow(/final phase/i);
     });
 
-    it('still falls back to memory when the database is genuinely unreachable', async () => {
+    it('refuses with database_unavailable when the database is unreachable (#257)', async () => {
       const { VoteService } = await import('../services/VoteService.js');
+      const memFinalVotes = new Map();
       const service = new VoteService({
         dbRef: {
           pool: {
@@ -145,17 +146,20 @@ describeDb('final vote integrity', () => {
           }
         },
         memVotes: new Map(),
-        memVoteTotals: new Map()
+        memVoteTotals: new Map(),
+        memFinalVotes
       });
 
-      const result = await service.castFinalVote({
-        round_id: roundId,
-        voter_id: voterId,
-        approval: true,
-        ranking: [],
-        client_nonce: 'unreachable-may-fall-back'
-      });
-      expect(result.vote_id).toBeTruthy();
+      await expect(
+        service.castFinalVote({
+          round_id: roundId,
+          voter_id: voterId,
+          approval: true,
+          ranking: [],
+          client_nonce: 'unreachable-is-refused'
+        })
+      ).rejects.toMatchObject({ message: 'database_unavailable', outcome: 'not_stored' });
+      expect(memFinalVotes.size).toBe(0);
     });
   });
 });

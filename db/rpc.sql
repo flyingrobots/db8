@@ -1,8 +1,28 @@
 -- db/rpc.sql — SQL RPCs for room lifecycle, idempotent submissions, and round operations
 -- room_create parameters:
 --   participant_count: default 4, allowed range [1..64]
---   submit_minutes:    default 5, allowed range [1..1440]
+--   submit_minutes:    default 5, allowed range [1..1440]; the submit window
+--                      of every round (round_open_next reads it, #228)
+--   continue_vote_seconds: default 30, allowed range [10..3600]; the
+--                      continue-vote window (round_publish_due reads it)
 --   client_nonce:      optional idempotency token; reuse to get the same room_id
+
+-- An integer setting from a room's config, for the round sweeps (#228). An
+-- absent, non-integer or out-of-range value gives the default, so one room's
+-- bad config cannot fail a sweep that runs for every room. room_create refuses
+-- out-of-range values when a room is created.
+CREATE OR REPLACE FUNCTION room_cfg_int(
+  p_cfg jsonb, p_key text, p_default integer, p_min integer, p_max integer
+) RETURNS integer
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT CASE
+    WHEN COALESCE(p_cfg->>p_key, '') !~ '^\s*-?[0-9]{1,9}\s*$' THEN p_default
+    WHEN trim(p_cfg->>p_key)::integer BETWEEN p_min AND p_max THEN trim(p_cfg->>p_key)::integer
+    ELSE p_default
+  END
+$$;
 
 CREATE OR REPLACE FUNCTION room_create(
   p_topic text,
@@ -15,6 +35,7 @@ DECLARE
   v_room_id uuid;
   v_participants integer := COALESCE(NULLIF(p_cfg->>'participant_count', '')::int, 4);
   v_submit_minutes integer := COALESCE(NULLIF(p_cfg->>'submit_minutes', '')::int, 5);
+  v_continue_seconds integer := COALESCE(NULLIF(p_cfg->>'continue_vote_seconds', '')::int, 30);
   v_now bigint := extract(epoch from now())::bigint;
   v_submit_deadline bigint;
   v_client_nonce text := NULLIF(p_client_nonce, '');
@@ -29,13 +50,28 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  -- The continue-vote window of every round (#228); read by round_publish_due.
+  IF v_continue_seconds < 10 OR v_continue_seconds > 3600 THEN
+    RAISE EXCEPTION 'continue_vote_seconds out of range [10..3600]: %', v_continue_seconds
+      USING ERRCODE = '22023';
+  END IF;
+
   v_submit_deadline := v_now + (v_submit_minutes::bigint * 60);
 
-  INSERT INTO rooms (title, client_nonce)
-  VALUES (NULLIF(p_topic, ''), v_client_nonce)
-  ON CONFLICT (client_nonce)
-    DO UPDATE SET title = COALESCE(rooms.title, EXCLUDED.title)
+  -- The config is stored as given (#200); it was read for the values above
+  -- and then dropped.
+  INSERT INTO rooms (title, client_nonce, config)
+  VALUES (NULLIF(p_topic, ''), v_client_nonce, COALESCE(p_cfg, '{}'::jsonb))
+  ON CONFLICT (client_nonce) DO NOTHING
   RETURNING id INTO v_room_id;
+
+  -- A replayed nonce returns the existing room and changes nothing: not its
+  -- title, config, rounds or seats (#249). Seeding again here added seats when
+  -- the replay asked for more than the first creation.
+  IF v_room_id IS NULL THEN
+    SELECT id INTO v_room_id FROM rooms WHERE client_nonce = v_client_nonce;
+    RETURN v_room_id;
+  END IF;
 
   INSERT INTO rounds (room_id, idx, phase, submit_deadline_unix)
   VALUES (v_room_id, 0, 'submit', v_submit_deadline)
@@ -84,31 +120,91 @@ CREATE OR REPLACE FUNCTION submission_upsert(
 ) RETURNS uuid
 LANGUAGE plpgsql
 AS $$
-DECLARE 
+DECLARE
   v_id uuid;
-  v_exists boolean;
+  v_prev record;
+  v_round record;
+  v_version integer;
+  v_now bigint := extract(epoch from now())::bigint;
 BEGIN
-  SELECT EXISTS(
-    SELECT 1 FROM submissions 
-    WHERE round_id = p_round_id AND author_id = p_author_id AND client_nonce = p_client_nonce
-  ) INTO v_exists;
+  -- One submission per participant per round (#237). Serialise per round and
+  -- author first, so a concurrent replacement cannot read a version that is
+  -- about to be replaced and record the wrong previous_sha256.
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_round_id::text || ':' || p_author_id::text, 0));
+  -- Hold the round row against publication until this transaction commits.
+  -- FOR SHARE conflicts with round_publish_due's UPDATE: a publish in progress
+  -- makes this wait and then see the round published, and a write in progress
+  -- makes the publish wait for it. Without it, a replacement could read
+  -- 'submit', the round publish and sign the previous hash, and the
+  -- replacement then commit new content under the same id.
+  SELECT phase, submit_deadline_unix INTO v_round FROM rounds WHERE id = p_round_id FOR SHARE;
+
+  SELECT id, canonical_sha256, client_nonce, version INTO v_prev
+    FROM submissions
+   WHERE round_id = p_round_id AND author_id = p_author_id AND NOT legacy_duplicate;
+
+  IF FOUND THEN
+    -- Replaying the current nonce with the same document changes nothing.
+    IF v_prev.client_nonce = p_client_nonce AND v_prev.canonical_sha256 = p_canonical_sha256 THEN
+      RETURN v_prev.id;
+    END IF;
+    -- The same nonce with a different document (#236). A nonce names one
+    -- document; a resubmission takes a fresh nonce. Rewriting what this nonce
+    -- named would make a retry and an edit indistinguishable.
+    IF v_prev.client_nonce = p_client_nonce THEN
+      RAISE EXCEPTION 'nonce_reused' USING ERRCODE = '22023',
+        DETAIL = 'this nonce already names a different document; resubmit with a fresh nonce';
+    END IF;
+    -- A nonce this submission was stored under before was superseded by a
+    -- resubmission. Replaying it would silently undo the newer document.
+    IF EXISTS (
+      SELECT 1 FROM submission_nonce_log
+       WHERE submission_id = v_prev.id
+         AND client_nonce = p_client_nonce
+         AND client_nonce <> v_prev.client_nonce
+    ) THEN
+      RAISE EXCEPTION 'nonce_superseded' USING ERRCODE = '22023',
+        DETAIL = 'a newer submission replaced the one stored under this nonce';
+    END IF;
+    -- A replacement keeps the submission id, and with it any flags and
+    -- verdicts. Once the round has left submit (or its deadline has passed),
+    -- those ruled on the published document, so the document is frozen.
+    IF v_round.phase IS DISTINCT FROM 'submit'
+       OR (v_round.submit_deadline_unix > 0 AND v_round.submit_deadline_unix < v_now) THEN
+      RAISE EXCEPTION 'submission_closed' USING ERRCODE = '22023',
+        DETAIL = 'the round is no longer accepting replacements';
+    END IF;
+  END IF;
 
   INSERT INTO submissions (round_id, author_id, content, claims, citations, status,
                            submitted_at, canonical_sha256, client_nonce)
   VALUES (p_round_id, p_author_id, p_content, p_claims, p_citations,
           'submitted', now(), p_canonical_sha256, p_client_nonce)
-  ON CONFLICT (round_id, author_id, client_nonce)
-  DO UPDATE SET canonical_sha256 = EXCLUDED.canonical_sha256
-  RETURNING id INTO v_id;
+  ON CONFLICT (round_id, author_id) WHERE NOT legacy_duplicate
+  DO UPDATE SET content = EXCLUDED.content,
+                claims = EXCLUDED.claims,
+                citations = EXCLUDED.citations,
+                canonical_sha256 = EXCLUDED.canonical_sha256,
+                client_nonce = EXCLUDED.client_nonce,
+                submitted_at = now(),
+                version = submissions.version + 1
+  RETURNING id, version INTO v_id, v_version;
+
+  INSERT INTO submission_nonce_log (submission_id, client_nonce, canonical_sha256)
+  VALUES (v_id, p_client_nonce, p_canonical_sha256)
+  ON CONFLICT (submission_id, client_nonce)
+    DO UPDATE SET canonical_sha256 = EXCLUDED.canonical_sha256;
 
   PERFORM admin_audit_log_write(
-    CASE WHEN v_exists THEN 'update' ELSE 'create' END,
+    CASE WHEN v_prev.id IS NULL THEN 'create' ELSE 'update' END,
     'submission',
     v_id,
     p_author_id,
     NULL,
     jsonb_build_object('client_nonce', p_client_nonce),
-    jsonb_build_object('canonical_sha256', p_canonical_sha256)
+    jsonb_build_object('canonical_sha256', p_canonical_sha256, 'version', v_version)
+      || CASE WHEN v_prev.id IS NULL THEN '{}'::jsonb
+              ELSE jsonb_build_object('previous_sha256', v_prev.canonical_sha256) END
   );
 
   RETURN v_id;
@@ -175,8 +271,12 @@ BEGIN
 
   INSERT INTO votes (round_id, voter_id, kind, ballot, client_nonce)
   VALUES (p_round_id, p_voter_id, p_kind, p_ballot, p_client_nonce)
-  ON CONFLICT (round_id, voter_id, kind, client_nonce)
-  DO UPDATE SET ballot = EXCLUDED.ballot
+  -- Keyed on the voter, not the nonce (#227): a later ballot replaces the
+  -- earlier one instead of being counted beside it.
+  ON CONFLICT (round_id, voter_id, kind)
+  DO UPDATE SET ballot = EXCLUDED.ballot,
+                client_nonce = EXCLUDED.client_nonce,
+                created_at = now()
   RETURNING id INTO v_id;
 
   PERFORM admin_audit_log_write(
@@ -201,13 +301,39 @@ DECLARE
   now_unix bigint := extract(epoch from now())::bigint;
   v_round record;
 BEGIN
-  FOR v_round IN 
-    UPDATE rounds SET
+  -- A submit round publishes at its deadline, or as soon as every debater in its
+  -- room has submitted to it (#229). A room with no debaters never qualifies for
+  -- the early rule: "everyone has submitted" would be vacuously true at once.
+  -- Hosts and judges do not submit turns, so they do not hold a round open.
+  FOR v_round IN
+    UPDATE rounds r SET
       phase = 'published',
       published_at_unix = now_unix,
-      continue_vote_close_unix = now_unix + 30::bigint
-    WHERE phase = 'submit' AND submit_deadline_unix > 0 AND submit_deadline_unix < now_unix
-    RETURNING id, room_id, idx
+      -- The room's continue-vote window, 30 s by default (#228).
+      continue_vote_close_unix = now_unix + room_cfg_int(
+        (SELECT rm.config FROM rooms rm WHERE rm.id = r.room_id),
+        'continue_vote_seconds', 30, 10, 3600)::bigint
+    WHERE r.phase = 'submit'
+      AND (
+        (r.submit_deadline_unix > 0 AND r.submit_deadline_unix < now_unix)
+        OR (
+          EXISTS (
+            SELECT 1 FROM participants p
+             WHERE p.room_id = r.room_id AND p.role = 'debater'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM participants p
+             WHERE p.room_id = r.room_id AND p.role = 'debater'
+               AND NOT EXISTS (
+                 SELECT 1 FROM submissions s
+                  WHERE s.round_id = r.id AND s.author_id = p.id
+               )
+          )
+        )
+      )
+    RETURNING r.id, r.room_id, r.idx,
+              CASE WHEN r.submit_deadline_unix > 0 AND r.submit_deadline_unix < now_unix
+                   THEN 'deadline' ELSE 'all_submitted' END AS reason
   LOOP
     PERFORM admin_audit_log_write(
       'publish',
@@ -216,7 +342,7 @@ BEGIN
       NULL,
       'watcher',
       jsonb_build_object('room_id', v_round.room_id, 'idx', v_round.idx),
-      jsonb_build_object('phase', 'published')
+      jsonb_build_object('phase', 'published', 'reason', v_round.reason)
     );
   END LOOP;
 END;
@@ -322,7 +448,11 @@ BEGIN
     SELECT t.room_id,
            t.idx + 1,
            'submit',
-           now_unix + 300::bigint
+           -- The room's submit window applies to every round, 5 min by
+           -- default (#228); room_create uses it for round 0.
+           now_unix + 60::bigint * room_cfg_int(
+             (SELECT rm.config FROM rooms rm WHERE rm.id = t.room_id),
+             'submit_minutes', 5, 1, 1440)
     FROM tallied t
     WHERE t.yes > t.no
     ON CONFLICT (room_id, idx) DO NOTHING
@@ -420,6 +550,11 @@ CREATE OR REPLACE VIEW participants_view AS
   SELECT id, room_id, anon_name, role, ssh_fingerprint, created_at
   FROM participants;
 
+DROP VIEW IF EXISTS rooms_view CASCADE;
+CREATE OR REPLACE VIEW rooms_view AS
+  SELECT id, title, status, config, created_at
+  FROM rooms;
+
 DROP VIEW IF EXISTS rounds_view CASCADE;
 CREATE OR REPLACE VIEW rounds_view AS
   SELECT id, room_id, idx, phase, submit_deadline_unix, published_at_unix, continue_vote_close_unix
@@ -469,7 +604,13 @@ CREATE OR REPLACE VIEW submissions_with_flags_view AS
       JOIN rounds rr ON rr.id = s2.round_id
      WHERE rr.phase = 'published'
      GROUP BY sf.submission_id
-  ) f ON f.submission_id = s.id;
+  ) f ON f.submission_id = s.id
+  -- Blind submission (#226): /state reads this view, and RLS does not hold the
+  -- line on its own (#208), so the view filters by phase itself. Mirrors the
+  -- submissions read policy, plus `final` so a finished debate keeps its
+  -- transcript. The author branch only matches when db8.participant_id is set.
+  WHERE r.phase IN ('published', 'final')
+     OR s.author_id = db8_current_participant_id();
 
 DROP VIEW IF EXISTS view_final_tally CASCADE;
 CREATE OR REPLACE VIEW view_final_tally AS
@@ -487,6 +628,7 @@ CREATE OR REPLACE VIEW view_final_tally AS
 ALTER VIEW submissions_view SET (security_barrier = true);
 ALTER VIEW votes_view SET (security_barrier = true);
 ALTER VIEW participants_view SET (security_barrier = true);
+ALTER VIEW rooms_view SET (security_barrier = true);
 ALTER VIEW rounds_view SET (security_barrier = true);
 ALTER VIEW submissions_with_flags_view SET (security_barrier = true);
 ALTER VIEW view_final_tally SET (security_barrier = true);
@@ -893,6 +1035,7 @@ AS $$
 DECLARE
   v_id uuid;
   v_judge_role text;
+  v_nonce text;
 BEGIN
   -- Verify judge is actually a judge or host
   SELECT role INTO v_judge_role FROM participants WHERE id = p_judge_id;
@@ -900,10 +1043,38 @@ BEGIN
     RAISE EXCEPTION 'only judges or hosts can submit rubric scores' USING ERRCODE = '42501';
   END IF;
 
+  v_nonce := COALESCE(NULLIF(p_client_nonce, ''), gen_random_uuid()::text);
+
+  -- A nonce seen before is a retry of a request already applied: return the
+  -- stored score and change nothing. Otherwise a delayed retry of an earlier
+  -- revision would overwrite a later one. A concurrent call with the same
+  -- nonce waits on this insert and then takes the retry path.
+  INSERT INTO score_nonces (round_id, judge_id, participant_id, client_nonce)
+  VALUES (p_round_id, p_judge_id, p_participant_id, v_nonce)
+  ON CONFLICT DO NOTHING;
+  IF NOT FOUND THEN
+    SELECT id INTO v_id FROM scores
+     WHERE round_id = p_round_id AND judge_id = p_judge_id AND participant_id = p_participant_id;
+    IF v_id IS NULL THEN
+      -- The score this nonce stored was deleted. Recreating it would make a
+      -- retry change something.
+      RAISE EXCEPTION 'score_deleted' USING ERRCODE = '22023';
+    END IF;
+    RETURN v_id;
+  END IF;
+
   INSERT INTO scores (round_id, judge_id, participant_id, e, r, c, v, y, client_nonce)
-  VALUES (p_round_id, p_judge_id, p_participant_id, p_e, p_r, p_c, p_v, p_y, COALESCE(p_client_nonce, gen_random_uuid()::text))
-  ON CONFLICT (round_id, judge_id, participant_id, client_nonce)
-  DO UPDATE SET e = EXCLUDED.e, r = EXCLUDED.r, c = EXCLUDED.c, v = EXCLUDED.v, y = EXCLUDED.y
+  VALUES (p_round_id, p_judge_id, p_participant_id, p_e, p_r, p_c, p_v, p_y, v_nonce)
+  -- Conflict target must match the table's uniqueness key exactly. The nonce is
+  -- not in it: a judge resubmitting revises their score rather than adding a
+  -- second one that the aggregate would average in and count as another judge.
+  -- created_at is refreshed so it records the latest revision. The legacy
+  -- upsert did not refresh it, which is why scores_upgrade_unique_key() in
+  -- schema.sql cannot use it to order legacy rows.
+  ON CONFLICT (round_id, judge_id, participant_id)
+  DO UPDATE SET e = EXCLUDED.e, r = EXCLUDED.r, c = EXCLUDED.c, v = EXCLUDED.v,
+                y = EXCLUDED.y, client_nonce = EXCLUDED.client_nonce,
+                created_at = now()
   RETURNING id INTO v_id;
 
   PERFORM admin_audit_log_write(
@@ -956,6 +1127,25 @@ DECLARE
   v_delta float;
 BEGIN
   SELECT room_id INTO v_room_id FROM rounds WHERE id = p_round_id;
+  IF v_room_id IS NULL THEN
+    RETURN;
+  END IF;
+
+  -- Elo compares debaters, so a round needs at least two scored ones. Refused
+  -- before the round is marked, so a call after scoring still applies it.
+  IF (SELECT count(*) FROM view_score_aggregates WHERE round_id = p_round_id) < 2 THEN
+    RAISE EXCEPTION 'round_not_scored' USING ERRCODE = '22023';
+  END IF;
+
+  -- Apply each round once (#257). A retry after a lost answer, or a second
+  -- caller, would otherwise add the same deltas again. A concurrent caller
+  -- waits on this row and then does nothing.
+  INSERT INTO reputation_rounds_applied (round_id) VALUES (p_round_id)
+  ON CONFLICT (round_id) DO NOTHING;
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+
   SELECT config->'tags' INTO v_tags FROM rooms WHERE id = v_room_id;
 
   -- For each debater in the round
