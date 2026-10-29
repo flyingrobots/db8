@@ -132,19 +132,70 @@ describe('rubric scoring and the reputation it feeds', () => {
     expect(strong.body.elo).toBeGreaterThan(weak.body.elo);
   });
 
-  it('reports a per-tag rating for a participant', async () => {
+  it('moves the per-tag rating of a tagged room, and only for its tags', async () => {
+    // The tagged room has its own round, judge and debaters, so the update
+    // below is what produces the science rating; nothing here is a default.
     await seed();
+    const tagged = {
+      round: '99990000-0000-0000-0000-000000000011',
+      judge: '99990000-0000-0000-0000-000000000012',
+      strong: '99990000-0000-0000-0000-000000000013',
+      weak: '99990000-0000-0000-0000-000000000014'
+    };
     await pool.query(
       'insert into rooms(id, title, config) values ($1, $2, \'{"tags": ["science"]}\')',
       [taggedRoomId, 'Tag Room']
     );
+    await pool.query(
+      "insert into rounds(id, room_id, idx, phase) values ($1, $2, 0, 'published')",
+      [tagged.round, taggedRoomId]
+    );
+    await pool.query(
+      `insert into participants(id, room_id, anon_name, role) values
+         ($1, $4, 'tag_judge', 'judge'),
+         ($2, $4, 'tag_strong', 'debater'),
+         ($3, $4, 'tag_weak', 'debater')`,
+      [tagged.judge, tagged.strong, tagged.weak, taggedRoomId]
+    );
+    for (const [participant, rubric, nonce] of [
+      [tagged.strong, STRONG, 'tag-score-strong'],
+      [tagged.weak, WEAK, 'tag-score-weak']
+    ]) {
+      const scored = await supertest(app)
+        .post('/rpc/score.submit')
+        .send({
+          round_id: tagged.round,
+          judge_id: tagged.judge,
+          participant_id: participant,
+          ...rubric,
+          client_nonce: nonce
+        });
+      expect(scored.status, `score.submit -> ${JSON.stringify(scored.body)}`).toBe(200);
+    }
 
-    const res = await supertest(app)
-      .get('/rpc/reputation.get')
-      .query({ participant_id: debaterId, tag: 'science' });
+    const updated = await supertest(app)
+      .post('/rpc/reputation.update')
+      .send({ room_id: taggedRoomId });
+    expect(updated.status, `reputation.update -> ${JSON.stringify(updated.body)}`).toBe(200);
 
-    expect(res.status).toBe(200);
-    expect(res.body.tag).toBe('science');
-    expect(typeof res.body.elo, `elo was ${JSON.stringify(res.body.elo)}`).toBe('number');
+    const rating = async (participant, tag) =>
+      (await supertest(app).get('/rpc/reputation.get').query({ participant_id: participant, tag }))
+        .body;
+    const strong = await rating(tagged.strong, 'science');
+    const weak = await rating(tagged.weak, 'science');
+    expect(strong.tag).toBe('science');
+    expect(strong.elo, 'the better-scored debater gains science rating').toBeGreaterThan(
+      DEFAULT_ELO
+    );
+    expect(weak.elo, 'the worse-scored debater loses science rating').toBeLessThan(DEFAULT_ELO);
+
+    const rows = await pool.query(
+      'select tag from reputation_tag where participant_id = any($1) order by tag',
+      [[tagged.strong, tagged.weak]]
+    );
+    expect(
+      rows.rows.map((r) => r.tag),
+      'one science row per debater, and no tag the room did not list'
+    ).toEqual(['science', 'science']);
   });
 });
