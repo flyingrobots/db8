@@ -73,8 +73,9 @@ idempotent.
 | `max_fetches_per_round` | research fetches per round; 0 or absent means no limit                                                                                                                                  |
 | `attribution_mode`      | `masked` hides authors while a round is in `submit`; `real` does not                                                                                                                    |
 | `predicates`            | opt-in strict predicate vocabulary (snake_case names); a claim with another predicate is refused with `400 invalid_claim_term` ([#244](https://github.com/flyingrobots/db8/issues/244)) |
+| `tags`                  | per-tag reputation (`reputation_update_round`); up to 32 unique tags of 1–64 characters                                                                                                 |
 
-Other keys are dropped. `GET /rpc/room.get` returns the stored config in both database and memory mode.
+Any other key, and a repeated tag, is refused with `400`: a misspelled key is an error the caller sees, not a setting that silently does nothing. `GET /rpc/room.get` returns the stored config in both database and memory mode.
 
 Examples:
 
