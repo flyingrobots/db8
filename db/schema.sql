@@ -297,8 +297,8 @@ ON CONFLICT DO NOTHING;
 -- Upgrade path for databases created before the nonce left the scores key.
 -- Same shape as the final_votes upgrade above and for the same reasons: an
 -- ACCESS EXCLUSIVE lock so a concurrent insert cannot slip a duplicate in
--- between the delete and the constraint, and dedup keeps the most recent score
--- per (round, judge, participant), matching what score_submit's DO UPDATE does.
+-- between the delete and the constraint. Only identical scores are collapsed;
+-- differing ones are refused (see below).
 -- A function so that db/test can run it against a legacy table.
 CREATE OR REPLACE FUNCTION scores_upgrade_unique_key() RETURNS void
 LANGUAGE plpgsql
@@ -316,21 +316,19 @@ BEGIN
     RETURN;
   END IF;
   LOCK TABLE scores IN ACCESS EXCLUSIVE MODE;
-  -- Rows from one transaction share now(), and the random id says nothing
-  -- about order. When the newest scores of one key tie and differ, no row is
-  -- the latest: refuse, and let an operator reconcile them, rather than keep
-  -- one at random.
+  -- Legacy rows carry no reliable revision order. Rows from one transaction
+  -- share now(), the random id says nothing about order, and the old
+  -- score_submit updated a row on a nonce conflict without touching
+  -- created_at, so the newest created_at need not hold the latest values.
+  -- Rows with identical values collapse to one; when the rows of one key
+  -- differ, refuse and let an operator choose rather than guess.
   SELECT count(*) INTO v_ambiguous FROM (
     SELECT 1 FROM scores s
-     WHERE s.created_at = (SELECT max(m.created_at) FROM scores m
-                            WHERE m.round_id = s.round_id
-                              AND m.judge_id = s.judge_id
-                              AND m.participant_id = s.participant_id)
      GROUP BY s.round_id, s.judge_id, s.participant_id
     HAVING count(DISTINCT (s.e, s.r, s.c, s.v, s.y)) > 1
-  ) tied;
+  ) differing;
   IF v_ambiguous > 0 THEN
-    RAISE EXCEPTION 'scores_upgrade_ambiguous: % (round, judge, participant) with differing newest scores', v_ambiguous
+    RAISE EXCEPTION 'scores_upgrade_ambiguous: % (round, judge, participant) with differing scores', v_ambiguous
       USING HINT = 'Delete all but the intended score of each, then apply schema.sql again.';
   END IF;
   -- Record every row's nonce before the older rows go, so a delayed retry of a
