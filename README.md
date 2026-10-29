@@ -238,14 +238,22 @@ is exactly the point of canonicalization. Then change one word, `reduces` to
 
 Completely different. Formatting is invisible to the digest; meaning is not.
 
-Those digests are then chained and signed per round into a **journal** — an
-Ed25519-signed record carrying the hashes of everything the round contained. To
-alter a published argument you would have to alter its digest, which breaks the
-chain, which invalidates the signature. `db8 journal verify` checks all of it
-locally.
+Those digests are then collected per round into a **journal**. Its `core` lists
+the round's submission digests and the previous round's journal hash; the journal
+carries `hash = sha256(canonicalize(core))` and an Ed25519 signature over that
+hash. Recomputing `hash` from `core` and checking the signature is what would make
+an altered argument detectable.
+
+`db8 journal verify` does only part of that today. It fetches the journals from the
+API, checks each signature over the stored `hash`, and checks the `prev_hash`
+links. It does **not** recompute `hash` from `core`, so a `core` edited in the
+database, with its old `hash` and signature kept, still passes
+([#209](https://github.com/flyingrobots/db8/issues/209); see
+[Security posture](#security-posture)).
 
 In summary, canonical form makes a digest meaningful, the digest makes a claim
-addressable by content, and the signed chain makes the whole round tamper-evident.
+addressable by content, and a signed chain can make a round tamper-evident once
+verification recomputes each hash.
 
 ---
 
