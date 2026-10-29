@@ -1055,9 +1055,12 @@ BEGIN
   IF NOT FOUND THEN
     SELECT id INTO v_id FROM scores
      WHERE round_id = p_round_id AND judge_id = p_judge_id AND participant_id = p_participant_id;
-    IF v_id IS NOT NULL THEN
-      RETURN v_id;
+    IF v_id IS NULL THEN
+      -- The score this nonce stored was deleted. Recreating it would make a
+      -- retry change something.
+      RAISE EXCEPTION 'score_deleted' USING ERRCODE = '22023';
     END IF;
+    RETURN v_id;
   END IF;
 
   INSERT INTO scores (round_id, judge_id, participant_id, e, r, c, v, y, client_nonce)

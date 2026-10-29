@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(5);
+SELECT plan(7);
 
 -- score_submit treats a nonce seen before as a retry: it returns the stored
 -- score and changes nothing, so a delayed retry of an earlier revision cannot
@@ -31,6 +31,16 @@ SELECT is((SELECT relrowsecurity FROM pg_class WHERE oid = 'public.score_nonces'
           true, 'score_nonces has row level security');
 SELECT is((SELECT count(*)::int FROM pg_policy WHERE polrelid = 'public.score_nonces'::regclass),
           1, 'score_nonces has its no-access policy');
+
+-- A retry of a recorded nonce whose score was deleted is refused. Recreating
+-- the score would make a retry change something.
+DELETE FROM scores WHERE round_id = '21900000-0000-4000-8000-000000000002'
+                     AND participant_id = '21900000-0000-4000-8000-000000000011';
+SELECT throws_ok($$SELECT score_submit('21900000-0000-4000-8000-000000000002', '21900000-0000-4000-8000-000000000019',
+                                       '21900000-0000-4000-8000-000000000011', 10, 10, 10, 10, 10, 'pgtap-219-a')$$,
+                 '22023', 'score_deleted', 'a retry of a nonce whose score was deleted is refused');
+SELECT is((SELECT count(*)::int FROM scores WHERE round_id = '21900000-0000-4000-8000-000000000002'),
+          0, 'the refused retry does not recreate the score');
 
 SELECT * FROM finish();
 ROLLBACK;
