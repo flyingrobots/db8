@@ -1,3 +1,5 @@
+import { resolveSeed } from './scripts/test-seed.js';
+
 export default {
   test: {
     // Scoped explicitly. Vitest's default pattern also matches web/**/*.spec.js,
@@ -27,11 +29,13 @@ export default {
     //
     //   VITEST_SEED=12345 npm run test:inner
     //
+    // scripts/vitest-run.js logs the seed before Vitest starts (C5).
+    //
     // A failure that appears only under a particular seed is a real defect in
     // test isolation; re-running until green is not a fix (I11).
     sequence: {
       shuffle: { files: true, tests: true },
-      seed: Number(process.env.VITEST_SEED ?? 20260816)
+      seed: resolveSeed()
     }
   }
 };

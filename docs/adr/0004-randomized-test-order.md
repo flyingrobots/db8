@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-08-16
+lastUpdated: 2026-10-29
 ---
 
 # ADR-0004: Randomize test order by default, with a pinned seed
@@ -47,13 +47,16 @@ Shuffle **files and tests** by default, with the seed **pinned** in
 ```js
 sequence: {
   shuffle: { files: true, tests: true },
-  seed: Number(process.env.VITEST_SEED ?? 20260816)
+  seed: resolveSeed() // scripts/test-seed.js: VITEST_SEED, else 20260816
 }
 ```
 
 An ordinary run is therefore deterministic and reproducible. Exploring other
-orderings is a deliberate act (`VITEST_SEED=12345 npm run test:inner`), and
-Vitest prints the seed on every run so a failure carries its own reproducer.
+orderings is a deliberate act (`VITEST_SEED=12345 npm run test:inner`). Every
+launch, `npm run test:inner` and the CI workflows alike, goes through
+`scripts/vitest-run.js`, which logs the seed to stderr before Vitest starts
+(testing standard C5): Vitest prints it too, but from inside the process that
+might crash.
 
 **No retries.** A failure under a particular seed is a real isolation defect.
 
