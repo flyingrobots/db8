@@ -60,7 +60,7 @@ pins what the code does today so a silent change is caught, while stating in the
 same breath that this is not the behaviour we want.
 
 Resolving it is a breaking change to signed material and belongs to a deliberate
-migration, not to a test-repair commit that happened to find it.
+migration, not to a commit fixing tests that happened to find it.
 
 ## Consequences
 
