@@ -295,18 +295,21 @@ sent.
 
 The same journey in words, including what each stage rejects:
 
-| Stage               | Job                                                          | Rejects with                      |
-| ------------------- | ------------------------------------------------------------ | --------------------------------- |
-| CORS                | Allow-list check; never a wildcard                           | no `Access-Control-Allow-Origin`  |
-| Rate limit          | Throttle rapid calls                                         | `429`                             |
-| Zod                 | Shape and types                                              | `400` with the failing field path |
-| `validateTerm`      | Claim tree legality, depth ≤ 16, size ≤ 256 nodes            | `400 invalid_claim_term`          |
-| Canonicalize        | Byte-exact form, then SHA-256                                | —                                 |
-| `submission_upsert` | Durable write, idempotent on `(round, author, client_nonce)` | SQL error                         |
+| Stage               | Job                                               | Rejects with                      |
+| ------------------- | ------------------------------------------------- | --------------------------------- |
+| CORS                | Allow-list check; never a wildcard                | no `Access-Control-Allow-Origin`  |
+| Rate limit          | Throttle rapid calls                              | `429`                             |
+| Zod                 | Shape and types                                   | `400` with the failing field path |
+| `validateTerm`      | Claim tree legality, depth ≤ 16, size ≤ 256 nodes | `400 invalid_claim_term`          |
+| Canonicalize        | Byte-exact form, then SHA-256                     | —                                 |
+| `submission_upsert` | Durable write, one row per `(round, author)`      | SQL error                         |
 
-Idempotency is worth a sentence: because the write keys on `client_nonce`,
-retrying a submission after a timeout returns the _same_ row rather than creating
-a second one. Retry safety is a property of the schema, not of client discipline.
+Idempotency is worth a sentence: a participant has one submission per round, and
+each `client_nonce` names one document. Retrying a submission after a timeout with
+the same nonce returns the _same_ row rather than creating a second one; a revision
+takes a fresh nonce and replaces the row; the same nonce with a different document
+is refused (`nonce_reused`). Retry safety is a property of the schema, not of
+client discipline.
 
 In summary, a submission is validated in widening circles — transport, shape,
 meaning, then storage — and only becomes a durable, addressable, hashable fact
@@ -316,38 +319,42 @@ once it has passed all four.
 
 ## How a round moves
 
-Rounds advance on deadlines, not on someone clicking a button. A background
-**watcher** process polls for rounds whose time has come and moves them.
+Rounds advance on deadlines and on submissions, not on someone clicking a button.
+A background **watcher** process polls for rounds that are due and moves them.
 
 ```mermaid
 stateDiagram-v2
     [*] --> submit
-    submit --> published : "submit deadline passes"
-    published --> submit : "continue vote wins, next round opens"
-    published --> final : "continue vote closes without continuing"
-    final --> [*] : "final votes tallied"
+    submit --> published : "deadline passes, or every debater has submitted"
+    published --> [*] : "continue vote wins: next round opens in submit"
+    published --> final : "continue vote closes without continuing; room closes"
+    final --> [*]
 ```
 
 <details>
 <summary>Figure 3 - The round phase machine</summary>
 
-Figure 3 caption: The only actor that moves a round is the watcher, driven by
-deadlines. A round in `submit` accepts submissions; publication is what makes them
-visible to everyone, and it is irreversible.
+Figure 3 caption: The only actor that moves a round is the watcher. A round in
+`submit` accepts submissions; publication is what makes them visible to everyone,
+and it is irreversible. A won continue vote leaves the round `published` and opens
+a new round in `submit`.
 
 </details>
 
-| From        | To                    | Trigger                                   | Who acts |
-| ----------- | --------------------- | ----------------------------------------- | -------- |
-| `submit`    | `published`           | submit deadline passes                    | watcher  |
-| `published` | `submit` (next round) | continue vote passes                      | watcher  |
-| `published` | `final`               | continue window closes without continuing | watcher  |
-| `final`     | closed                | final votes tallied                       | watcher  |
+| From        | To                        | Trigger                                                    | Who acts |
+| ----------- | ------------------------- | ---------------------------------------------------------- | -------- |
+| `submit`    | `published`               | submit deadline passes, or every debater has submitted     | watcher  |
+| `published` | next round opens `submit` | continue window closes with more `continue` than `end`     | watcher  |
+| `published` | `final`                   | continue window closes otherwise; the room's status closes | watcher  |
 
-Publication is meant to be what makes submissions visible, so that everyone
-argues without seeing the others first. **That is currently not enforced** — see
-[Security posture](#security-posture); the policy exists but does not take
-effect in the shipped configuration.
+Room status is separate from round phase. `round_open_next` sets the round to
+`final` and the room to `closed` in the same tick; nothing waits for final votes
+to be tallied.
+
+Publication is what makes submissions visible, so that everyone argues without
+seeing the others first. `/state` enforces that (#226); the database policy that
+should enforce it for every reader does not take effect yet — see
+[Security posture](#security-posture).
 
 What _is_ enforced by the database is the voting rules: a final vote outside the
 `final` phase is refused by `vote_final_submit` itself, one ballot per voter is a
