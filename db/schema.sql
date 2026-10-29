@@ -269,8 +269,90 @@ CREATE TABLE IF NOT EXISTS scores (
   y               integer     NOT NULL CHECK (y >= 0 AND y <= 100), -- Yield
   client_nonce    text        NOT NULL,
   created_at      timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (round_id, judge_id, participant_id, client_nonce)
+  -- One score per judge per participant per round. The nonce is deliberately
+  -- NOT part of this key, for the same reason it was removed from final_votes:
+  -- with it, a judge resubmitting under a fresh nonce inserted a second row and
+  -- view_score_aggregates averaged both and counted them as two judges.
+  UNIQUE (round_id, judge_id, participant_id)
 );
+
+-- Every nonce a judge has scored a participant under. score_submit treats a
+-- nonce seen before as a retry of a request it already applied and changes
+-- nothing. Keeping only the latest nonce on the score row was not enough: a
+-- delayed retry of an earlier revision then overwrote a later one.
+CREATE TABLE IF NOT EXISTS score_nonces (
+  round_id        uuid        NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+  judge_id        uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  participant_id  uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  client_nonce    text        NOT NULL,
+  PRIMARY KEY (round_id, judge_id, participant_id, client_nonce)
+);
+
+-- Nonces of scores stored before score_nonces existed. This runs before the
+-- key upgrade below, which deletes older scores; their nonces stay known.
+INSERT INTO score_nonces (round_id, judge_id, participant_id, client_nonce)
+SELECT round_id, judge_id, participant_id, client_nonce FROM scores
+ON CONFLICT DO NOTHING;
+
+-- Upgrade path for databases created before the nonce left the scores key.
+-- Same shape as the final_votes upgrade above and for the same reasons: an
+-- ACCESS EXCLUSIVE lock so a concurrent insert cannot slip a duplicate in
+-- between the delete and the constraint. Only identical scores are collapsed;
+-- differing ones are refused (see below).
+-- A function so that db/test can run it against a legacy table.
+CREATE OR REPLACE FUNCTION scores_upgrade_unique_key() RETURNS void
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  v_ambiguous integer;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'scores'::regclass
+       AND contype = 'u'
+       AND pg_get_constraintdef(oid) = 'UNIQUE (round_id, judge_id, participant_id, client_nonce)'
+  ) THEN
+    RETURN;
+  END IF;
+  LOCK TABLE scores IN ACCESS EXCLUSIVE MODE;
+  -- Legacy rows carry no reliable revision order. Rows from one transaction
+  -- share now(), the random id says nothing about order, and the old
+  -- score_submit updated a row on a nonce conflict without touching
+  -- created_at, so the newest created_at need not hold the latest values.
+  -- Rows with identical values collapse to one; when the rows of one key
+  -- differ, refuse and let an operator choose rather than guess.
+  SELECT count(*) INTO v_ambiguous FROM (
+    SELECT 1 FROM scores s
+     GROUP BY s.round_id, s.judge_id, s.participant_id
+    HAVING count(DISTINCT (s.e, s.r, s.c, s.v, s.y)) > 1
+  ) differing;
+  IF v_ambiguous > 0 THEN
+    RAISE EXCEPTION 'scores_upgrade_ambiguous: % (round, judge, participant) with differing scores', v_ambiguous
+      USING HINT = 'Delete all but the intended score of each, then apply schema.sql again.';
+  END IF;
+  -- Record every row's nonce before the older rows go, so a delayed retry of a
+  -- deleted revision is still a retry and cannot overwrite the kept score.
+  INSERT INTO score_nonces (round_id, judge_id, participant_id, client_nonce)
+  SELECT round_id, judge_id, participant_id, client_nonce FROM scores
+  ON CONFLICT DO NOTHING;
+  DELETE FROM scores s
+   WHERE EXISTS (
+     SELECT 1 FROM scores newer
+      WHERE newer.round_id = s.round_id
+        AND newer.judge_id = s.judge_id
+        AND newer.participant_id = s.participant_id
+        AND (newer.created_at, newer.id) > (s.created_at, s.id)
+   );
+  ALTER TABLE scores
+    DROP CONSTRAINT scores_round_id_judge_id_participant_id_client_nonce_key;
+  ALTER TABLE scores
+    ADD CONSTRAINT scores_round_id_judge_id_participant_id_key
+    UNIQUE (round_id, judge_id, participant_id);
+END;
+$$;
+REVOKE ALL ON FUNCTION scores_upgrade_unique_key() FROM PUBLIC;
+SELECT scores_upgrade_unique_key();
 
 CREATE INDEX IF NOT EXISTS idx_scores_round ON scores (round_id);
 CREATE INDEX IF NOT EXISTS idx_scores_participant ON scores (participant_id);

@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-26
+lastUpdated: 2026-10-29
 ---
 
 # Local Database Setup (Postgres / Supabase)
@@ -24,9 +24,18 @@ project and substitute it wherever this guide uses the DB URL.
 Load the M1 schema and SQL RPCs into your database:
 
 ```text
-psql postgresql://postgres:test@localhost:54329/db8_test -f db/schema.sql
-psql postgresql://postgres:test@localhost:54329/db8_test -f db/rpc.sql
+npm run test:prepare-db
 ```
+
+That is `scripts/prepare-db.js` (it reads `DATABASE_URL`). With `psql` instead, use the same two steps: `db/preflight.sql` on its own, then the schema, RPCs and policies in one transaction.
+
+```text
+psql postgresql://postgres:test@localhost:54329/db8_test -v ON_ERROR_STOP=1 -f db/preflight.sql
+psql postgresql://postgres:test@localhost:54329/db8_test -v ON_ERROR_STOP=1 --single-transaction \
+  -f db/schema.sql -f db/rpc.sql -f db/rls.sql
+```
+
+`db/preflight.sql` commits first because a schema upgrade can refuse and roll back (for example `scores_upgrade_ambiguous`), and what it records must survive that. One transaction for the rest means a changed key never commits while the old functions still target the old key.
 
 ### RLS and Secure Views
 
@@ -64,8 +73,9 @@ idempotent.
 | `max_fetches_per_round` | research fetches per round; 0 or absent means no limit                                                                                                                                  |
 | `attribution_mode`      | `masked` hides authors while a round is in `submit`; `real` does not                                                                                                                    |
 | `predicates`            | opt-in strict predicate vocabulary (snake_case names); a claim with another predicate is refused with `400 invalid_claim_term` ([#244](https://github.com/flyingrobots/db8/issues/244)) |
+| `tags`                  | per-tag reputation (`reputation_update_round`); up to 32 unique tags of 1–64 characters                                                                                                 |
 
-Other keys are dropped. `GET /rpc/room.get` returns the stored config in both database and memory mode.
+Any other key, and a repeated tag, is refused with `400`: a misspelled key is an error the caller sees, not a setting that silently does nothing. `GET /rpc/room.get` returns the stored config in both database and memory mode.
 
 Examples:
 
@@ -157,15 +167,16 @@ With `DATABASE_URL` set, Postgres is the only store. If a write cannot reach it,
 - `outcome: "not_stored"`: the statement never reached the database (connection refused, connect timeout, authentication failure, too many connections, or a pool that did not initialize). A new attempt may start afresh.
 - `outcome: "unknown"`: the connection failed after the statement was sent, so it may have committed. Whether a retry is safe depends on the endpoint:
 
-| Endpoint                                              | Retry after `unknown`                                                                                                                                             |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `submission.create`, `vote.continue`, `verify.submit` | Safe with the same `client_nonce`.                                                                                                                                |
-| `room.create`, `score.submit`                         | Safe only when the first request sent a `client_nonce` and the retry sends the same one. Without one, a retry can create a second row.                            |
-| `vote.final`, `submission.flag`                       | Safe: one row per voter per round, and one flag per reporter per submission.                                                                                      |
-| `participant.fingerprint.set`                         | Safe: it sets a value.                                                                                                                                            |
-| `reputation.update`                                   | Safe: each round is applied once (`reputation_rounds_applied`). A round with fewer than two scored debaters is refused with `round_not_scored` and is not marked. |
-| `nonce.issue`                                         | Safe: a retry issues another nonce, and an unused nonce expires.                                                                                                  |
-| `research.fetch`                                      | Not fully: the quota increment and the cache write run in one transaction, so only a failed COMMIT is `unknown`. A retry then can spend one more fetch.           |
+| Endpoint                                              | Retry after `unknown`                                                                                                                                                                                                                                                                                             |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `submission.create`, `vote.continue`, `verify.submit` | Safe with the same `client_nonce`.                                                                                                                                                                                                                                                                                |
+| `room.create`                                         | Safe only when the first request sent a `client_nonce` and the retry sends the same one. Without one, a retry can create a second room.                                                                                                                                                                           |
+| `score.submit`                                        | Safe only when the first request sent a `client_nonce` and the retry sends the same one: it changes nothing, even after a later revision under another nonce, and is refused (`score_deleted`) if that score was deleted. Without a nonce each request is new, so a delayed retry can overwrite a later revision. |
+| `vote.final`, `submission.flag`                       | Safe: one row per voter per round, and one flag per reporter per submission.                                                                                                                                                                                                                                      |
+| `participant.fingerprint.set`                         | Safe: it sets a value.                                                                                                                                                                                                                                                                                            |
+| `reputation.update`                                   | Safe: each round is applied once (`reputation_rounds_applied`). A round with fewer than two scored debaters is refused with `round_not_scored` and is not marked.                                                                                                                                                 |
+| `nonce.issue`                                         | Safe: a retry issues another nonce, and an unused nonce expires.                                                                                                                                                                                                                                                  |
+| `research.fetch`                                      | Not fully: the quota increment and the cache write run in one transaction, so only a failed COMMIT is `unknown`. A retry then can spend one more fetch.                                                                                                                                                           |
 
 An error the database answered with (a rule an RPC enforces, such as `submission_closed`) keeps its own status. Before #257 the API kept the write in memory and answered `200` with `note: "db_fallback"`; that note no longer exists.
 

@@ -127,10 +127,14 @@ describeDb('a declared predicate vocabulary is enforced (database)', () => {
   });
 
   it('rejects a predicate outside the vocabulary, names it, and stores nothing', async () => {
-    expectUndeclared(await submit(doc(strict, 'causes')), 'causes');
-    const rows = await pool.query('select 1 from submissions where round_id = $1', [
-      strict.round_id
-    ]);
+    const body = doc(strict, 'causes');
+    expectUndeclared(await submit(body), 'causes');
+    // Scoped to this document: the accepting test stores a row in the same
+    // round, and the order of the two is shuffled.
+    const rows = await pool.query(
+      'select 1 from submissions where round_id = $1 and content = $2',
+      [strict.round_id, body.content]
+    );
     expect(rows.rowCount).toBe(0);
   });
 

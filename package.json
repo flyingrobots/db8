@@ -18,7 +18,7 @@
     "test": "if [ \"$CI\" = \"true\" ]; then npm run test:inner; else npm run test:docker; fi",
     "test:docker": "bash ./scripts/test-docker.sh",
     "test:prepare-db": "node ./scripts/prepare-db.js",
-    "test:inner": "vitest run",
+    "test:inner": "node scripts/vitest-run.js",
     "typecheck": "echo 'No TypeScript. \u2705'",
     "bootstrap": "bash ./scripts/bootstrap.sh",
     "dev:db": "docker compose up -d db && sleep 2 && echo 'DB on :54329'",

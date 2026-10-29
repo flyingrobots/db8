@@ -17,6 +17,7 @@ alter table if exists scores enable row level security;
 alter table if exists reputation enable row level security;
 alter table if exists reputation_tag enable row level security;
 alter table if exists reputation_rounds_applied enable row level security;
+alter table if exists score_nonces enable row level security;
 alter table if exists research_cache enable row level security;
 alter table if exists research_usage enable row level security;
 
@@ -232,6 +233,12 @@ with check (false);
 -- DEFINER); no direct access.
 drop policy if exists reputation_rounds_applied_no_access_policy on reputation_rounds_applied;
 create policy reputation_rounds_applied_no_access_policy on reputation_rounds_applied
+for all to public
+using (false)
+with check (false);
+
+drop policy if exists score_nonces_no_access_policy on score_nonces;
+create policy score_nonces_no_access_policy on score_nonces
 for all to public
 using (false)
 with check (false);

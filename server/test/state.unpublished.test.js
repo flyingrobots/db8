@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
 import { RoomService } from '../services/RoomService.js';
+import crypto from 'node:crypto';
+
+// Ids carry a per-run prefix, so two copies of the suite against one database
+// neither collide on keys nor delete each other's rows (E10).
+const RUN = crypto.randomUUID().slice(0, 8);
+const rid = (n) => `${RUN}-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 // Regression for #226: /state returned every submission in the room, including
 // ones whose round was still in `submit`, so a debater could read an opponent's
@@ -29,13 +35,13 @@ describe('/state hides submissions from rounds still in submit (DB)', () => {
     process.env.DATABASE_URL ||
     'postgresql://postgres:test@localhost:54329/db8_test';
 
-  const roomId = '22600000-0000-0000-0000-000000000001';
-  const round0 = '22600000-0000-0000-0000-000000000010';
-  const round1 = '22600000-0000-0000-0000-000000000011';
-  const alice = '22600000-0000-0000-0000-000000000020';
-  const bob = '22600000-0000-0000-0000-000000000021';
-  const published = '22600000-0000-0000-0000-000000000030';
-  const pending = '22600000-0000-0000-0000-000000000031';
+  const roomId = rid(1);
+  const round0 = rid(10);
+  const round1 = rid(11);
+  const alice = rid(20);
+  const bob = rid(21);
+  const published = rid(30);
+  const pending = rid(31);
 
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: dbUrl });
@@ -66,7 +72,13 @@ describe('/state hides submissions from rounds still in submit (DB)', () => {
     await pool.end();
   });
 
+  // Each test sets round 1's phase itself. The later tests advance it, so a
+  // test that relied on the seeded phase passed only in declaration order.
+  const setRound1Phase = (phase) =>
+    pool.query('update rounds set phase = $2 where id = $1', [round1, phase]);
+
   it('omits a submission whose round is still in submit', async () => {
+    await setRound1Phase('submit');
     const state = await service.getRoomState(roomId);
     expect(state.round.phase).toBe('submit');
     expect(ids(state)).toEqual([published]);
@@ -74,13 +86,13 @@ describe('/state hides submissions from rounds still in submit (DB)', () => {
   });
 
   it('shows it once the round is published', async () => {
-    await pool.query("update rounds set phase = 'published' where id = $1", [round1]);
+    await setRound1Phase('published');
     const state = await service.getRoomState(roomId);
     expect(ids(state)).toEqual([published, pending].sort());
   });
 
   it('keeps it visible after the round goes final', async () => {
-    await pool.query("update rounds set phase = 'final' where id = $1", [round1]);
+    await setRound1Phase('final');
     const state = await service.getRoomState(roomId);
     expect(ids(state)).toEqual([published, pending].sort());
   });
