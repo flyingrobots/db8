@@ -66,7 +66,13 @@ describe('/state hides submissions from rounds still in submit (DB)', () => {
     await pool.end();
   });
 
+  // Each test sets round 1's phase itself. The later tests advance it, so a
+  // test that relied on the seeded phase passed only in declaration order.
+  const setRound1Phase = (phase) =>
+    pool.query('update rounds set phase = $2 where id = $1', [round1, phase]);
+
   it('omits a submission whose round is still in submit', async () => {
+    await setRound1Phase('submit');
     const state = await service.getRoomState(roomId);
     expect(state.round.phase).toBe('submit');
     expect(ids(state)).toEqual([published]);
@@ -74,13 +80,13 @@ describe('/state hides submissions from rounds still in submit (DB)', () => {
   });
 
   it('shows it once the round is published', async () => {
-    await pool.query("update rounds set phase = 'published' where id = $1", [round1]);
+    await setRound1Phase('published');
     const state = await service.getRoomState(roomId);
     expect(ids(state)).toEqual([published, pending].sort());
   });
 
   it('keeps it visible after the round goes final', async () => {
-    await pool.query("update rounds set phase = 'final' where id = $1", [round1]);
+    await setRound1Phase('final');
     const state = await service.getRoomState(roomId);
     expect(ids(state)).toEqual([published, pending].sort());
   });

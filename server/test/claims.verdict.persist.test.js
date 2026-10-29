@@ -35,7 +35,6 @@ describe('verdict claim_path persistence', () => {
 
   const roomId = '5c1a0000-0000-0000-0000-000000000001';
   const roundId = '5c1a0000-0000-0000-0000-000000000002';
-  const authorId = '5c1a0000-0000-0000-0000-000000000003';
   const judgeId = '5c1a0000-0000-0000-0000-000000000004';
 
   // Every test makes its own submission and scopes its assertions to it.
@@ -46,13 +45,29 @@ describe('verdict claim_path persistence', () => {
   // asserted exactly 2 rows, while four later tests added more to the same
   // submission. Under `--sequence.shuffle.tests` it failed with `got 3` and
   // `got 4`, and the summary test saw a stray null-path row (E11, E12).
+  //
+  // Each submission also has its own author: a participant has one submission
+  // per round (submissions_one_per_author_round), so a shared author would make
+  // every test after the first revise one row.
   const createSubmission = async (nonce) => {
     const sub = await pool.query(
-      `insert into submissions (round_id, author_id, content, claims, canonical_sha256, client_nonce)
-       values ($1, $2, $3, $4, $5, $6)
-       on conflict (round_id, author_id, client_nonce) do update set content = excluded.content
+      `with author as (
+         insert into participants (room_id, anon_name, role)
+         values ($1, $2, 'debater')
+         returning id
+       )
+       insert into submissions (round_id, author_id, content, claims, canonical_sha256, client_nonce)
+       select $3, author.id, $4, $5, $6, $7 from author
        returning id`,
-      [roundId, authorId, 'contested', JSON.stringify(CLAIMS), 'b'.repeat(64), nonce]
+      [
+        roomId,
+        `author_${nonce}`,
+        roundId,
+        'contested',
+        JSON.stringify(CLAIMS),
+        'b'.repeat(64),
+        nonce
+      ]
     );
     expect(sub.rows[0]?.id, `submission insert for nonce ${nonce}`).toBeTruthy();
     return sub.rows[0].id;
@@ -79,8 +94,8 @@ describe('verdict claim_path persistence', () => {
       [roundId, roomId]
     );
     await pool.query(
-      'insert into participants(id, room_id, anon_name, role) values ($1, $2, $3, $4), ($5, $2, $6, $7)',
-      [authorId, roomId, 'path_author', 'debater', judgeId, 'path_judge', 'judge']
+      'insert into participants(id, room_id, anon_name, role) values ($1, $2, $3, $4)',
+      [judgeId, roomId, 'path_judge', 'judge']
     );
   });
 

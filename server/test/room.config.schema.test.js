@@ -16,6 +16,7 @@ describe('room configuration survives the schema boundary', () => {
     const cfg = {
       participant_count: 4,
       submit_minutes: 5,
+      continue_vote_seconds: 60,
       attribution_mode: 'masked',
       max_fetches_per_round: 10,
       predicates: ['reduces', 'increases'],
@@ -34,7 +35,7 @@ describe('room configuration survives the schema boundary', () => {
   });
 
   it('accepts only the two attribution modes the view understands', () => {
-    expect(RoomConfig.parse({ attribution_mode: 'open' }).attribution_mode).toBe('open');
+    expect(RoomConfig.parse({ attribution_mode: 'real' }).attribution_mode).toBe('real');
     expect(RoomConfig.parse({ attribution_mode: 'masked' }).attribution_mode).toBe('masked');
     expect(() => RoomConfig.parse({ attribution_mode: 'anonymous' })).toThrow();
   });

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import pg from 'pg';
+import { createHash } from 'node:crypto';
 import app, { __setDbPool } from '../rpc.js';
 
 // The whole feature, driven the way a client meets it: over HTTP, against a
@@ -50,7 +51,6 @@ for (const mode of MODES) {
     let pool;
     const roomId = '9e2e0000-0000-0000-0000-000000000001';
     const roundId = '9e2e0000-0000-0000-0000-000000000002';
-    const authorId = '9e2e0000-0000-0000-0000-000000000003';
     const judgeId = '9e2e0000-0000-0000-0000-000000000004';
 
     beforeAll(async () => {
@@ -69,8 +69,8 @@ for (const mode of MODES) {
         [roundId, roomId, Math.floor(Date.now() / 1000) + 3600]
       );
       await pool.query(
-        'insert into participants(id, room_id, anon_name, role) values ($1,$2,$3,$4), ($5,$2,$6,$7)',
-        [authorId, roomId, 'e2e_author', 'debater', judgeId, 'e2e_judge', 'judge']
+        'insert into participants(id, room_id, anon_name, role) values ($1,$2,$3,$4)',
+        [judgeId, roomId, 'e2e_judge', 'judge']
       );
     });
 
@@ -86,10 +86,26 @@ for (const mode of MODES) {
     // nothing: submission.create is idempotent on (room, round, author, nonce),
     // and beforeAll drops the room, so a stable nonce is safe across reruns and
     // is exactly what the second `npm test` pass exercises (E3, E4).
+    // Each submission has its own author, derived from its nonce: a participant
+    // has one submission per round, so a shared author would turn every test
+    // after the first into a 409.
+    const authorFor = (nonce) => {
+      const h = createHash('sha256').update(`e2e-author-${nonce}`).digest('hex');
+      return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+    };
+    const seatAuthor = async (nonce) => {
+      if (!mode.durable) return;
+      await pool.query(
+        `insert into participants(id, room_id, anon_name, role)
+         values ($1, $2, $3, 'debater') on conflict (id) do nothing`,
+        [authorFor(nonce), roomId, `e2e_author_${nonce}`]
+      );
+    };
+
     const submission = (term, nonce) => ({
       room_id: roomId,
       round_id: roundId,
-      author_id: authorId,
+      author_id: authorFor(nonce),
       phase: 'submit',
       deadline_unix: Math.floor(Date.now() / 1000) + 3600,
       content: 'The evidence on remote work is contested.',
@@ -108,6 +124,7 @@ for (const mode of MODES) {
     // `--sequence.shuffle.tests` the later tests failed with
     // `submission_id: undefined` because the writer had not run yet (E11).
     const createSubmission = async (nonce, term = ATTRIBUTED) => {
+      await seatAuthor(nonce);
       const res = await request(app)
         .post('/rpc/submission.create')
         .send(submission(term, nonce))
@@ -121,15 +138,23 @@ for (const mode of MODES) {
     it('accepts a submission carrying a structured claim term', async () => {
       const submissionId = await createSubmission('accepts-structured-term');
 
-      // Not just an id: the stored submission is readable back through the
-      // transcript, which is what "accepted" has to mean to a client.
+      // Not just an id: the submission was stored. Replaying the same request
+      // returns the stored row's id rather than making a second one.
+      const replay = await request(app)
+        .post('/rpc/submission.create')
+        .send(submission(ATTRIBUTED, 'accepts-structured-term'))
+        .expect(200);
+      expect(replay.body.submission_id).toBe(submissionId);
+
+      // The transcript shows it only once its round is published (#226). The
+      // durable round is published; the memory round is still in submit.
       const res = await request(app).get(`/state?room_id=${roomId}`).expect(200);
       const transcript = res.body.round?.transcript ?? [];
       const mine = transcript.filter((t) => t.submission_id === submissionId);
       expect(
         mine,
         `submission ${submissionId} in a transcript of ${transcript.length} entries`
-      ).toHaveLength(1);
+      ).toHaveLength(mode.durable ? 1 : 0);
     });
 
     // The gate that was unreachable for the whole of the previous PR. A route
