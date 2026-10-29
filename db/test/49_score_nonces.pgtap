@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(9);
+SELECT plan(10);
 
 -- score_submit treats a nonce seen before as a retry: it returns the stored
 -- score and changes nothing, so a delayed retry of an earlier revision cannot
@@ -49,6 +49,9 @@ SELECT lives_ok($$SELECT score_submit('21900000-0000-4000-8000-000000000002', '2
 SELECT is((SELECT e FROM scores WHERE round_id = '21900000-0000-4000-8000-000000000002'
                                   AND participant_id = '21900000-0000-4000-8000-000000000011'),
           20, 'the new nonce stores a score');
+SELECT is((SELECT count(*)::int FROM score_nonces WHERE round_id = '21900000-0000-4000-8000-000000000002'
+                                                    AND client_nonce = 'pgtap-219-c'),
+          1, 'the new nonce is recorded');
 
 SELECT * FROM finish();
 ROLLBACK;
