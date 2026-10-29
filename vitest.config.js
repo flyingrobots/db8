@@ -16,12 +16,14 @@ export default {
     // Rationale: docs/adr/0004-randomized-test-order.md
     //
     // A test that only passes in declaration order is depending on another
-    // test's writes, and four files were doing exactly that: a submission id
-    // filled by the first test and read by three later ones, verdict-row counts
-    // that grew as later tests added rows, an audit assertion that needed an
-    // earlier test's delete, and a cache read of what an earlier test fetched.
-    // All four passed every run and would have kept passing indefinitely,
-    // because nothing ever ran them in a different order.
+    // test's writes, and six files were doing exactly that (the ADR lists
+    // them): a submission id filled by the first test and read by three later
+    // ones, verdict-row counts that grew as later tests added rows, an audit
+    // assertion that needed an earlier test's delete, a cache read of what an
+    // earlier test fetched, an audit query that reused a nonce across runs, and
+    // a scoring script that read rows left by previous runs. All six passed
+    // every run and would have kept passing indefinitely, because nothing ever
+    // ran them in a different order.
     //
     // The seed is pinned so a failure is reproducible and so an ordinary run is
     // not a different experiment each time. Override it to explore other
