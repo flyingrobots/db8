@@ -24,9 +24,18 @@ project and substitute it wherever this guide uses the DB URL.
 Load the M1 schema and SQL RPCs into your database:
 
 ```text
-psql postgresql://postgres:test@localhost:54329/db8_test -f db/schema.sql
-psql postgresql://postgres:test@localhost:54329/db8_test -f db/rpc.sql
+npm run test:prepare-db
 ```
+
+That is `scripts/prepare-db.js` (it reads `DATABASE_URL`). With `psql` instead, use the same two steps: `db/preflight.sql` on its own, then the schema, RPCs and policies in one transaction.
+
+```text
+psql postgresql://postgres:test@localhost:54329/db8_test -v ON_ERROR_STOP=1 -f db/preflight.sql
+psql postgresql://postgres:test@localhost:54329/db8_test -v ON_ERROR_STOP=1 --single-transaction \
+  -f db/schema.sql -f db/rpc.sql -f db/rls.sql
+```
+
+`db/preflight.sql` commits first because a schema upgrade can refuse and roll back (for example `scores_upgrade_ambiguous`), and what it records must survive that. One transaction for the rest means a changed key never commits while the old functions still target the old key.
 
 ### RLS and Secure Views
 

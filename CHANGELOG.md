@@ -10,6 +10,7 @@ lastUpdated: 2026-10-29
 - **The scores key upgrade refuses to guess.** On a database created before the nonce left the `scores` key, the upgrade keeps the newest score per judge, participant and round. When the newest scores tie on `created_at` and differ, it now stops with `scores_upgrade_ambiguous` instead of keeping one at random.
 - **The upgrade keeps the nonces of the scores it deletes.** `score_nonces` is filled before older scores are removed, so a delayed retry of a deleted revision cannot overwrite the score that was kept.
 - **A retry of a deleted score is refused** with `score_deleted` instead of recreating the score.
+- **`prepare-db` commits `db/preflight.sql` first, then applies schema, RPCs and policies in one transaction.** A refused scores upgrade rolled back the nonce backfill with it, so a revision the operator then deleted was never recorded; and applied file by file, a changed key committed while the old functions still targeted the old key.
 
 ## 2026-10-26 — A database failure is reported, not hidden in memory
 
