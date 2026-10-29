@@ -65,7 +65,7 @@
     "zod": "^4.4.3"
   },
   "optionalDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "^4.54.0",
+    "@rollup/rollup-linux-x64-gnu": "^4.65.1",
     "pg": "^8.13.1"
   },
   "bin": {
