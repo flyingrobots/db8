@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-08-16
+lastUpdated: 2026-10-29
 ---
 
 # db8
@@ -423,8 +423,8 @@ Being precise about this matters more than sounding impressive, so here is the
 honest split between what the cryptography achieves and what it does not.
 
 **What holds today.** Canonicalization is real and reproducible — the digests
-above are the actual output. A journal row edited directly in Postgres breaks
-its Ed25519 signature, and re-signing needs the private key, which is written
+above are the actual output. A journal whose `hash` is edited directly in
+Postgres fails its Ed25519 signature check, and re-signing needs the private key, which is written
 `0600` and adopted-never-regenerated (a mismatched or missing half is a hard
 error at boot rather than a silently new identity). The database genuinely
 enforces the voting rules, inside `SECURITY DEFINER` functions a client cannot
@@ -450,18 +450,19 @@ a verdict only from a judge or host.
    reads none of them; they are not part of the digest either. Verification
    exists only as a separate, caller-driven `POST /rpc/provenance.verify`, and
    nothing stores its result.
-4. **Submissions are not actually hidden before publication** ([#208](https://github.com/flyingrobots/db8/issues/208)). `db/rls.sql`
-   carries a policy that says they are, and it does not take effect: the API
+4. **The database does not hide submissions before publication** ([#208](https://github.com/flyingrobots/db8/issues/208)). `db/rls.sql`
+   carries a policy that says it does, and it does not take effect: the API
    connects as the table owner, which is a superuser with `rolbypassrls`, and no
-   table sets `FORCE ROW LEVEL SECURITY`. The view `/state` reads has no phase
-   filter of its own. Verified directly — a second debater can read an
-   opponent's unpublished submission, content included, while the round is still
-   in `submit`. Simultaneity is the point of the format, so this is the gap that
-   matters most for the product rather than for the threat model.
+   table sets `FORCE ROW LEVEL SECURITY`. `/state` filters by phase itself since
+   [#226](https://github.com/flyingrobots/db8/issues/226), so a debater cannot
+   read an opponent's unpublished submission through it. Any other read of the
+   submissions table runs with no such filter. Simultaneity is the point of the
+   format, so this is the gap that matters most for the product rather than for
+   the threat model.
 
-The consequence is worth stating plainly: db8 is currently tamper-evident
-against _database_ edits, and not against a dishonest _server_ or an
-unauthenticated _client_. The claim model and the canonical form are the parts
+The consequence is worth stating plainly: db8 detects an edit to a journal's
+signed `hash`, but not yet an edit to the `core` it summarizes (gap 2), and it
+does not protect against a dishonest _server_ or an unauthenticated _client_. The claim model and the canonical form are the parts
 you can rely on. Closing these gaps is tracked work, not a design disagreement —
 and gap 4 in particular is a two-line fix (`FORCE ROW LEVEL SECURITY` plus a
 non-owner application role) rather than a redesign.
@@ -491,21 +492,20 @@ non-owner application role) rather than a redesign.
 ## Status
 
 **Working end to end:** the round lifecycle and watcher, submissions carrying
-structured claims, claim-path-addressed verdicts and their aggregates,
-canonicalization and per-submission digests, journal signing and the hash chain,
-SSE, continue and final voting, research caching and quotas.
+structured claims, strict predicate vocabularies per room, claim-path-addressed
+verdicts and their aggregates, canonicalization and per-submission digests,
+journal signing and the hash chain, SSE, continue and final voting, research
+caching and quotas.
 
 **Built but incomplete**, and tracked as such rather than implied to be finished:
 
 - Research _fetching_ is a stub — `research.fetch` performs no HTTP request and
   every snapshot it stores is a placeholder. The quotas around it are real.
-- The Elo update is a SQL function reachable only from an HTTP route; nothing
-  schedules it, and it is not idempotent.
+- The Elo update is a SQL function reachable only from an HTTP route, and
+  nothing schedules it. It applies each round once (#257).
 - There is no scoring UI.
 - The claim-term projection (`checkableClaims`, `assertsNothing`, `termHash`) is
   complete and tested but has no production caller.
-- Strict predicate vocabularies are implemented and unreachable, because
-  `room_create` never persists room config.
 - Row level security is written but does not take effect. See
   [Security posture](#security-posture).
 
