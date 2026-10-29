@@ -56,6 +56,12 @@ describe('vitest-run logs the seed before Vitest starts', () => {
     }
   });
 
+  it('accepts the largest safe integer seed', () => {
+    const r = run({ VITEST_SEED: '9007199254740991' });
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).seed).toBe('9007199254740991');
+  });
+
   it('refuses to start the real Vitest from inside a Vitest run', () => {
     const r = run({ VITEST: 'true' }, '');
     expect(r.status).toBe(2);
