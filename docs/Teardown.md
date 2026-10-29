@@ -50,15 +50,16 @@ Two ideas do the heavy lifting, and everything else is machinery around them:
 
 ## 1. Bootstrapping: what happens before any request
 
-db8 runs as **two Node processes plus Postgres**. The API server is
+db8 runs as **two Node processes**, plus Postgres when `DATABASE_URL` is set;
+without it, the API runs in memory mode (§5). The API server is
 `server/rpc.js`; the watcher is `server/watcher.js`; the CLI (`bin/db8.js`) and
 the Next.js web app are clients.
 
 The first thing to understand about `server/rpc.js` is that it has **no
-`createApp()` factory**. It is 246 lines of module-level side effects: importing
+`createApp()` factory**. It is 268 lines of module-level side effects: importing
 it builds the config, opens a Postgres pool, allocates every in-memory store,
 constructs every service, mounts every route, and can generate a signing keypair
-on disk. `export default app` at `server/rpc.js:242` hands back an Express app
+on disk. `export default app` at `server/rpc.js:264` hands back an Express app
 that is already fully assembled.
 
 ```mermaid
