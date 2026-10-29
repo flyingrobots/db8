@@ -281,30 +281,57 @@ CREATE TABLE IF NOT EXISTS scores (
 -- ACCESS EXCLUSIVE lock so a concurrent insert cannot slip a duplicate in
 -- between the delete and the constraint, and dedup keeps the most recent score
 -- per (round, judge, participant), matching what score_submit's DO UPDATE does.
-DO $$
+-- A function so that db/test can run it against a legacy table.
+CREATE OR REPLACE FUNCTION scores_upgrade_unique_key() RETURNS void
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE
+  v_ambiguous integer;
 BEGIN
-  IF EXISTS (
+  IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
      WHERE conrelid = 'scores'::regclass
        AND contype = 'u'
        AND pg_get_constraintdef(oid) = 'UNIQUE (round_id, judge_id, participant_id, client_nonce)'
   ) THEN
-    LOCK TABLE scores IN ACCESS EXCLUSIVE MODE;
-    DELETE FROM scores s
-     WHERE EXISTS (
-       SELECT 1 FROM scores newer
-        WHERE newer.round_id = s.round_id
-          AND newer.judge_id = s.judge_id
-          AND newer.participant_id = s.participant_id
-          AND (newer.created_at, newer.id) > (s.created_at, s.id)
-     );
-    ALTER TABLE scores
-      DROP CONSTRAINT scores_round_id_judge_id_participant_id_client_nonce_key;
-    ALTER TABLE scores
-      ADD CONSTRAINT scores_round_id_judge_id_participant_id_key
-      UNIQUE (round_id, judge_id, participant_id);
+    RETURN;
   END IF;
-END $$;
+  LOCK TABLE scores IN ACCESS EXCLUSIVE MODE;
+  -- Rows from one transaction share now(), and the random id says nothing
+  -- about order. When the newest scores of one key tie and differ, no row is
+  -- the latest: refuse, and let an operator reconcile them, rather than keep
+  -- one at random.
+  SELECT count(*) INTO v_ambiguous FROM (
+    SELECT 1 FROM scores s
+     WHERE s.created_at = (SELECT max(m.created_at) FROM scores m
+                            WHERE m.round_id = s.round_id
+                              AND m.judge_id = s.judge_id
+                              AND m.participant_id = s.participant_id)
+     GROUP BY s.round_id, s.judge_id, s.participant_id
+    HAVING count(DISTINCT (s.e, s.r, s.c, s.v, s.y)) > 1
+  ) tied;
+  IF v_ambiguous > 0 THEN
+    RAISE EXCEPTION 'scores_upgrade_ambiguous: % (round, judge, participant) with differing newest scores', v_ambiguous
+      USING HINT = 'Delete all but the intended score of each, then apply schema.sql again.';
+  END IF;
+  DELETE FROM scores s
+   WHERE EXISTS (
+     SELECT 1 FROM scores newer
+      WHERE newer.round_id = s.round_id
+        AND newer.judge_id = s.judge_id
+        AND newer.participant_id = s.participant_id
+        AND (newer.created_at, newer.id) > (s.created_at, s.id)
+   );
+  ALTER TABLE scores
+    DROP CONSTRAINT scores_round_id_judge_id_participant_id_client_nonce_key;
+  ALTER TABLE scores
+    ADD CONSTRAINT scores_round_id_judge_id_participant_id_key
+    UNIQUE (round_id, judge_id, participant_id);
+END;
+$$;
+REVOKE ALL ON FUNCTION scores_upgrade_unique_key() FROM PUBLIC;
+SELECT scores_upgrade_unique_key();
 
 -- Every nonce a judge has scored a participant under. score_submit treats a
 -- nonce seen before as a retry of a request it already applied and changes

@@ -1,0 +1,46 @@
+BEGIN;
+SELECT plan(4);
+
+-- scores_upgrade_unique_key() moves a legacy database to one score per judge
+-- per participant per round. It keeps the newest score. When the newest scores
+-- tie on created_at (rows from one transaction share now()) and differ, no row
+-- is the latest, so it refuses rather than keeping one at random.
+
+INSERT INTO rooms (id, title) VALUES ('21900000-0000-4000-8000-000000000101', 'scores upgrade');
+INSERT INTO rounds (id, room_id, idx, phase, submit_deadline_unix) VALUES
+  ('21900000-0000-4000-8000-000000000102', '21900000-0000-4000-8000-000000000101', 0, 'published', 0);
+INSERT INTO participants (id, room_id, anon_name, role) VALUES
+  ('21900000-0000-4000-8000-000000000111', '21900000-0000-4000-8000-000000000101', 'agent_1', 'debater'),
+  ('21900000-0000-4000-8000-000000000112', '21900000-0000-4000-8000-000000000101', 'agent_2', 'debater'),
+  ('21900000-0000-4000-8000-000000000119', '21900000-0000-4000-8000-000000000101', 'judge_1', 'judge');
+
+-- Put the table back in its legacy shape.
+ALTER TABLE scores DROP CONSTRAINT scores_round_id_judge_id_participant_id_key;
+ALTER TABLE scores ADD CONSTRAINT scores_round_id_judge_id_participant_id_client_nonce_key
+  UNIQUE (round_id, judge_id, participant_id, client_nonce);
+
+-- agent_1: an older and a newer score. agent_2: two scores that tie and differ.
+INSERT INTO scores (round_id, judge_id, participant_id, e, r, c, v, y, client_nonce, created_at) VALUES
+  ('21900000-0000-4000-8000-000000000102', '21900000-0000-4000-8000-000000000119',
+   '21900000-0000-4000-8000-000000000111', 10, 10, 10, 10, 10, 'old', now() - interval '1 minute'),
+  ('21900000-0000-4000-8000-000000000102', '21900000-0000-4000-8000-000000000119',
+   '21900000-0000-4000-8000-000000000111', 90, 90, 90, 90, 90, 'new', now()),
+  ('21900000-0000-4000-8000-000000000102', '21900000-0000-4000-8000-000000000119',
+   '21900000-0000-4000-8000-000000000112', 20, 20, 20, 20, 20, 'tie-a', now()),
+  ('21900000-0000-4000-8000-000000000102', '21900000-0000-4000-8000-000000000119',
+   '21900000-0000-4000-8000-000000000112', 80, 80, 80, 80, 80, 'tie-b', now());
+
+SELECT throws_ok('SELECT scores_upgrade_unique_key()', 'P0001',
+                 'scores_upgrade_ambiguous: 1 (round, judge, participant) with differing newest scores',
+                 'differing scores that tie as newest are refused');
+
+DELETE FROM scores WHERE client_nonce = 'tie-a';
+SELECT lives_ok('SELECT scores_upgrade_unique_key()', 'the upgrade runs once nothing is ambiguous');
+SELECT is((SELECT e FROM scores WHERE participant_id = '21900000-0000-4000-8000-000000000111'),
+          90, 'the newest score is kept');
+SELECT is((SELECT count(*)::int FROM pg_constraint WHERE conrelid = 'scores'::regclass
+             AND pg_get_constraintdef(oid) = 'UNIQUE (round_id, judge_id, participant_id)'),
+          1, 'the key no longer includes the nonce');
+
+SELECT * FROM finish();
+ROLLBACK;
