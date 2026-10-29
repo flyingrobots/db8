@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import crypto from 'node:crypto';
 import pg from 'pg';
 
 // One judge, one score per participant per round.
@@ -27,21 +28,25 @@ const describeDb = process.env.DB8_TEST_PG === '1' ? describe : describe.skip;
 describeDb('one judge, one score per participant per round', () => {
   let pool;
 
-  const roomId = '9c0e0000-0000-0000-0000-000000000001';
-  const roundId = '9c0e0000-0000-0000-0000-000000000002';
-  const judgeId = '9c0e0000-0000-0000-0000-000000000003';
-  const otherJudgeId = '9c0e0000-0000-0000-0000-000000000005';
+  // Every id is namespaced to this run, so two copies of the suite against one
+  // database neither collide on keys nor delete each other's rows (E10).
+  const run = crypto.randomUUID().slice(0, 8);
+  const id = (n) => `${run}-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  const roomId = id(1);
+  const roundId = id(2);
+  const judgeId = id(3);
+  const otherJudgeId = id(5);
 
   // A debater per test. The bug is about one judge scoring one participant
   // repeatedly, so the judge is deliberately shared — but the *subject* must not
   // be, or each test's row counts include every earlier test's rows and the
   // suite only passes in declaration order (E11).
   const DEBATERS = {
-    manyNonces: '9c0e0000-0000-0000-0000-000000000010',
-    revises: '9c0e0000-0000-0000-0000-000000000011',
-    aggregate: '9c0e0000-0000-0000-0000-000000000012',
-    twoJudges: '9c0e0000-0000-0000-0000-000000000013',
-    lateRetry: '9c0e0000-0000-0000-0000-000000000014'
+    manyNonces: id(10),
+    revises: id(11),
+    aggregate: id(12),
+    twoJudges: id(13),
+    lateRetry: id(14)
   };
 
   const score = (debater, rubric, nonce, judge = judgeId) =>
@@ -68,7 +73,6 @@ describeDb('one judge, one score per participant per round', () => {
 
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: dbUrl });
-    await pool.query('delete from rooms where id = $1', [roomId]);
     await pool.query('insert into rooms(id, title) values ($1,$2)', [
       roomId,
       'Score Revision Room'
