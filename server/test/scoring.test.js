@@ -2,6 +2,12 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import supertest from 'supertest';
 import app, { __setDbPool } from '../rpc.js';
 import pg from 'pg';
+import crypto from 'node:crypto';
+
+// Ids carry a per-run prefix, so two copies of the suite against one database
+// neither collide on keys nor delete each other's rows (E10).
+const RUN = crypto.randomUUID().slice(0, 8);
+const rid = (n) => `${RUN}-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 // Rubric scoring and the Elo reputation derived from it.
 //
@@ -24,12 +30,12 @@ describe('rubric scoring and the reputation it feeds', () => {
     process.env.DATABASE_URL ||
     'postgresql://postgres:test@localhost:54329/db8_test';
 
-  const roomId = '99990000-0000-0000-0000-000000000001';
-  const roundId = '99990000-0000-0000-0000-000000000002';
-  const judgeId = '99990000-0000-0000-0000-000000000003';
-  const debaterId = '99990000-0000-0000-0000-000000000004';
-  const opponentId = '99990000-0000-0000-0000-000000000005';
-  const taggedRoomId = '99990000-0000-0000-0000-000000000010';
+  const roomId = rid(1);
+  const roundId = rid(2);
+  const judgeId = rid(3);
+  const debaterId = rid(4);
+  const opponentId = rid(5);
+  const taggedRoomId = rid(10);
   const rooms = [roomId, taggedRoomId];
 
   // The strong debater scores 80 on average, the weak one 50, so the direction
@@ -137,10 +143,10 @@ describe('rubric scoring and the reputation it feeds', () => {
     // below is what produces the science rating; nothing here is a default.
     await seed();
     const tagged = {
-      round: '99990000-0000-0000-0000-000000000011',
-      judge: '99990000-0000-0000-0000-000000000012',
-      strong: '99990000-0000-0000-0000-000000000013',
-      weak: '99990000-0000-0000-0000-000000000014'
+      round: rid(11),
+      judge: rid(12),
+      strong: rid(13),
+      weak: rid(14)
     };
     await pool.query(
       'insert into rooms(id, title, config) values ($1, $2, \'{"tags": ["science"]}\')',

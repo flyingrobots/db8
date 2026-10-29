@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
+import crypto from 'node:crypto';
+
+// Ids carry a per-run prefix, so two copies of the suite against one database
+// neither collide on keys nor delete each other's rows (E10).
+const RUN = crypto.randomUUID().slice(0, 8);
+const rid = (n) => `${RUN}-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 // Regression: admin_audit_log.actor_id carried
 //   REFERENCES participants(id) ON DELETE SET NULL
@@ -18,8 +24,8 @@ describe('audit actor retention', () => {
     process.env.DATABASE_URL ||
     'postgresql://postgres:test@localhost:54329/db8_test';
 
-  const roomId = '5a1d0000-0000-0000-0000-000000000001';
-  const roundId = '5a1d0000-0000-0000-0000-000000000002';
+  const roomId = rid(1);
+  const roundId = rid(2);
 
   // One participant per test, not one for the file.
   //
@@ -29,8 +35,8 @@ describe('audit actor retention', () => {
   // `expected [] to have a length of 1`. Sharing the actor made the pair a
   // script rather than two tests (E11, E12).
   const ACTORS = {
-    deletable: '5a1d0000-0000-0000-0000-000000000003',
-    retained: '5a1d0000-0000-0000-0000-000000000004'
+    deletable: rid(3),
+    retained: rid(4)
   };
   const actorIds = Object.values(ACTORS);
 

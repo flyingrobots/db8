@@ -1,8 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import pg from 'pg';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import app, { __setDbPool } from '../rpc.js';
+
+// Ids carry a per-run prefix, so two copies of the suite against one database
+// neither collide on keys nor delete each other's rows (E10).
+const RUN = randomUUID().slice(0, 8);
+const rid = (n) => `${RUN}-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 // The whole feature, driven the way a client meets it: over HTTP, against a
 // real database, through the actual routes.
@@ -49,9 +54,9 @@ for (const mode of MODES) {
 
   run(`end to end (${mode.name}): a structured claim, and a verdict on one of its nodes`, () => {
     let pool;
-    const roomId = '9e2e0000-0000-0000-0000-000000000001';
-    const roundId = '9e2e0000-0000-0000-0000-000000000002';
-    const judgeId = '9e2e0000-0000-0000-0000-000000000004';
+    const roomId = rid(1);
+    const roundId = rid(2);
+    const judgeId = rid(4);
 
     beforeAll(async () => {
       if (!mode.durable) {

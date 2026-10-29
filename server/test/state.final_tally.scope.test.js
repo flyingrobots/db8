@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
 import { RoomService } from '../services/RoomService.js';
+import crypto from 'node:crypto';
+
+// Ids carry a per-run prefix, so two copies of the suite against one database
+// neither collide on keys nor delete each other's rows (E10).
+const RUN = crypto.randomUUID().slice(0, 8);
+const rid = (n) => `${RUN}-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 // `/state` must report the final tally of the round it is reporting on.
 //
@@ -28,14 +34,10 @@ const describeDb = process.env.DB8_TEST_PG === '1' ? describe : describe.skip;
 describeDb('/state reports the final tally of the round it is reporting on', () => {
   let pool;
 
-  const roomId = '4a110000-0000-0000-0000-000000000001';
-  const oldRoundId = '4a110000-0000-0000-0000-000000000002';
-  const currentRoundId = '4a110000-0000-0000-0000-000000000003';
-  const voters = [
-    '4a110000-0000-0000-0000-000000000010',
-    '4a110000-0000-0000-0000-000000000011',
-    '4a110000-0000-0000-0000-000000000012'
-  ];
+  const roomId = rid(1);
+  const oldRoundId = rid(2);
+  const currentRoundId = rid(3);
+  const voters = [rid(10), rid(11), rid(12)];
 
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: dbUrl });

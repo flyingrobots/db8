@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
+import crypto from 'node:crypto';
+
+// Ids carry a per-run prefix, so two copies of the suite against one database
+// neither collide on keys nor delete each other's rows (E10).
+const RUN = crypto.randomUUID().slice(0, 8);
+const rid = (n) => `${RUN}-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 // The payoff, at the storage layer. Two verdicts on different nodes of the same
 // claim must be two rows. If the uniqueness key ignores claim_path, the second
@@ -33,9 +39,9 @@ describe('verdict claim_path persistence', () => {
     process.env.DATABASE_URL ||
     'postgresql://postgres:test@localhost:54329/db8_test';
 
-  const roomId = '5c1a0000-0000-0000-0000-000000000001';
-  const roundId = '5c1a0000-0000-0000-0000-000000000002';
-  const judgeId = '5c1a0000-0000-0000-0000-000000000004';
+  const roomId = rid(1);
+  const roundId = rid(2);
+  const judgeId = rid(4);
 
   // Every test makes its own submission and scopes its assertions to it.
   //

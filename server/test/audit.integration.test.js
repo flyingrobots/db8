@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
 import { __setDbPool } from '../rpc.js';
+import crypto from 'node:crypto';
+
+// Ids carry a per-run prefix, so two copies of the suite against one database
+// neither collide on keys nor delete each other's rows (E10).
+const RUN = crypto.randomUUID().slice(0, 8);
+const rid = (n) => `${RUN}-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 describe('Audit Trail Integration', () => {
   let pool;
@@ -34,9 +40,9 @@ describe('Audit Trail Integration', () => {
   });
 
   it('records a create in the audit log when a submission is first stored', async () => {
-    const roomId = '33343334-0000-0000-0000-000000000001';
-    const roundId = '33343334-0000-0000-0000-000000000002';
-    const participantId = '33343334-0000-0000-0000-000000000003';
+    const roomId = rid(1);
+    const roundId = rid(2);
+    const participantId = rid(3);
 
     await resetRoom(roomId, {
       sql: 'delete from admin_audit_log where actor_id = $1',
@@ -91,9 +97,9 @@ describe('Audit Trail Integration', () => {
   });
 
   it('records a vote in the audit log naming the voter', async () => {
-    const roomId = '33343334-0000-0000-0000-000000000010';
-    const roundId = '33343334-0000-0000-0000-000000000011';
-    const participantId = '33343334-0000-0000-0000-000000000012';
+    const roomId = rid(10);
+    const roundId = rid(11);
+    const participantId = rid(12);
 
     await resetRoom(roomId, {
       sql: 'delete from admin_audit_log where actor_id = $1',
@@ -142,8 +148,8 @@ describe('Audit Trail Integration', () => {
   });
 
   it('records the watcher as the actor when a due round is published', async () => {
-    const roomId = '33343334-0000-0000-0000-000000000020';
-    const roundId = '33343334-0000-0000-0000-000000000021';
+    const roomId = rid(20);
+    const roundId = rid(21);
 
     await resetRoom(roomId, {
       sql: 'delete from admin_audit_log where entity_id = $1',

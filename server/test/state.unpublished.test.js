@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
 import { RoomService } from '../services/RoomService.js';
+import crypto from 'node:crypto';
+
+// Ids carry a per-run prefix, so two copies of the suite against one database
+// neither collide on keys nor delete each other's rows (E10).
+const RUN = crypto.randomUUID().slice(0, 8);
+const rid = (n) => `${RUN}-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 // Regression for #226: /state returned every submission in the room, including
 // ones whose round was still in `submit`, so a debater could read an opponent's
@@ -29,13 +35,13 @@ describe('/state hides submissions from rounds still in submit (DB)', () => {
     process.env.DATABASE_URL ||
     'postgresql://postgres:test@localhost:54329/db8_test';
 
-  const roomId = '22600000-0000-0000-0000-000000000001';
-  const round0 = '22600000-0000-0000-0000-000000000010';
-  const round1 = '22600000-0000-0000-0000-000000000011';
-  const alice = '22600000-0000-0000-0000-000000000020';
-  const bob = '22600000-0000-0000-0000-000000000021';
-  const published = '22600000-0000-0000-0000-000000000030';
-  const pending = '22600000-0000-0000-0000-000000000031';
+  const roomId = rid(1);
+  const round0 = rid(10);
+  const round1 = rid(11);
+  const alice = rid(20);
+  const bob = rid(21);
+  const published = rid(30);
+  const pending = rid(31);
 
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: dbUrl });

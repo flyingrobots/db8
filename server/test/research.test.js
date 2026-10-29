@@ -2,6 +2,12 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import supertest from 'supertest';
 import app, { __setDbPool } from '../rpc.js';
 import pg from 'pg';
+import crypto from 'node:crypto';
+
+// Ids carry a per-run prefix, so two copies of the suite against one database
+// neither collide on keys nor delete each other's rows (E10).
+const RUN = crypto.randomUUID().slice(0, 8);
+const rid = (n) => `${RUN}-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 describe('research fetching, caching, and per-round quotas', () => {
   let pool;
@@ -10,19 +16,19 @@ describe('research fetching, caching, and per-round quotas', () => {
     process.env.DATABASE_URL ||
     'postgresql://postgres:test@localhost:54329/db8_test';
 
-  const roomId = '66660000-0000-0000-0000-000000000001';
-  const roundId = '66660000-0000-0000-0000-000000000002';
-  const participantId = '66660000-0000-0000-0000-000000000003';
-  const limitedRoom = '66660000-0000-0000-0000-000000000010';
-  const limitedRound = '66660000-0000-0000-0000-000000000011';
+  const roomId = rid(1);
+  const roundId = rid(2);
+  const participantId = rid(3);
+  const limitedRoom = rid(10);
+  const limitedRound = rid(11);
   // A room of its own for the read-back test, so it fetches what it later reads
   // instead of depending on another test having populated the cache.
-  const cacheRoom = '66660000-0000-0000-0000-000000000020';
-  const cacheRound = '66660000-0000-0000-0000-000000000021';
+  const cacheRoom = rid(20);
+  const cacheRound = rid(21);
 
-  const EVIDENCE_URL = 'https://example.com/evidence';
-  const CACHE_URL = 'https://example.com/cache-readback';
-  const urls = [EVIDENCE_URL, CACHE_URL, 'https://a.com', 'https://b.com'];
+  const EVIDENCE_URL = `https://example.com/evidence?run=${RUN}`;
+  const CACHE_URL = `https://example.com/cache-readback?run=${RUN}`;
+  const urls = [EVIDENCE_URL, CACHE_URL, `https://a.com/?run=${RUN}`, `https://b.com/?run=${RUN}`];
   const rooms = [roomId, limitedRoom, cacheRoom];
 
   const seedRoom = async (room, round, anonName, cfg) => {
@@ -86,10 +92,10 @@ describe('research fetching, caching, and per-round quotas', () => {
     // First fetch must succeed, or the 429 below proves nothing: a round whose
     // quota was already spent by an earlier run would reject both calls and the
     // assertion would pass without the limit ever being exercised.
-    const first = await fetchUrl(limitedRoom, limitedRound, 'https://a.com');
+    const first = await fetchUrl(limitedRoom, limitedRound, `https://a.com/?run=${RUN}`);
     expect(first.status, 'the first fetch must be inside the quota').toBe(200);
 
-    const res = await fetchUrl(limitedRoom, limitedRound, 'https://b.com');
+    const res = await fetchUrl(limitedRoom, limitedRound, `https://b.com/?run=${RUN}`);
     expect(res.status).toBe(429);
     expect(res.body.error).toBe('quota_exceeded');
   });
