@@ -1,19 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
 
-// `rooms.config` exists, is read by three features, and was never written.
-//
-// `room_create` reads `p_cfg` for `participant_count` and `submit_minutes`
-// (db/rpc.sql:16-17) and then inserts only `(title, client_nonce)`, so every
-// room in every database has `config = '{}'`. Three things depend on it and are
-// therefore inert:
+// room_create stores the configuration it is given as rooms.config (#200).
+// Three features read keys that room_create itself does not interpret:
 //
 //   - research quotas       — server/routes/research.js reads max_fetches_per_round
 //   - attribution masking   — submissions_view reads attribution_mode
-//   - strict vocabularies   — validateTerm(term, { predicates }) has nowhere to
-//                             read a room's declared predicate set from
+//   - strict vocabularies   — submission.create reads predicates (#244)
 //
-// The research test only passes today because it hand-inserts a config row.
+// Before #200 it stored only (title, client_nonce), so all three were inert.
 
 const dbUrl =
   process.env.DB8_TEST_DATABASE_URL ||
@@ -71,8 +66,22 @@ describeDb('room_create persists the configuration it was given', () => {
   });
 
   it('defaults to an empty object when no config is given', async () => {
-    const roomId = await createRoom('Bare Room', {}, 'cfg-persist-empty');
-    expect(await configOf(roomId)).toEqual({});
+    const empty = await createRoom('Bare Room', {}, 'cfg-persist-empty');
+    expect(await configOf(empty), 'an empty object').toEqual({});
+
+    nonces.push('cfg-persist-null');
+    const nulled = await pool.query('select room_create($1::text, NULL::jsonb, $2::text) as id', [
+      'Null Config Room',
+      'cfg-persist-null'
+    ]);
+    expect(await configOf(nulled.rows[0].id), 'a NULL config').toEqual({});
+
+    nonces.push('cfg-persist-omitted');
+    const omitted = await pool.query(
+      'select room_create(p_topic => $1::text, p_client_nonce => $2::text) as id',
+      ['Omitted Config Room', 'cfg-persist-omitted']
+    );
+    expect(await configOf(omitted.rows[0].id), 'an omitted config').toEqual({});
   });
 
   it('still applies participant_count and submit_minutes to the round it seeds', async () => {
@@ -108,10 +117,21 @@ describeDb('room_create persists the configuration it was given', () => {
   });
 
   it('is still idempotent on the client nonce, and keeps the first config', async () => {
+    // The replay asks for a different config. It is a retry, not a
+    // reconfiguration (#249): the stored config and the roster stay as created.
     const nonce = 'cfg-persist-idempotent';
     const first = await createRoom('Idempotent Room', { participant_count: 5 }, nonce);
-    const second = await createRoom('Idempotent Room', { participant_count: 5 }, nonce);
+    const second = await createRoom(
+      'Idempotent Room',
+      { participant_count: 2, attribution_mode: 'masked' },
+      nonce
+    );
     expect(second, 'the same nonce returns the same room').toBe(first);
-    expect(await configOf(first)).toMatchObject({ participant_count: 5 });
+    expect(await configOf(first)).toEqual({ participant_count: 5 });
+    const seats = await pool.query(
+      'select count(*)::int as n from participants where room_id = $1',
+      [first]
+    );
+    expect(seats.rows[0].n, 'the replay does not change the roster').toBe(5);
   });
 });
