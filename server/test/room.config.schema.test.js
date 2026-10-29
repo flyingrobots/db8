@@ -66,6 +66,26 @@ describe('room configuration survives the schema boundary', () => {
     expect(() => RoomConfig.parse({ tags: ['science', 'science'] })).toThrow(/tags must be unique/);
   });
 
+  it('bounds the research budget, the vote window and the tags', () => {
+    expect(RoomConfig.parse({ max_fetches_per_round: 0 }).max_fetches_per_round).toBe(0);
+    expect(RoomConfig.parse({ max_fetches_per_round: 1000 }).max_fetches_per_round).toBe(1000);
+    expect(() => RoomConfig.parse({ max_fetches_per_round: -1 })).toThrow();
+    expect(() => RoomConfig.parse({ max_fetches_per_round: 1001 })).toThrow();
+    expect(() => RoomConfig.parse({ max_fetches_per_round: 1.5 })).toThrow();
+    expect(RoomConfig.parse({ continue_vote_seconds: 10 }).continue_vote_seconds).toBe(10);
+    expect(RoomConfig.parse({ continue_vote_seconds: 3600 }).continue_vote_seconds).toBe(3600);
+    expect(() => RoomConfig.parse({ continue_vote_seconds: 9 })).toThrow();
+    expect(() => RoomConfig.parse({ continue_vote_seconds: 3601 })).toThrow();
+    expect(() => RoomConfig.parse({ tags: [''] })).toThrow();
+    expect(() => RoomConfig.parse({ tags: ['x'.repeat(65)] })).toThrow();
+    expect(() =>
+      RoomConfig.parse({ tags: Array.from({ length: 33 }, (_, i) => `tag${i}`) })
+    ).toThrow();
+    expect(() =>
+      RoomConfig.parse({ predicates: Array.from({ length: 257 }, (_, i) => `p${i}`) })
+    ).toThrow();
+  });
+
   it('still accepts a room created with no configuration at all', () => {
     expect(RoomCreate.parse(base).cfg).toBeUndefined();
   });
