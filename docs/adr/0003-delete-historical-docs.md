@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-08-16
+lastUpdated: 2026-10-29
 ---
 
 # ADR-0003: Delete stale documentation rather than archive it
@@ -46,10 +46,11 @@ explicitly that they are not current behaviour.
 
 ## Consequences
 
-**Better.** Every page under `docs/` describes `main`. There is no category of
-document a reader must first classify before trusting. The corpus shrank from 24
-Markdown files to 17, and `AGENTS.md` from 1429 lines to about 125 — which makes the
-standards it links to considerably more likely to be read.
+**Better.** Every current-behaviour page under `docs/` describes `main`; the
+proposal pages under `docs/feature-proposals/` say they do not. There is no other
+category of document a reader must first classify before trusting. The corpus
+shrank from 24 Markdown files to 17, and `AGENTS.md` from 1429 lines to about
+125 — which makes the standards it links to considerably more likely to be read.
 
 **Worse.** Finding old context now requires `git log`, `git show`, or
 `git log --diff-filter=D --name-only` to locate a deleted path. That is a real
