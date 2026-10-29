@@ -102,12 +102,17 @@ for (const mode of MODES) {
       );
     };
 
+    // One deadline for the whole suite. A nonce names one document, and the
+    // deadline is part of its digest: a deadline recomputed per request would
+    // make a replay that crosses a second boundary a different document (409).
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+
     const submission = (term, nonce) => ({
       room_id: roomId,
       round_id: roundId,
       author_id: authorFor(nonce),
       phase: 'submit',
-      deadline_unix: Math.floor(Date.now() / 1000) + 3600,
+      deadline_unix: deadline,
       content: 'The evidence on remote work is contested.',
       claims: [
         { id: 'c1', term, support: [{ kind: 'citation', ref: 'https://example.com/study' }] }
