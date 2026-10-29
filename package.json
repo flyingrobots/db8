@@ -66,7 +66,7 @@
   },
   "optionalDependencies": {
     "@rollup/rollup-linux-x64-gnu": "^4.65.1",
-    "pg": "^8.13.1"
+    "pg": "^8.23.0"
   },
   "bin": {
     "db8": "./bin/db8.js",
