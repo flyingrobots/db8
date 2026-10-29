@@ -65,7 +65,7 @@ export const ContinueVote = z.object({
 // Room configuration, stored as `rooms.config` by room_create (#200).
 //
 // Strict: an undeclared key is a 400, not a setting that is silently dropped,
-// so a typo such as `atribution_mode` is an error the caller can see. Each key
+// so a misspelled key is an error the caller can see. Each key
 // names the code that reads it; a key without a reader does not belong here.
 export const RoomConfig = z
   .object({
