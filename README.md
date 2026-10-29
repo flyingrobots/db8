@@ -387,12 +387,17 @@ npm --prefix web install
 `.npmrc` sets `legacy-peer-deps=true`. That is required, not sloppiness — see
 [CONTRIBUTING.md](CONTRIBUTING.md) for why removing it breaks `npm ci`.
 
-Hash a document without a server or a database:
+Hash a document without a server or a database. Save the submission example at
+the top of this page as `draft.json`, then:
 
 ```bash
-node bin/db8.js draft open --path draft.json
 node bin/db8.js draft validate --path draft.json --nonce fixednonce123 --json
 ```
+
+It prints the digest shown earlier (`e05fa5df…`). `db8 draft open` writes an empty
+template to `db8/round-0/anon/draft.json`, not to `--path`
+([#263](https://github.com/flyingrobots/db8/issues/263)), and the template's content
+and citations must be filled in before it validates.
 
 Run the whole stack. **The API and the web app are separate origins, and that
 matters** — the API allow-lists origins, so serving the web app from an
