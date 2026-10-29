@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import crypto from 'node:crypto';
 import pg from 'pg';
 
 // room_create stores the configuration it is given as rooms.config (#200).
@@ -19,14 +20,18 @@ const describeDb = process.env.DB8_TEST_PG === '1' ? describe : describe.skip;
 
 describeDb('room_create persists the configuration it was given', () => {
   let pool;
+  // Nonces carry a per-run prefix, so two copies of the suite against one
+  // database get their own rooms and clean up only those (E10).
+  const run = crypto.randomUUID().slice(0, 8);
+  const nonce = (name) => `cfg-persist-${run}-${name}`;
   const nonces = [];
 
-  const createRoom = async (topic, cfg, nonce) => {
-    nonces.push(nonce);
+  const createRoom = async (topic, cfg, clientNonce) => {
+    nonces.push(clientNonce);
     const r = await pool.query('select room_create($1::text, $2::jsonb, $3::text) as id', [
       topic,
       JSON.stringify(cfg),
-      nonce
+      clientNonce
     ]);
     return r.rows[0].id;
   };
@@ -47,7 +52,7 @@ describeDb('room_create persists the configuration it was given', () => {
     const roomId = await createRoom(
       'Config Room',
       { participant_count: 6, submit_minutes: 9 },
-      'cfg-persist-known-keys'
+      nonce('known-keys')
     );
     expect(await configOf(roomId)).toMatchObject({ participant_count: 6, submit_minutes: 9 });
   });
@@ -61,25 +66,25 @@ describeDb('room_create persists the configuration it was given', () => {
       predicates: ['reduces', 'increases'],
       tags: ['science']
     };
-    const roomId = await createRoom('Full Config Room', cfg, 'cfg-persist-other-keys');
+    const roomId = await createRoom('Full Config Room', cfg, nonce('other-keys'));
     expect(await configOf(roomId)).toMatchObject(cfg);
   });
 
   it('defaults to an empty object when no config is given', async () => {
-    const empty = await createRoom('Bare Room', {}, 'cfg-persist-empty');
+    const empty = await createRoom('Bare Room', {}, nonce('empty'));
     expect(await configOf(empty), 'an empty object').toEqual({});
 
-    nonces.push('cfg-persist-null');
+    nonces.push(nonce('null'));
     const nulled = await pool.query('select room_create($1::text, NULL::jsonb, $2::text) as id', [
       'Null Config Room',
-      'cfg-persist-null'
+      nonce('null')
     ]);
     expect(await configOf(nulled.rows[0].id), 'a NULL config').toEqual({});
 
-    nonces.push('cfg-persist-omitted');
+    nonces.push(nonce('omitted'));
     const omitted = await pool.query(
       'select room_create(p_topic => $1::text, p_client_nonce => $2::text) as id',
-      ['Omitted Config Room', 'cfg-persist-omitted']
+      ['Omitted Config Room', nonce('omitted')]
     );
     expect(await configOf(omitted.rows[0].id), 'an omitted config').toEqual({});
   });
@@ -90,7 +95,7 @@ describeDb('room_create persists the configuration it was given', () => {
     const roomId = await createRoom(
       'Seeded Room',
       { participant_count: 3, submit_minutes: 2 },
-      'cfg-persist-seeding'
+      nonce('seeding')
     );
     const participants = await pool.query(
       'select count(*)::int as n from participants where room_id = $1',
@@ -119,12 +124,12 @@ describeDb('room_create persists the configuration it was given', () => {
   it('is still idempotent on the client nonce, and keeps the first config', async () => {
     // The replay asks for a different config. It is a retry, not a
     // reconfiguration (#249): the stored config and the roster stay as created.
-    const nonce = 'cfg-persist-idempotent';
-    const first = await createRoom('Idempotent Room', { participant_count: 5 }, nonce);
+    const replayNonce = nonce('idempotent');
+    const first = await createRoom('Idempotent Room', { participant_count: 5 }, replayNonce);
     const second = await createRoom(
       'Idempotent Room',
       { participant_count: 2, attribution_mode: 'masked' },
-      nonce
+      replayNonce
     );
     expect(second, 'the same nonce returns the same room').toBe(first);
     expect(await configOf(first)).toEqual({ participant_count: 5 });
