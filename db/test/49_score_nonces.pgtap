@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(7);
+SELECT plan(9);
 
 -- score_submit treats a nonce seen before as a retry: it returns the stored
 -- score and changes nothing, so a delayed retry of an earlier revision cannot
@@ -41,6 +41,14 @@ SELECT throws_ok($$SELECT score_submit('21900000-0000-4000-8000-000000000002', '
                  '22023', 'score_deleted', 'a retry of a nonce whose score was deleted is refused');
 SELECT is((SELECT count(*)::int FROM scores WHERE round_id = '21900000-0000-4000-8000-000000000002'),
           0, 'the refused retry does not recreate the score');
+
+-- A new nonce is a new request: it scores the debater again.
+SELECT lives_ok($$SELECT score_submit('21900000-0000-4000-8000-000000000002', '21900000-0000-4000-8000-000000000019',
+                                     '21900000-0000-4000-8000-000000000011', 20, 20, 20, 20, 20, 'pgtap-219-c')$$,
+                'a new nonce after the deletion is accepted');
+SELECT is((SELECT e FROM scores WHERE round_id = '21900000-0000-4000-8000-000000000002'
+                                  AND participant_id = '21900000-0000-4000-8000-000000000011'),
+          20, 'the new nonce stores a score');
 
 SELECT * FROM finish();
 ROLLBACK;
