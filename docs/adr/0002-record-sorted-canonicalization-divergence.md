@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-08-16
+lastUpdated: 2026-10-29
 ---
 
 # ADR-0002: Record the `sorted` canonicalization divergence rather than fix it
@@ -90,9 +90,10 @@ immediately.
 **Fix it now** — build the JSON string manually rather than relying on object
 property order. Rejected for timing, not merit: it invalidates every signature
 over a document with numeric keys, needs a `BREAKING CHANGE` footer and a major
-bump, and it surfaced during a test-repair commit whose declared kind was
-"test repair, no source behaviour changed". Bundling a signature-invalidating
-change into that commit would have been dishonest about scope.
+bump, and it surfaced during a commit whose declared kind under H2 was a defect
+fix in the tests, with no source behaviour changed. Bundling a
+signature-invalidating behaviour change into that commit would have been
+dishonest about scope.
 
 **Retire `sorted` entirely.** The most likely correct end state, and the
 recommendation carried into the tracking issue. `docs/Provenance.md` already
