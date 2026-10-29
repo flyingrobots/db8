@@ -400,9 +400,16 @@ unexpected port produces a room page with no submission form:
 
 ```bash
 npm run dev:db                     # Postgres on 54329
+export DATABASE_URL=postgresql://postgres:test@localhost:54329/db8_test
+npm run test:prepare-db            # apply schema, RPCs and RLS
 node server/rpc.js                 # API  -> http://localhost:3000
+node server/watcher.js             # advances rounds; needs DATABASE_URL
 npm --prefix web run dev           # web  -> http://localhost:3001
 ```
+
+Run each long-running command in its own terminal with `DATABASE_URL` set. Without
+`DATABASE_URL` the API runs in memory mode: nothing survives a restart, and reading
+`/state` advances rounds instead of the watcher.
 
 Run the tests:
 
