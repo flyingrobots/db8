@@ -93,19 +93,33 @@ describeDb('one submission per participant per round (database)', () => {
     await pool.end();
   });
 
+  // Each test below seeds its own round, and the /state test its own room.
+  // They shared round 0 and ran as a chain: the replay test replayed the
+  // resubmission test's nonce, and the /state test published the round the
+  // others wrote to. Under a shuffled order the chain broke.
+  const seedRound = async (idx) => {
+    const roundId = `${run}-0000-4000-8000-${String(100 + idx).padStart(12, '0')}`;
+    await pool.query(
+      "insert into rounds(id, room_id, idx, phase, submit_deadline_unix) values ($1, $2, $3, 'submit', 0)",
+      [roundId, ids.room_id, idx]
+    );
+    return { ...ids, round_id: roundId };
+  };
+
   it('a resubmission with a fresh nonce replaces the turn, keeping its id', async () => {
+    const r = await seedRound(10);
     const first = await request(app)
       .post('/rpc/submission.create')
-      .send(doc(ids, 'Draft one.', `once-${run}-1`))
+      .send(doc(r, 'Draft one.', `once-${run}-1`))
       .expect(200);
     const second = await request(app)
       .post('/rpc/submission.create')
-      .send(doc(ids, 'Draft two.', `once-${run}-2`))
+      .send(doc(r, 'Draft two.', `once-${run}-2`))
       .expect(200);
     expect(second.body.submission_id).toBe(first.body.submission_id);
     const rows = await pool.query(
       'select content, canonical_sha256, version from submissions where round_id = $1 and author_id = $2',
-      [ids.round_id, ids.author_id]
+      [r.round_id, r.author_id]
     );
     expect(rows.rows).toEqual([
       { content: 'Draft two.', canonical_sha256: second.body.canonical_sha256, version: 2 }
@@ -114,7 +128,7 @@ describeDb('one submission per participant per round (database)', () => {
       "select action, details from admin_audit_log where entity_type = 'submission' and entity_id = $1 order by created_at, id",
       [first.body.submission_id]
     );
-    expect(audit.rows.map((r) => r.action)).toEqual(['create', 'update']);
+    expect(audit.rows.map((row) => row.action)).toEqual(['create', 'update']);
     expect(audit.rows[1].details).toMatchObject({
       version: 2,
       previous_sha256: first.body.canonical_sha256,
@@ -123,45 +137,79 @@ describeDb('one submission per participant per round (database)', () => {
   });
 
   it('replaying the same nonce and document returns the same id without a new version', async () => {
-    const body = doc(ids, 'Draft two.', `once-${run}-2`);
+    const r = await seedRound(11);
+    const body = doc(r, 'Draft one.', `replay-${run}-1`);
+    const first = await request(app).post('/rpc/submission.create').send(body).expect(200);
     const replay = await request(app).post('/rpc/submission.create').send(body).expect(200);
+    expect(replay.body.submission_id).toBe(first.body.submission_id);
     const row = await pool.query(
       'select id, version from submissions where round_id = $1 and author_id = $2',
-      [ids.round_id, ids.author_id]
+      [r.round_id, r.author_id]
     );
-    expect(row.rows).toEqual([{ id: replay.body.submission_id, version: 2 }]);
+    expect(row.rows).toEqual([{ id: first.body.submission_id, version: 1 }]);
   });
 
   it('/state and the journal list one submission per author after publish', async () => {
-    await request(app)
-      .post('/rpc/submission.create')
-      .send(doc({ ...ids, author_id: other }, 'The other seat.', `once-${run}-o`))
-      .expect(200);
-    await pool.query("update rounds set phase = 'published' where id = $1", [ids.round_id]);
-    const state = await request(app).get(`/state?room_id=${ids.room_id}`).expect(200);
-    const authors = state.body.round.transcript.map((t) => t.author_id).sort();
-    expect(authors).toEqual([ids.author_id, other].sort());
-    expect(state.body.round.transcript.find((t) => t.author_id === ids.author_id).content).toBe(
-      'Draft two.'
+    // Its own room: /state reports a room's current round, and the rounds the
+    // other tests add would otherwise be the current one.
+    const room = {
+      room_id: `${run}-0000-4000-8000-000000000201`,
+      round_id: `${run}-0000-4000-8000-000000000202`,
+      author_id: `${run}-0000-4000-8000-000000000203`
+    };
+    const second = `${run}-0000-4000-8000-000000000204`;
+    await pool.query('insert into rooms(id, title) values ($1, $2)', [room.room_id, 'once state']);
+    await pool.query(
+      "insert into rounds(id, room_id, idx, phase, submit_deadline_unix) values ($1, $2, 0, 'submit', 0)",
+      [room.round_id, room.room_id]
     );
-    const journal = await request(app).get(`/journal?room_id=${ids.room_id}`).expect(200);
-    const core = journal.body.journal?.core ?? journal.body.core;
-    expect(core.transcript_hashes).toHaveLength(2);
+    await pool.query(
+      `insert into participants(id, room_id, anon_name, role) values
+         ($1, $3, 'state_1', 'debater'), ($2, $3, 'state_2', 'debater'),
+         ($4, $3, 'state_3', 'debater')`,
+      [room.author_id, second, room.room_id, `${run}-0000-4000-8000-000000000209`]
+    );
+    try {
+      for (const [body, nonce] of [
+        [doc(room, 'Draft one.', `state-${run}-1`), 'first'],
+        [doc(room, 'Draft two.', `state-${run}-2`), 'resubmission'],
+        [doc({ ...room, author_id: second }, 'The other seat.', `state-${run}-o`), 'second seat']
+      ]) {
+        const res = await request(app).post('/rpc/submission.create').send(body);
+        expect(res.status, `${nonce}: ${JSON.stringify(res.body)}`).toBe(200);
+      }
+      await pool.query("update rounds set phase = 'published' where id = $1", [room.round_id]);
+      const state = await request(app).get(`/state?room_id=${room.room_id}`).expect(200);
+      const authors = state.body.round.transcript.map((t) => t.author_id).sort();
+      expect(authors).toEqual([room.author_id, second].sort());
+      expect(state.body.round.transcript.find((t) => t.author_id === room.author_id).content).toBe(
+        'Draft two.'
+      );
+      const journal = await request(app).get(`/journal?room_id=${room.room_id}`).expect(200);
+      const core = journal.body.journal?.core ?? journal.body.core;
+      expect(core.transcript_hashes).toHaveLength(2);
+    } finally {
+      await pool.query('delete from rooms where id = $1', [room.room_id]);
+    }
   });
 
   it('a replacement after the round has published is refused', async () => {
     // A replacement now would keep the submission id, and with it the verdicts
-    // judges gave the old claims. Set the phase here rather than relying on the
-    // test above having published the round.
-    await pool.query("update rounds set phase = 'published' where id = $1", [ids.round_id]);
+    // judges gave the old claims.
+    const r = await seedRound(12);
+    await request(app)
+      .post('/rpc/submission.create')
+      .send(doc(r, 'Draft two.', `late-${run}-1`))
+      .expect(200);
+    await pool.query("update rounds set phase = 'published' where id = $1", [r.round_id]);
     const res = await request(app)
       .post('/rpc/submission.create')
-      .send(doc(ids, 'Rewritten after publish.', `once-${run}-late`))
+      .send(doc(r, 'Rewritten after publish.', `late-${run}-2`))
       .expect(409);
     expect(res.body.error).toBe('submission_closed');
     const row = await pool.query(
       'select content from submissions where round_id = $1 and author_id = $2',
-      [ids.round_id, ids.author_id]
+      [r.round_id, r.author_id]
     );
     expect(row.rows).toEqual([{ content: 'Draft two.' }]);
   });
