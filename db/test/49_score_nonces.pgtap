@@ -1,0 +1,36 @@
+BEGIN;
+SELECT plan(5);
+
+-- score_submit treats a nonce seen before as a retry: it returns the stored
+-- score and changes nothing, so a delayed retry of an earlier revision cannot
+-- overwrite a later one. Assertions are top-level so their results are
+-- reported (see #238).
+
+INSERT INTO rooms (id, title) VALUES ('21900000-0000-4000-8000-000000000001', 'score nonces');
+INSERT INTO rounds (id, room_id, idx, phase, submit_deadline_unix) VALUES
+  ('21900000-0000-4000-8000-000000000002', '21900000-0000-4000-8000-000000000001', 0, 'published', 0);
+INSERT INTO participants (id, room_id, anon_name, role) VALUES
+  ('21900000-0000-4000-8000-000000000011', '21900000-0000-4000-8000-000000000001', 'agent_1', 'debater'),
+  ('21900000-0000-4000-8000-000000000019', '21900000-0000-4000-8000-000000000001', 'judge_1', 'judge');
+
+CREATE TEMP TABLE _first ON COMMIT DROP AS
+SELECT score_submit('21900000-0000-4000-8000-000000000002', '21900000-0000-4000-8000-000000000019',
+                    '21900000-0000-4000-8000-000000000011', 10, 10, 10, 10, 10, 'pgtap-219-a') AS id;
+SELECT score_submit('21900000-0000-4000-8000-000000000002', '21900000-0000-4000-8000-000000000019',
+                    '21900000-0000-4000-8000-000000000011', 90, 90, 90, 90, 90, 'pgtap-219-b');
+
+SELECT is(score_submit('21900000-0000-4000-8000-000000000002', '21900000-0000-4000-8000-000000000019',
+                       '21900000-0000-4000-8000-000000000011', 10, 10, 10, 10, 10, 'pgtap-219-a'),
+          (SELECT id FROM _first), 'a retried nonce returns the stored score');
+SELECT is((SELECT e FROM scores WHERE round_id = '21900000-0000-4000-8000-000000000002'
+                                  AND participant_id = '21900000-0000-4000-8000-000000000011'),
+          90, 'a retried earlier nonce does not roll back a later revision');
+SELECT is((SELECT count(*)::int FROM score_nonces WHERE round_id = '21900000-0000-4000-8000-000000000002'),
+          2, 'each distinct nonce is recorded once');
+SELECT is((SELECT relrowsecurity FROM pg_class WHERE oid = 'public.score_nonces'::regclass),
+          true, 'score_nonces has row level security');
+SELECT is((SELECT count(*)::int FROM pg_policy WHERE polrelid = 'public.score_nonces'::regclass),
+          1, 'score_nonces has its no-access policy');
+
+SELECT * FROM finish();
+ROLLBACK;

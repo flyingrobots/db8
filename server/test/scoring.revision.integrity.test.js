@@ -40,7 +40,8 @@ describeDb('one judge, one score per participant per round', () => {
     manyNonces: '9c0e0000-0000-0000-0000-000000000010',
     revises: '9c0e0000-0000-0000-0000-000000000011',
     aggregate: '9c0e0000-0000-0000-0000-000000000012',
-    twoJudges: '9c0e0000-0000-0000-0000-000000000013'
+    twoJudges: '9c0e0000-0000-0000-0000-000000000013',
+    lateRetry: '9c0e0000-0000-0000-0000-000000000014'
   };
 
   const score = (debater, rubric, nonce, judge = judgeId) =>
@@ -128,6 +129,23 @@ describeDb('one judge, one score per participant per round', () => {
     expect(Number(agg.judge_count), 'one judge scored, however many times').toBe(1);
     expect(Number(agg.avg_e), 'the average is the revised score, not the mean of both').toBe(50);
     expect(Number(agg.composite_score)).toBe(50);
+  });
+
+  it('ignores a delayed retry of an earlier revision', async () => {
+    // A judge scores 10 under nonce A, the response is lost, and they revise to
+    // 90 under nonce B. The client then retries A. The retry repeats a request
+    // the database already took, so it must not roll the score back to 10.
+    const d = DEBATERS.lateRetry;
+    const first = await score(d, { e: 10, r: 10, c: 10, v: 10, y: 10 }, 'late-a');
+    await score(d, { e: 90, r: 90, c: 90, v: 90, y: 90 }, 'late-b');
+    const retry = await score(d, { e: 10, r: 10, c: 10, v: 10, y: 10 }, 'late-a');
+
+    expect(retry.rows[0].id, 'the retry names the stored score').toBe(first.rows[0].id);
+    const rows = await pool.query(
+      'select e, client_nonce from scores where round_id = $1 and judge_id = $2 and participant_id = $3',
+      [roundId, judgeId, d]
+    );
+    expect(rows.rows).toEqual([{ e: 90, client_nonce: 'late-b' }]);
   });
 
   it('still counts two different judges as two', async () => {

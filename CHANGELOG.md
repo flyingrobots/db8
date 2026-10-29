@@ -4,6 +4,10 @@ lastUpdated: 2026-10-29
 
 # Changelog
 
+## 2026-10-29 — Testing standards land on main
+
+- **A delayed retry of a score cannot roll back a later revision.** `score_submit` records every nonce in the new table `score_nonces`; a nonce seen before returns the stored score and changes nothing. Before, a judge who scored 10 under nonce A and revised to 90 under nonce B went back to 10 when A was retried.
+
 ## 2026-10-26 — A database failure is reported, not hidden in memory
 
 - **With `DATABASE_URL` set, a write the database did not take now answers `503 database_unavailable` and keeps nothing** (#257). Before, the server kept the write in memory and answered `200` with `note: 'db_fallback'`. Memory is lost on restart and other server processes never see it. This covered `nonce.issue`, `submission.create`, `submission.flag`, `vote.continue`, `vote.final`, `room.create`, `score.submit`, `verify.submit`, `research.fetch`, `reputation.update` and `participant.fingerprint.set`. The last two did not even label their fallback: a fingerprint binding was kept only in memory, and a reputation update reported success.

@@ -1035,6 +1035,7 @@ AS $$
 DECLARE
   v_id uuid;
   v_judge_role text;
+  v_nonce text;
 BEGIN
   -- Verify judge is actually a judge or host
   SELECT role INTO v_judge_role FROM participants WHERE id = p_judge_id;
@@ -1042,8 +1043,25 @@ BEGIN
     RAISE EXCEPTION 'only judges or hosts can submit rubric scores' USING ERRCODE = '42501';
   END IF;
 
+  v_nonce := COALESCE(NULLIF(p_client_nonce, ''), gen_random_uuid()::text);
+
+  -- A nonce seen before is a retry of a request already applied: return the
+  -- stored score and change nothing. Otherwise a delayed retry of an earlier
+  -- revision would overwrite a later one. A concurrent call with the same
+  -- nonce waits on this insert and then takes the retry path.
+  INSERT INTO score_nonces (round_id, judge_id, participant_id, client_nonce)
+  VALUES (p_round_id, p_judge_id, p_participant_id, v_nonce)
+  ON CONFLICT DO NOTHING;
+  IF NOT FOUND THEN
+    SELECT id INTO v_id FROM scores
+     WHERE round_id = p_round_id AND judge_id = p_judge_id AND participant_id = p_participant_id;
+    IF v_id IS NOT NULL THEN
+      RETURN v_id;
+    END IF;
+  END IF;
+
   INSERT INTO scores (round_id, judge_id, participant_id, e, r, c, v, y, client_nonce)
-  VALUES (p_round_id, p_judge_id, p_participant_id, p_e, p_r, p_c, p_v, p_y, COALESCE(p_client_nonce, gen_random_uuid()::text))
+  VALUES (p_round_id, p_judge_id, p_participant_id, p_e, p_r, p_c, p_v, p_y, v_nonce)
   -- Conflict target must match the table's uniqueness key exactly. The nonce is
   -- not in it: a judge resubmitting revises their score rather than adding a
   -- second one that the aggregate would average in and count as another judge.

@@ -306,6 +306,23 @@ BEGIN
   END IF;
 END $$;
 
+-- Every nonce a judge has scored a participant under. score_submit treats a
+-- nonce seen before as a retry of a request it already applied and changes
+-- nothing. Keeping only the latest nonce on the score row was not enough: a
+-- delayed retry of an earlier revision then overwrote a later one.
+CREATE TABLE IF NOT EXISTS score_nonces (
+  round_id        uuid        NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+  judge_id        uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  participant_id  uuid        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+  client_nonce    text        NOT NULL,
+  PRIMARY KEY (round_id, judge_id, participant_id, client_nonce)
+);
+
+-- Nonces of scores stored before score_nonces existed.
+INSERT INTO score_nonces (round_id, judge_id, participant_id, client_nonce)
+SELECT round_id, judge_id, participant_id, client_nonce FROM scores
+ON CONFLICT DO NOTHING;
+
 CREATE INDEX IF NOT EXISTS idx_scores_round ON scores (round_id);
 CREATE INDEX IF NOT EXISTS idx_scores_participant ON scores (participant_id);
 

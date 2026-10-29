@@ -1,5 +1,5 @@
 ---
-lastUpdated: 2026-10-26
+lastUpdated: 2026-10-29
 ---
 
 # Local Database Setup (Postgres / Supabase)
@@ -160,7 +160,8 @@ With `DATABASE_URL` set, Postgres is the only store. If a write cannot reach it,
 | Endpoint                                              | Retry after `unknown`                                                                                                                                             |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `submission.create`, `vote.continue`, `verify.submit` | Safe with the same `client_nonce`.                                                                                                                                |
-| `room.create`, `score.submit`                         | Safe only when the first request sent a `client_nonce` and the retry sends the same one. Without one, a retry can create a second row.                            |
+| `room.create`                                         | Safe only when the first request sent a `client_nonce` and the retry sends the same one. Without one, a retry can create a second room.                           |
+| `score.submit`                                        | Safe: one score per judge per participant per round. A retry with the same `client_nonce` changes nothing, even after a later revision under another nonce.       |
 | `vote.final`, `submission.flag`                       | Safe: one row per voter per round, and one flag per reporter per submission.                                                                                      |
 | `participant.fingerprint.set`                         | Safe: it sets a value.                                                                                                                                            |
 | `reputation.update`                                   | Safe: each round is applied once (`reputation_rounds_applied`). A round with fewer than two scored debaters is refused with `round_not_scored` and is not marked. |
