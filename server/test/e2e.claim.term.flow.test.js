@@ -91,11 +91,12 @@ for (const mode of MODES) {
     // nothing: submission.create is idempotent on (room, round, author, nonce),
     // and beforeAll drops the room, so a stable nonce is safe across reruns and
     // is exactly what the second `npm test` pass exercises (E3, E4).
-    // Each submission has its own author, derived from its nonce: a participant
-    // has one submission per round, so a shared author would turn every test
-    // after the first into a 409.
+    // Each submission has its own author, derived from the run and its nonce.
+    // A participant has one submission per round, so a shared author would turn
+    // every test after the first into a 409; and without the run, two copies of
+    // the suite would share participants and cascade-delete each other's rows.
     const authorFor = (nonce) => {
-      const h = createHash('sha256').update(`e2e-author-${nonce}`).digest('hex');
+      const h = createHash('sha256').update(`e2e-author-${RUN}-${nonce}`).digest('hex');
       return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
     };
     const seatAuthor = async (nonce) => {
